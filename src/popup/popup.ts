@@ -546,6 +546,7 @@ function setupEventListeners(): void {
           }
           updatePopupView(); // Redraw the entire popup UI
           updateButtonStates(); // Update button states based on new sync state
+          updateSyncIndicator(); // Reflect isBulkSyncing change in the indicator
         }
       } catch (e) {
         log.warn("Could not get bulk sync state", e);

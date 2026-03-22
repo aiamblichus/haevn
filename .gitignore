@@ -82,3 +82,5 @@ devdocs/example_data/
 /charter
 .envrc
 /transcripts
+
+.claude/settings.local.json

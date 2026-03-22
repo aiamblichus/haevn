@@ -370,11 +370,25 @@ export async function startBulkSync(
   }
 }
 
+// In-memory re-entrancy guard. The storage-based isProcessing flag has a TOCTOU
+// race: the alarm macrotask can fire between the storage read (isProcessing=false)
+// and the storage write (isProcessing=true), starting a second concurrent tick.
+// This module-level flag is checked and set synchronously, eliminating the race.
+let _tickRunning = false;
+
 /**
  * Processes one batch of chats (called by alarm listener).
  * Fetches data for up to FETCH_BATCH_SIZE chats and sends to worker for processing.
  */
 export async function handleBulkSyncTick(): Promise<void> {
+  // Synchronous guard — no await before the check+set, so no race condition
+  if (_tickRunning) {
+    log.debug("[Bulk Sync] Tick already running in this context, skipping.");
+    return;
+  }
+  _tickRunning = true;
+
+  try {
   let state = await getBulkSyncState();
   // Check for termination conditions: no state, or not in 'running' state
   if (!state || state.status !== "running") {
@@ -387,13 +401,7 @@ export async function handleBulkSyncTick(): Promise<void> {
     return;
   }
 
-  // RE-ENTRANCY GUARD: Prevent multiple ticks from running concurrently
-  if (state.isProcessing) {
-    log.debug("[Bulk Sync] Tick already in progress, skipping this one.");
-    return;
-  }
-
-  // Set processing flag
+  // Keep storage flag in sync for cross-session stale-state detection
   await setBulkSyncState({ ...state, isProcessing: true });
 
   // Re-fetch state
@@ -661,6 +669,9 @@ export async function handleBulkSyncTick(): Promise<void> {
     chrome.alarms.create(BULK_SYNC_ALARM_NAME, {
       when: Date.now() + 100, // 100ms delay
     });
+  }
+  } finally {
+    _tickRunning = false;
   }
 }
 
