@@ -162,7 +162,7 @@ export async function startBulkSync(
       provider,
       baseUrl,
       progress: 5,
-      status: "extraction chat IDs from the page...",
+      status: "Extracting chat IDs from the page...",
     });
 
     // Create extraction tab pointing to list URL

@@ -1,6 +1,6 @@
 import type { BulkSyncConfig } from "../../providers/provider";
 import { log } from "../../utils/logger";
-import { navigateExtractionTab, pingTab } from "../utils/tabUtils";
+import { navigateExtractionTab, pingTab, waitForTabLoad } from "../utils/tabUtils";
 import type { BulkSyncOptions } from "./types";
 
 export interface FetchDataResult {
@@ -22,39 +22,73 @@ export interface FetchStrategy {
   fetch(ctx: FetchContext): Promise<FetchDataResult>;
 }
 
+function isChannelClosedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("message channel closed") || msg.includes("Could not establish connection");
+}
+
+/**
+ * Re-establishes the content script in a tab after a navigation/context loss.
+ * Waits for the tab to finish loading, re-injects content.js, then pings.
+ */
+async function reestablishContentScript(tabId: number): Promise<void> {
+  await waitForTabLoad(tabId);
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+  } catch (_err) {
+    // May already be injected on the new page, ignore
+  }
+  await pingTab(tabId);
+}
+
 /**
  * API-based strategy (Fast path)
- * Uses provider's extractor.getChatData() via content script
+ * Uses provider's extractor.getChatData() via content script.
+ * Retries once if the content script context is lost (e.g. SPA navigation in extraction tab).
  */
 export class ApiFetchStrategy implements FetchStrategy {
   async fetch(ctx: FetchContext): Promise<FetchDataResult> {
-    try {
-      const { tabId, platformName, chatId, baseUrl } = ctx;
+    const { tabId, platformName, chatId, baseUrl } = ctx;
 
-      // Use generic fetchConversation action with platformName parameter
-      // This avoids needing special-case mappings for provider names
-      const fetchResponse = await chrome.tabs.sendMessage(tabId, {
-        action: "fetchConversation",
-        platformName,
-        chatId,
-        baseUrl,
-      });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const fetchResponse = await chrome.tabs.sendMessage(tabId, {
+          action: "fetchConversation",
+          platformName,
+          chatId,
+          baseUrl,
+        });
 
-      if (fetchResponse.success) {
-        return { success: true, data: fetchResponse.data };
-      } else {
+        if (fetchResponse.success) {
+          return { success: true, data: fetchResponse.data };
+        }
         return { success: false, error: fetchResponse.error };
+      } catch (err: unknown) {
+        if (attempt === 0 && isChannelClosedError(err)) {
+          log.warn(
+            `[Bulk Sync] Content script channel lost for ${platformName} ${chatId} — recovering and retrying`,
+          );
+          try {
+            await reestablishContentScript(tabId);
+          } catch (recoveryErr) {
+            log.error(`[Bulk Sync] Content script recovery failed:`, recoveryErr);
+            return { success: false, error: "Content script recovery failed" };
+          }
+          continue;
+        }
+
+        log.error(
+          `[Bulk Sync] Failed to fetch API conversation for ${platformName} ${chatId}:`,
+          err,
+        );
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to fetch conversation",
+        };
       }
-    } catch (err: unknown) {
-      log.error(
-        `[Bulk Sync] Failed to fetch API conversation for ${ctx.platformName} ${ctx.chatId}:`,
-        err,
-      );
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : "Failed to fetch conversation",
-      };
     }
+
+    return { success: false, error: "Failed after retry" };
   }
 }
 

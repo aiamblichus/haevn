@@ -4,6 +4,7 @@
 import type { ExportOptions } from "../formatters";
 import { registerAllProviders } from "../providers/index";
 import { getProvider } from "../providers/provider";
+import { captureAndStoreChatGPTToken } from "../providers/chatgpt/listeners";
 import type { ContentScriptResponse } from "../types/messaging";
 import { isContentScriptRequest } from "../types/messaging";
 import { log } from "../utils/logger";
@@ -159,6 +160,10 @@ chrome.runtime.onMessage.addListener(
 
         case "fetchBlob":
           handleFetchBlob(message, sendResponse);
+          return true;
+
+        case "captureChatGPTToken":
+          captureAndStoreChatGPTToken().then(() => sendResponse({ success: true })).catch(() => sendResponse({ success: false }));
           return true;
 
         default:

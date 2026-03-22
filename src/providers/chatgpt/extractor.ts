@@ -34,13 +34,21 @@ export function extractChatGPTConversationId(): string {
 }
 
 // Get accessToken from storage (captured by listener)
+// Rejects tokens older than 45 minutes to avoid stale-token 401s.
+const TOKEN_TTL_MS = 45 * 60 * 1000;
+
 async function getAccessTokenFromStorage(): Promise<string | null> {
   try {
     const result = await chrome.storage.local.get("chatgptAuthTokens");
     const tokens = result.chatgptAuthTokens as
       | { accessToken?: string; capturedAt?: number }
       | undefined;
-    return tokens?.accessToken || null;
+    if (!tokens?.accessToken) return null;
+    if (tokens.capturedAt && Date.now() - tokens.capturedAt > TOKEN_TTL_MS) {
+      log.debug("[ChatGPT Extractor] Cached access token is stale, will re-fetch");
+      return null;
+    }
+    return tokens.accessToken;
   } catch (error) {
     log.debug("[ChatGPT Extractor] Failed to read accessToken from storage:", error);
     return null;
@@ -117,17 +125,33 @@ async function fetchChatList(accessToken: string, offset = 0, limit = 100): Prom
 
 // Public: Extract all ChatGPT chat IDs
 export async function extractChatGPTChatIds(): Promise<string[]> {
-  const accessToken = await getAccessToken();
+  let accessToken = await getAccessToken();
   const all: string[] = [];
   let offset = 0;
   const limit = 100;
+  let tokenRefreshed = false;
   while (true) {
-    const page = await fetchChatList(accessToken, offset, limit);
-    const items = page?.items || [];
-    if (items.length === 0) break;
-    for (const it of items) if (it?.id) all.push(it.id);
-    if (items.length < limit) break;
-    offset += limit;
+    try {
+      const page = await fetchChatList(accessToken, offset, limit);
+      const items = page?.items || [];
+      if (items.length === 0) break;
+      for (const it of items) if (it?.id) all.push(it.id);
+      if (items.length < limit) break;
+      offset += limit;
+    } catch (err) {
+      // On 401, force-clear cached token and retry once with a fresh one
+      if (!tokenRefreshed && err instanceof Error && err.message.includes("401")) {
+        log.info("[ChatGPT] Got 401 fetching chat list — refreshing access token and retrying");
+        await chrome.storage.local.remove("chatgptAuthTokens");
+        const freshToken = await fetchAndStoreAccessToken();
+        if (!freshToken) throw err;
+        accessToken = freshToken;
+        tokenRefreshed = true;
+        // retry same page (don't advance offset)
+        continue;
+      }
+      throw err;
+    }
   }
   return all;
 }
