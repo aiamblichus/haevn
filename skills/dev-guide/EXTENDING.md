@@ -55,7 +55,7 @@ If user-facing, add caller code in `src/options` or other UI surface.
 
 ## Validation Loop
 
-1. `npm run build`
+1. `pnpm run build`
 2. Reload extension (`haevnDebug.reload()` from options page)
 3. Trigger scenario via MCP UI automation
 4. Validate with `haevnDebug`:

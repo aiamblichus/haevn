@@ -342,9 +342,9 @@ For maintainers, creating a new release is simple:
 
 ```bash
 # Quick release (bump version, commit, tag, push)
-npm run release:patch  # Bug fixes (1.0.0 → 1.0.1)
-npm run release:minor  # New features (1.0.0 → 1.1.0)
-npm run release:major  # Breaking changes (1.0.0 → 2.0.0)
+pnpm run release:patch  # Bug fixes (1.0.0 → 1.0.1)
+pnpm run release:minor  # New features (1.0.0 → 1.1.0)
+pnpm run release:major  # Breaking changes (1.0.0 → 2.0.0)
 ```
 
 See [docs/RELEASE.md](docs/RELEASE.md) for detailed release documentation.

@@ -35,7 +35,7 @@ Then verify debug surface is present:
 () => ({
   hasHaevnDebug: typeof window.haevnDebug !== "undefined",
   keys: window.haevnDebug ? Object.keys(window.haevnDebug) : [],
-})
+});
 ```
 
 Expected key capabilities include `getLogs`, `setLogLevel`, `search`, `getChat`, `rebuildIndex`, `opfs`, `reload`.
@@ -48,7 +48,7 @@ Expected key capabilities include `getLogs`, `setLogLevel`, `search`, `getChat`,
    - `haevnDebug.getStorage()`
    - targeted DB/OPFS checks
 3. Implement minimal fix in source.
-4. Build (`npm run build`).
+4. Build (`pnpm run build`).
 5. Reload extension (`haevnDebug.reload()` or extension reload UI).
 6. Re-run same scenario with MCP.
 7. Validate both:

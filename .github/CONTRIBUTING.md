@@ -34,7 +34,7 @@ Feature requests are welcome! Please provide:
 
 ### Prerequisites
 
-- Node.js 20+ and npm
+- Node.js 20+ and pnpm
 - Chrome or Chromium browser
 - Git
 

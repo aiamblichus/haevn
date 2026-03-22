@@ -152,7 +152,7 @@ When working on HAEVN:
    - Event-driven updates for UI changes
 
 3. **Testing changes:**
-   - `npm run build` after EVERY code change
+   - `pnpm run build` after EVERY code change
    - `haevnDebug.reload()` from Options console to reload extension
    - Verify with `haevnDebug.getLogs(100)` for errors
    - Use `haevnDebug.search()` and `haevnDebug.getStats()` for diagnostics
@@ -252,7 +252,7 @@ Expected key capabilities include `getLogs`, `setLogLevel`, `search`, `getChat`,
    - `haevnDebug.getStorage()`
    - targeted DB/OPFS checks
 3. Implement minimal fix in source.
-4. Build (`npm run build`).
+4. Build (`pnpm run build`).
 5. Reload extension (`haevnDebug.reload()` or extension reload UI).
 6. Re-run same scenario with MCP.
 7. Validate both:

@@ -27,16 +27,17 @@ Use the convenience scripts for common release scenarios:
 
 ```bash
 # Patch release (1.0.0 → 1.0.1) - Bug fixes
-npm run release:patch
+pnpm run release:patch
 
 # Minor release (1.0.0 → 1.1.0) - New features
-npm run release:minor
+pnpm run release:minor
 
 # Major release (1.0.0 → 2.0.0) - Breaking changes
-npm run release:major
+pnpm run release:major
 ```
 
 These scripts will:
+
 1. Bump the version in `package.json` and `manifest.json`
 2. Prompt you to commit and tag
 3. Push to GitHub and trigger the release workflow
@@ -47,7 +48,7 @@ For more control over the process:
 
 ```bash
 # 1. Bump version
-npm run version:patch  # or version:minor, version:major
+pnpm run version:patch  # or version:minor, version:major
 
 # 2. Review changes
 git diff
@@ -77,23 +78,27 @@ git push origin main --tags
 When you push a tag (e.g., `v1.0.1`), GitHub Actions automatically:
 
 ### 1. Build & Test
+
 - ✅ Checkout code
-- ✅ Install dependencies (`npm ci`)
+- ✅ Install dependencies (`pnpm ci`)
 - ✅ Run linter
 - ✅ Run tests
-- ✅ Build extension (`npm run build`)
+- ✅ Build extension (`pnpm run build`)
 
 ### 2. Package
+
 - 📦 Update `manifest.json` with release version
 - 📦 Create ZIP artifact: `haevn-extension-v1.0.1.zip`
 
 ### 3. Release
+
 - 🏷️ Create GitHub Release
 - 📝 Generate changelog from commit history
 - 📎 Attach ZIP artifact to release
 - 🔄 Update `CHANGELOG.md` in repository
 
 ### 4. Post-Release
+
 - ✅ Commit updated `CHANGELOG.md`
 - ✅ Commit version updates to `package.json` and `manifest.json`
 - ✅ Push changes to main branch
@@ -105,6 +110,7 @@ When you push a tag (e.g., `v1.0.1`), GitHub Actions automatically:
 While not strictly enforced, following these conventions helps generate better changelogs:
 
 ### Format
+
 ```
 <type>: <description>
 
@@ -114,6 +120,7 @@ While not strictly enforced, following these conventions helps generate better c
 ```
 
 ### Types
+
 - `feat:` - New feature (triggers MINOR version bump)
 - `fix:` - Bug fix (triggers PATCH version bump)
 - `docs:` - Documentation changes
@@ -123,7 +130,9 @@ While not strictly enforced, following these conventions helps generate better c
 - `chore:` - Maintenance tasks
 
 ### Breaking Changes
+
 For breaking changes that warrant a MAJOR version bump:
+
 ```
 feat!: redesign data export format
 
@@ -133,25 +142,28 @@ Users will need to re-export their data.
 
 ---
 
-## 🛠️ Available npm Scripts
+## 🛠️ Available pnpm Scripts
 
 ### Version Management
+
 ```bash
-npm run version:patch  # Bump patch version (1.0.0 → 1.0.1)
-npm run version:minor  # Bump minor version (1.0.0 → 1.1.0)
-npm run version:major  # Bump major version (1.0.0 → 2.0.0)
+pnpm run version:patch  # Bump patch version (1.0.0 → 1.0.1)
+pnpm run version:minor  # Bump minor version (1.0.0 → 1.1.0)
+pnpm run version:major  # Bump major version (1.0.0 → 2.0.0)
 ```
 
 ### Release
+
 ```bash
-npm run release:patch  # Bump, commit, tag, and push patch release
-npm run release:minor  # Bump, commit, tag, and push minor release
-npm run release:major  # Bump, commit, tag, and push major release
+pnpm run release:patch  # Bump, commit, tag, and push patch release
+pnpm run release:minor  # Bump, commit, tag, and push minor release
+pnpm run release:major  # Bump, commit, tag, and push major release
 ```
 
 ### Packaging
+
 ```bash
-npm run package  # Create ZIP artifact locally (for testing)
+pnpm run package  # Create ZIP artifact locally (for testing)
 ```
 
 ---
@@ -162,7 +174,7 @@ npm run package  # Create ZIP artifact locally (for testing)
 ┌─────────────────────────────────────────────────────────────┐
 │ Developer Actions                                            │
 ├─────────────────────────────────────────────────────────────┤
-│ 1. npm run release:patch                                    │
+│ 1. pnpm run release:patch                                    │
 │    ↓                                                         │
 │ 2. Script bumps version in package.json & manifest.json     │
 │    ↓                                                         │
@@ -230,27 +242,29 @@ See [Chrome Web Store API docs](https://developer.chrome.com/docs/webstore/api/)
 1. Check the **Actions** tab in GitHub for error logs
 2. Common issues:
    - Tests failing: Fix tests before releasing
-   - Build failing: Run `npm run build` locally to debug
-   - Lint errors: Run `npm run lint:fix` locally
+   - Build failing: Run `pnpm run build` locally to debug
+   - Lint errors: Run `pnpm run lint:fix` locally
 
 ### Version mismatch
 
 If versions get out of sync:
+
 ```bash
 # Check current versions
 node -p "require('./package.json').version"
 node -p "require('./src/manifest.json').version"
 
 # Manually sync them
-npm run version:patch  # This will sync both files
+pnpm run version:patch  # This will sync both files
 ```
 
 ### Manual package creation
 
 To create a ZIP without releasing:
+
 ```bash
-npm run build
-npm run package
+pnpm run build
+pnpm run package
 # Creates: haevn-extension-v1.0.0.zip
 ```
 
@@ -268,7 +282,7 @@ npm run package
 
 ## 🎯 Best Practices
 
-1. **Test before releasing**: Always run `npm test` and `npm run build` locally
+1. **Test before releasing**: Always run `pnpm test` and `pnpm run build` locally
 2. **Write good commit messages**: Helps generate meaningful changelogs
 3. **Update CHANGELOG.md manually** for significant changes if needed
 4. **Test the ZIP**: Download and test the release artifact before announcing

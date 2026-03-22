@@ -15,7 +15,7 @@ echo ""
 # Check if dist folder exists
 if [ ! -d "dist" ]; then
     echo -e "${RED}❌ Error: dist/ folder not found${NC}"
-    echo "Run 'npm run build' first to create the dist folder"
+    echo "Run 'pnpm run build' first to create the dist folder"
     exit 1
 fi
 
