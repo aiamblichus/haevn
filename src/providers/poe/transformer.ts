@@ -336,8 +336,10 @@ function stripInlineImageMarkdown(text: string, inlineUrls: string[]): string {
     const refIds: string[] = [];
     // Reset lastIndex before starting
     refDefPattern.lastIndex = 0;
-    while ((refMatch = refDefPattern.exec(result)) !== null) {
+    refMatch = refDefPattern.exec(result);
+    while (refMatch !== null) {
       refIds.push(refMatch[1]);
+      refMatch = refDefPattern.exec(result);
     }
 
     // Remove reference definitions

@@ -95,7 +95,7 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       // Instead, we create a mock worker that forwards responses via chrome.runtime.sendMessage.
       const request: BrowserApiRequest = {
         type: "requestBrowserAPI",
-        requestId: message.requestId!,
+        requestId: message.requestId ?? "",
         api: message.api as "downloads" | "storage" | "tabs" | "scripting" | "runtime",
         operation: message.operation,
         params: message.params,
@@ -105,11 +105,8 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       const mockWorker = {
         postMessage: (msg: unknown) => {
           // Forward response to offscreen document -> bulkSync worker
-          if (
-            typeof msg === "object" &&
-            msg !== null &&
-            (msg as any).type === "browserApiResponse"
-          ) {
+          const msgObj = msg as Record<string, unknown>;
+          if (typeof msg === "object" && msg !== null && msgObj.type === "browserApiResponse") {
             chrome.runtime.sendMessage({
               type: "workerRequest",
               workerType: "bulkSync",

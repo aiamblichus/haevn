@@ -97,9 +97,9 @@ export function handleMessage(
     sender: _sender.url,
   });
 
-  let result;
+  let result: boolean | Promise<unknown>;
   try {
-    result = handler(message, sendResponse);
+    result = handler(message, sendResponse) as boolean | Promise<unknown>;
   } catch (err) {
     // Synchronous error in handler
     diagnosticsService.endOperation(opId);

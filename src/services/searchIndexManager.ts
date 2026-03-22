@@ -11,7 +11,13 @@
  */
 
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
-import type { Chat, TextPart, ThinkingPart, UserPromptPart } from "../model/haevn_model";
+import type {
+  Chat,
+  SystemPromptPart,
+  TextPart,
+  ThinkingPart,
+  UserPromptPart,
+} from "../model/haevn_model";
 import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
@@ -89,7 +95,7 @@ function _prepareChatForIndexing(
               }
             }
           } else if (partAny.part_kind === "system-prompt") {
-            const sp = part as any;
+            const sp = part as SystemPromptPart;
             if (typeof sp.content === "string") {
               combined.push(sp.content);
             }

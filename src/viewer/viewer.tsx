@@ -88,12 +88,12 @@ function highlightTerms(textHtml: string, query: string): string {
 
   // 1. Extract quoted phrases
   const quoteRegex = /"([^"]+)"/g;
-  let match;
-
-  while ((match = quoteRegex.exec(query)) !== null) {
+  let match: RegExpExecArray | null = quoteRegex.exec(query);
+  while (match !== null) {
     if (match[1].trim()) {
       terms.push(match[1].trim());
     }
+    match = quoteRegex.exec(query);
   }
 
   // Remove quoted parts to process the rest
@@ -1485,7 +1485,7 @@ const App = () => {
       }
       timeoutIds = [];
     };
-  }, [chat, visibleIndex]);
+  }, [chat]);
 
   if (error) return <ErrorView message={error} />;
   if (!chat)

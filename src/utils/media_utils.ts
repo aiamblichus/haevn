@@ -218,14 +218,20 @@ function createFallbackUrl(
 // Pending worker requests map for Browser API Bridge pattern
 const workerPendingRequests = new Map<
   string,
-  { resolve: (value: any) => void; reject: (reason?: any) => void }
+  { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }
 >();
 
 /**
  * Handle browser API responses in a worker context.
  * Call this from the worker's onmessage handler when a browserApiResponse is received.
  */
-export function handleWorkerResponse(msg: any): void {
+export function handleWorkerResponse(msg: {
+  type: string;
+  requestId?: string;
+  success?: boolean;
+  result?: unknown;
+  error?: string;
+}): void {
   if (msg.type === "browserApiResponse" && msg.requestId) {
     const pending = workerPendingRequests.get(msg.requestId);
     if (pending) {
@@ -327,8 +333,14 @@ export async function processExternalAssets(
                   () => reject(new Error("Content script fetch timed out")),
                   30000,
                 );
+                const tabId = options.tabId;
+                if (!tabId) {
+                  clearTimeout(tid);
+                  reject(new Error("No tab ID provided"));
+                  return;
+                }
                 chrome.tabs.sendMessage(
-                  options.tabId!,
+                  tabId,
                   {
                     action: "fetchBlob",
                     url: assetUrl,

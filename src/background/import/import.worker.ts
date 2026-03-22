@@ -7,6 +7,17 @@
 // The service worker executes the API calls and sends responses back.
 
 import type { Chat } from "../../model/haevn_model";
+
+// Helper interface for dynamic import content that may have media properties
+interface ImportContentWithMedia {
+  media_type?: string;
+  kind?: string;
+  content?: {
+    media_type?: string;
+  };
+  [key: string]: unknown;
+}
+
 import * as ChatPersistence from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
 import type {
@@ -131,7 +142,8 @@ function rewriteChatMediaRefs(chat: Chat, mediaMap: Map<string, Map<string, Map<
   // Skip if no media for this chat
   if (!chat.id || !mediaMap.has(chat.id)) return;
 
-  const chatMedia = mediaMap.get(chat.id)!;
+  const chatMedia = mediaMap.get(chat.id);
+  if (!chatMedia) return;
 
   for (const [msgId, chatMsg] of Object.entries(chat.messages)) {
     const msgMedia = chatMedia.get(msgId);
@@ -149,9 +161,10 @@ function rewriteChatMediaRefs(chat: Chat, mediaMap: Map<string, Map<string, Map<
                 const localPath = msgMedia.get(currentIndex);
                 if (localPath) {
                   // Rewrite UserContent to BinaryContent
+                  const contentWithMedia = c as ImportContentWithMedia;
                   const mediaType =
-                    (c as any).media_type ||
-                    ((c as any).kind?.startsWith("image")
+                    contentWithMedia.media_type ||
+                    (contentWithMedia.kind?.startsWith("image")
                       ? "image/jpeg"
                       : "application/octet-stream");
                   part.content[i] = {
@@ -176,13 +189,13 @@ function rewriteChatMediaRefs(chat: Chat, mediaMap: Map<string, Map<string, Map<
             const localPath = msgMedia.get(currentIndex);
             if (localPath) {
               // Rewrite to binary part
-              const anyPart = part as any;
+              const mediaPart = part as ImportContentWithMedia & { part_kind: string };
               const mediaType =
-                anyPart.content?.media_type ||
-                (anyPart.part_kind === "image-response"
+                mediaPart.content?.media_type ||
+                (mediaPart.part_kind === "image-response"
                   ? "image/jpeg"
                   : "application/octet-stream");
-              anyPart.content = {
+              mediaPart.content = {
                 kind: "binary",
                 data: localPath,
                 media_type: mediaType,
@@ -653,13 +666,13 @@ async function processImport(
                       me.partIndex,
                       me.mediaType,
                     );
-                    chatMediaMap.get(me.messageId)!.set(me.partIndex, targetPath);
+                    chatMediaMap.get(me.messageId)?.set(me.partIndex, targetPath);
                   }
                 }
 
-                if (chatMediaMap.size > 0) {
+                if (chatMediaMap.size > 0 && chat.id) {
                   const globalMediaMap = new Map<string, Map<string, Map<number, string>>>();
-                  globalMediaMap.set(chat.id!, chatMediaMap);
+                  globalMediaMap.set(chat.id, chatMediaMap);
                   rewriteChatMediaRefs(chat, globalMediaMap);
                 }
 
@@ -792,7 +805,7 @@ async function processImport(
   } finally {
     workerState = null;
     // Clean up any pending browser API requests
-    for (const [reqId, pending] of pendingBrowserRequests.entries()) {
+    for (const [_reqId, pending] of pendingBrowserRequests.entries()) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("Import operation terminated"));
     }

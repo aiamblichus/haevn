@@ -328,9 +328,7 @@ export const ImportModal = ({
               }
             >
               {(!importProviderFilter || importProviderFilter.startsWith("chatgpt")) && (
-                <>
-                  <option value="chatgpt_zip">ChatGPT Backup (.zip)</option>
-                </>
+                <option value="chatgpt_zip">ChatGPT Backup (.zip)</option>
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("claude")) && (
                 <>

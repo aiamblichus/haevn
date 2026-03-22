@@ -328,7 +328,7 @@ const App = () => {
     };
     chrome.runtime.onMessage.addListener(messageListener);
     return () => chrome.runtime.onMessage.removeListener(messageListener);
-  }, [loadChats, setStatus, searchQuery]);
+  }, [loadChats, setStatus, searchQuery, filterProvider]);
 
   useEffect(() => {
     if (!searchQuery) {

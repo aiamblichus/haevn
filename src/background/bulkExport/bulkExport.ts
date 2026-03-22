@@ -290,7 +290,7 @@ async function downloadExportZip(exportState: {
   try {
     log.info(`[BulkExport] Creating blob URL from offscreen...`);
     blobUrl = await createBlobUrlFromOffscreen(exportState.zipPath);
-    log.info(`[BulkExport] Got blob URL:`, { blobUrl: blobUrl.substring(0, 50) + "..." });
+    log.info(`[BulkExport] Got blob URL:`, { blobUrl: `${blobUrl.substring(0, 50)}...` });
     const filename = `haevn_export_${exportState.exportId}.zip`;
     log.info(`[BulkExport] Starting download with filename:`, { filename });
     downloadId = await new Promise<number>((resolve, reject) => {

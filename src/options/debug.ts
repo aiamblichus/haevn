@@ -203,7 +203,7 @@ export const haevnDebug = {
         const results = [];
 
         for (const d of dirs) {
-          results.push({ name: d + "/", type: "directory", size: "-" });
+          results.push({ name: `${d}/`, type: "directory", size: "-" });
         }
 
         for (const f of files) {
@@ -238,7 +238,13 @@ export const haevnDebug = {
         async function walk(
           handle: FileSystemDirectoryHandle | FileSystemFileHandle,
           depth: number,
-        ): Promise<any> {
+        ): Promise<{
+          name: string;
+          type: string;
+          size?: number;
+          status?: string;
+          children?: unknown[];
+        }> {
           if (handle.kind === "file") {
             const file = await (handle as FileSystemFileHandle).getFile();
             return { name: handle.name, type: "file", size: file.size };
@@ -250,7 +256,7 @@ export const haevnDebug = {
 
           const children = [];
           // @ts-expect-error - entries() is in standard FileSystemDirectoryHandle
-          for await (const [name, subHandle] of (handle as FileSystemDirectoryHandle).entries()) {
+          for await (const [_name, subHandle] of (handle as FileSystemDirectoryHandle).entries()) {
             children.push(await walk(subHandle, depth + 1));
           }
           return { name: handle.name || "/", type: "directory", children };

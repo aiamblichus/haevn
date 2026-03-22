@@ -22,7 +22,7 @@ export interface OpenWebUIChat {
   system?: string; // system prompt can sometimes be here
   params?: {
     system?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
   // other fields not needed for extraction
 }
@@ -49,7 +49,7 @@ export interface OpenWebUIFolderResponse {
   name: string;
   data?: {
     system_prompt?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 

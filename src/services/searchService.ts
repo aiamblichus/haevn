@@ -16,6 +16,7 @@ import type {
   Chat,
   ChatMessage,
   SearchResult,
+  SystemPromptPart,
   TextPart,
   ThinkingPart,
   UserPromptPart,
@@ -83,16 +84,18 @@ type ParsedQuery = {
 function parseSearchQuery(query: string): ParsedQuery {
   const phrases: string[] = [];
   const quoteRegex = /"([^"]+)"/g;
-  let match;
+  let match: RegExpExecArray | null;
   let lastIndex = 0;
   const remainderParts: string[] = [];
 
-  while ((match = quoteRegex.exec(query)) !== null) {
+  match = quoteRegex.exec(query);
+  while (match !== null) {
     const pre = query.slice(lastIndex, match.index).trim();
     if (pre) remainderParts.push(pre);
     const phrase = match[1].trim();
     if (phrase) phrases.push(phrase);
     lastIndex = quoteRegex.lastIndex;
+    match = quoteRegex.exec(query);
   }
   const tail = query.slice(lastIndex).trim();
   if (tail) remainderParts.push(tail);
@@ -172,7 +175,7 @@ function flattenChatMessageText(cm: ChatMessage): {
             }
           }
         } else if (partAny.part_kind === "system-prompt") {
-          const sp = part as any;
+          const sp = part as SystemPromptPart;
           if (typeof sp.content === "string") {
             userTextParts.push(sp.content);
           }

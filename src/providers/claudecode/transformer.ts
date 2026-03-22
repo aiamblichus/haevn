@@ -348,7 +348,7 @@ function transformContentBlock(
 function extractTitle(messages: ClaudeCodeMessage[]): string {
   const firstUserMessage = messages.find(isUserMessage);
 
-  if (firstUserMessage && firstUserMessage.message.content) {
+  if (firstUserMessage?.message.content) {
     const content = firstUserMessage.message.content;
     // Handle both string and array content
     const textContent =

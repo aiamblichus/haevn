@@ -127,7 +127,7 @@ function normalizeForLog(
     return String(value);
   }
   if (valueType === "function") {
-    return `[Function ${(value as Function).name || "anonymous"}]`;
+    return `[Function ${(value as (...args: unknown[]) => unknown).name || "anonymous"}]`;
   }
 
   if (value instanceof Error) {

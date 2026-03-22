@@ -90,7 +90,7 @@ export async function parseClaudeCodeJsonl(content: string): Promise<ClaudeCodeR
 export function extractSessionTitle(messages: ClaudeCodeMessage[]): string {
   const firstUserMessage = messages.find(isUserMessage);
 
-  if (firstUserMessage && firstUserMessage.message.content) {
+  if (firstUserMessage?.message.content) {
     const content = firstUserMessage.message.content.trim();
     // Take first line, max 100 characters
     const firstLine = content.split("\n")[0];

@@ -1,7 +1,15 @@
 // Search Worker - Segmented Architecture with Positional Metadata and Hydration
 import Dexie from "dexie";
 import lunr from "lunr";
-import type { Chat, ModelMessage, SearchResult } from "../model/haevn_model";
+import type {
+  Chat,
+  ModelMessage,
+  SearchResult,
+  SystemPromptPart,
+  TextPart,
+  ThinkingPart,
+  UserPromptPart,
+} from "../model/haevn_model";
 import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
 
@@ -28,6 +36,29 @@ type ParsedQuery = {
 type SourceMapEntry = [number, number, string, "user" | "assistant"];
 type SourceMap = SourceMapEntry[];
 
+// Lunr types (not exported by lunr.js)
+interface LunrMatchMetadata {
+  [term: string]: {
+    [field: string]: {
+      position?: [number, number][];
+    };
+  };
+}
+
+interface LunrMatchData {
+  metadata: LunrMatchMetadata;
+}
+
+interface LunrResult {
+  ref: string;
+  score: number;
+  matchData: LunrMatchData;
+}
+
+interface LunrIndexWithPipeline extends lunr.Index {
+  pipeline: lunr.Pipeline;
+}
+
 interface IndexRebuildState {
   totalChats: number;
   processedChats: number;
@@ -45,10 +76,16 @@ interface Segment {
   timestamp: number;
 }
 
+// Type for index metadata stored in DB
+interface LunrIndexMeta {
+  docCount?: number;
+  [key: string]: unknown;
+}
+
 // --- Database Schema (Worker Side) ---
 class HaevnDatabase extends Dexie {
   chats!: Dexie.Table<Chat, string>;
-  lunrIndex!: Dexie.Table<{ id: string; index?: object; meta?: any }, string>;
+  lunrIndex!: Dexie.Table<{ id: string; index?: object; meta?: LunrIndexMeta }, string>;
 
   constructor() {
     super("HaevnDB");
@@ -68,7 +105,7 @@ const db = new HaevnDatabase();
 const segments: Map<string, Segment> = new Map();
 let activeSegmentId: string = "segment_0";
 let rebuildTimer: number | undefined;
-let isIndexing = false;
+let _isIndexing = false;
 const docCache: Map<string, SearchDoc> = new Map(); // Only for active segment
 let bulkMode = false;
 let rebuildState: IndexRebuildState | null = null;
@@ -110,7 +147,7 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
       if (mm.kind === "request") {
         for (const part of mm.parts || []) {
           if (part.part_kind === "user-prompt") {
-            const up = part as any;
+            const up = part as UserPromptPart;
             if (typeof up.content === "string") {
               append(up.content, cm.id, "user");
             } else if (Array.isArray(up.content)) {
@@ -119,7 +156,7 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
               }
             }
           } else if (part.part_kind === "system-prompt") {
-            const sp = part as any;
+            const sp = part as SystemPromptPart;
             if (typeof sp.content === "string") {
               append(sp.content, cm.id, "user");
             }
@@ -127,10 +164,15 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
         }
       } else if (mm.kind === "response") {
         for (const part of mm.parts || []) {
-          if (part.part_kind === "text" || part.part_kind === "thinking") {
-            const content = (part as any).content;
-            if (typeof content === "string") {
-              append(content, cm.id, "assistant");
+          if (part.part_kind === "text") {
+            const tp = part as TextPart;
+            if (typeof tp.content === "string") {
+              append(tp.content, cm.id, "assistant");
+            }
+          } else if (part.part_kind === "thinking") {
+            const tp = part as ThinkingPart;
+            if (typeof tp.content === "string") {
+              append(tp.content, cm.id, "assistant");
             }
           }
         }
@@ -151,17 +193,19 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
 function parseSearchQuery(query: string): ParsedQuery {
   const phrases: string[] = [];
   const quoteRegex = /"([^"]+)"/g;
-  let match;
+  let match: RegExpExecArray | null;
   let lastIndex = 0;
   const remainderParts: string[] = [];
 
-  while ((match = quoteRegex.exec(query)) !== null) {
+  match = quoteRegex.exec(query);
+  while (match !== null) {
     const pre = query.slice(lastIndex, match.index).trim();
     if (pre) remainderParts.push(pre);
 
     const phrase = match[1].trim();
     if (phrase) phrases.push(phrase);
     lastIndex = quoteRegex.lastIndex;
+    match = quoteRegex.exec(query);
   }
 
   const tail = query.slice(lastIndex).trim();
@@ -238,7 +282,7 @@ async function loadSegments(): Promise<void> {
 
     for (const key of segmentKeys) {
       const record = await db.lunrIndex.get(key);
-      if (record && record.index) {
+      if (record?.index) {
         const idx = lunr.Index.load(record.index as object);
 
         let recoveredIds: string[] = [];
@@ -441,7 +485,7 @@ async function rebuildAll(emitProgress = false) {
     return;
   }
 
-  isIndexing = true;
+  _isIndexing = true;
   segments.clear();
   docCache.clear();
   activeSegmentId = "segment_0";
@@ -483,7 +527,7 @@ async function rebuildAll(emitProgress = false) {
             currentSeg.builder?.add(data.doc);
             currentSeg.docIds.add(data.doc.id);
             if (currentSeg.docIds.size >= SEGMENT_SIZE) {
-              currentSeg.index = currentSeg.builder!.build();
+              currentSeg.index = currentSeg.builder?.build();
               await persistSegment(currentSeg);
               currentSeg.builder = undefined;
               const nextId = `segment_${segments.size}`;
@@ -549,7 +593,7 @@ async function rebuildAll(emitProgress = false) {
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
   } finally {
-    isIndexing = false;
+    _isIndexing = false;
     rebuildState = null;
   }
 }
@@ -560,13 +604,13 @@ async function rebuildAll(emitProgress = false) {
  * Extracts raw positions from Lunr match data.
  * Returns sorted array of [start, length] tuples.
  */
-function collectMatchPositions(matchData: any): [number, number][] {
+function collectMatchPositions(matchData: LunrMatchData): [number, number][] {
   const positions: [number, number][] = [];
   if (!matchData || !matchData.metadata) return positions;
 
   // Lunr structure: metadata[term][field].position array
-  Object.values(matchData.metadata).forEach((termData: any) => {
-    if (termData.content && termData.content.position) {
+  Object.values(matchData.metadata).forEach((termData) => {
+    if (termData.content?.position) {
       termData.content.position.forEach((pos: [number, number]) => {
         positions.push(pos); // [start, length]
       });
@@ -587,7 +631,7 @@ function generateSnippets(
   positions: [number, number][],
 ): SearchResult[] {
   const results: SearchResult[] = [];
-  const text = map.map((m) => "").join(""); // Wait, we don't have the full text here?
+  const _text = map.map((_m) => "").join(""); // Wait, we don't have the full text here?
   // We didn't store the full text in memory. We only have the chat.
   // We need to re-extract the text segments from the Chat using the map indices?
   // Actually, simpler: We re-run extractTextAndMap(chat) which gives us the 'doc' with full content.
@@ -609,7 +653,7 @@ function generateSnippets(
     const entry = sourceMap.find((m) => posStart >= m[0] && posStart < m[0] + m[1]);
 
     if (entry) {
-      const [mStart, mLen, mId, mRole] = entry;
+      const [_mStart, _mLen, mId, _mRole] = entry;
       if (!msgHits.has(mId)) msgHits.set(mId, []);
       msgHits.get(mId)?.push([posStart, posLen]);
     }
@@ -674,7 +718,7 @@ function generateSnippets(
 // --- Phrase Search Helpers ---
 
 function verifyPhrase(
-  matchData: any,
+  matchData: LunrMatchData,
   phraseTerms: string[],
   searchPipeline: lunr.Pipeline,
 ): boolean {
@@ -755,7 +799,7 @@ function verifyPhrase(
 async function performSearch(
   query: string,
   hydrate: boolean = false,
-): Promise<string[] | SearchResult[]> {
+): Promise<string[] | LunrResult[]> {
   if (!query) return [];
 
   // Check if rebuild is in progress
@@ -782,7 +826,7 @@ async function performSearch(
   let finalQuery = query;
   const phraseConstraints: string[][] = [];
   const quoteRegex = /"([^"]+)"/g;
-  let match;
+  let match: RegExpExecArray | null;
 
   const parts: string[] = [];
   let lastIndex = 0;
@@ -794,7 +838,8 @@ async function performSearch(
   stopWordPipeline.add(lunr.trimmer, lunr.stopWordFilter);
 
   // Clone query to avoid infinite loop with exec
-  while ((match = quoteRegex.exec(query)) !== null) {
+  match = quoteRegex.exec(query);
+  while (match !== null) {
     hasPhrases = true;
     // Text before quote
     const pre = query.slice(lastIndex, match.index).trim();
@@ -817,6 +862,7 @@ async function performSearch(
       }
     }
     lastIndex = quoteRegex.lastIndex;
+    match = quoteRegex.exec(query);
   }
   const remainder = query.slice(lastIndex).trim();
   if (remainder) parts.push(remainder);
@@ -833,17 +879,17 @@ async function performSearch(
   }
 
   // 2. Search (Get IDs and Metadata)
-  const rawResults: any[] = [];
+  const rawResults: LunrResult[] = [];
 
   for (const [id, seg] of segments) {
     try {
-      const results = seg.index.search(finalQuery);
+      const results = seg.index.search(finalQuery) as LunrResult[];
 
       // Post-filter for phrases
       const filtered = hasPhrases
         ? results.filter((r) =>
             phraseConstraints.every((p) =>
-              verifyPhrase(r.matchData, p, (seg.index as any).pipeline),
+              verifyPhrase(r.matchData, p, (seg.index as LunrIndexWithPipeline).pipeline),
             ),
           )
         : results;
@@ -855,9 +901,10 @@ async function performSearch(
   }
 
   // Deduplicate by ref (chatId) - keep highest score
-  const uniqueMap = new Map<string, any>();
+  const uniqueMap = new Map<string, LunrResult>();
   for (const r of rawResults) {
-    if (!uniqueMap.has(r.ref) || uniqueMap.get(r.ref).score < r.score) {
+    const existing = uniqueMap.get(r.ref);
+    if (!existing || existing.score < r.score) {
       uniqueMap.set(r.ref, r);
     }
   }
@@ -869,8 +916,8 @@ async function performSearch(
   }
 
   // 3. Hydrate (Worker Side)
-  // Hack: We return the raw objects cast as any for the handler to consume
-  return sortedResults as any;
+  // Return LunrResult objects for the handler to convert to SearchResult
+  return sortedResults;
 }
 
 // --- Message Handling ---
@@ -894,11 +941,11 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "search") {
-      const hydrate = (msg as any).hydrate === true;
+      const hydrate = msg.hydrate === true;
       const filterProvider =
-        typeof (msg as any).filterProvider === "string" ? (msg as any).filterProvider : undefined;
+        typeof msg.filterProvider === "string" ? msg.filterProvider : undefined;
       // maxResults is used to limit total hydration
-      const maxResults = (msg as any).maxResults || 1000;
+      const maxResults = msg.maxResults || 1000;
       const parsedQuery = parseSearchQuery(msg.query);
 
       const results = await performSearch(msg.query, hydrate);
@@ -916,7 +963,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         let sentCount = 0;
 
         // Helper to send chunk
-        const sendChunk = (chunk: any[], done: boolean) => {
+        const sendChunk = (chunk: string[] | SearchResult[], done: boolean) => {
           self.postMessage({
             type: "searchResultChunk",
             requestId: msg.requestId,
@@ -928,14 +975,14 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         if (!hydrate) {
           // Legacy ID mode
           for (let i = 0; i < results.length; i += CHUNK) {
-            const chunk = results.slice(i, i + CHUNK);
+            const chunk = results.slice(i, i + CHUNK) as string[];
             sendChunk(chunk, i + CHUNK >= results.length);
             await new Promise((r) => setTimeout(r, 0));
           }
         } else {
           // Hydration Loop
           // 'results' is array of Lunr Result objects with matchData
-          const lunrResults = results as any[];
+          const lunrResults = results as LunrResult[];
           let currentChunk: SearchResult[] = [];
 
           for (let i = 0; i < lunrResults.length; i++) {
@@ -1003,6 +1050,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
   } catch (e) {
     log.error("[SearchWorker] Message error:", e);
-    self.postMessage({ type: "error", error: String(e), requestId: (msg as any).requestId });
+    const requestId = "requestId" in msg ? msg.requestId : undefined;
+    self.postMessage({ type: "error", error: String(e), requestId });
   }
 };

@@ -56,7 +56,7 @@ function extractThinkingMarkdown(thinkingEl: HTMLElement): string {
   const uiElements = clone.querySelectorAll(
     ".thoughts-header-button-content, button, mat-icon, [role='button'], [aria-label*='thinking']",
   );
-  uiElements.forEach((el) => el.remove());
+  for (const el of uiElements) el.remove();
 
   const markdown = turndownService.turndown(clone).trim();
   if (markdown) return normalizeThinkingUiText(markdown);
@@ -82,9 +82,11 @@ function extractDeepResearchReport(): string {
 
   const clone = markdownEl.cloneNode(true) as HTMLElement;
   // Remove any Gemini UI chrome that may be embedded in the report DOM.
-  clone
-    .querySelectorAll("button, mat-icon, [role='button'], canvas-create-button-container")
-    .forEach((el) => el.remove());
+  for (const el of clone.querySelectorAll(
+    "button, mat-icon, [role='button'], canvas-create-button-container",
+  )) {
+    el.remove();
+  }
 
   return turndownService.turndown(clone).trim();
 }
