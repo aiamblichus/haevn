@@ -1,0 +1,58 @@
+---
+title: The Viewer
+description: Read archived conversations in a clean, fully-formatted view.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import viewerImg from '../../../assets/screenshots/viewer.png';
+
+The **Viewer** renders archived conversations in a clean, distraction-free reading view. It supports the full range of content types that HAEVN captures — not just text.
+
+## Opening the viewer
+
+There are three ways to open a conversation in the viewer:
+
+- **From the Archive**: click **Open in Viewer** on any conversation row
+- **From Search results**: click **Open in Viewer** on any search result — the viewer will scroll to and highlight the matching message
+- **Direct link**: navigate to `viewer.html?chatId=<id>` within the extension
+
+<Image src={viewerImg} alt="The HAEVN viewer showing an AI conversation with formatted messages, a data table in the assistant's response, and navigation controls at the top" />
+
+## Viewer features
+
+### Message formatting
+
+All Markdown is rendered — headers, bold, italics, tables, blockquotes, and lists. Code blocks are syntax-highlighted with language detection.
+
+### Multi-modal content
+
+- **Images**: displayed inline, including AI-generated images
+- **Documents**: shown with file name and type; downloadable where available
+- **Audio and video**: rendered with playback controls
+
+### Thinking blocks
+
+When a model like Claude uses extended thinking, the thinking content is shown in a **collapsible block** above the response. Click to expand and read the model's internal reasoning.
+
+### Tool calls
+
+Tool use is rendered in-line: you'll see the tool name, the input parameters, and the output, formatted clearly for readability.
+
+### Conversation branches
+
+If you explored multiple response paths in a conversation (by regenerating a response), the viewer shows **branch navigation controls**. Switch between branches to compare different response paths.
+
+## Viewer actions
+
+The toolbar at the top of the viewer provides:
+
+| Action | Description |
+|---|---|
+| **Copy** | Copies the full conversation to clipboard as plain text |
+| **Export** | Downloads the conversation as JSON or Markdown |
+| **Open** | Opens the original conversation on the source platform |
+
+<Aside type="tip">
+  Add `?debug=1` to the viewer URL to see raw message metadata — useful if you're debugging a sync issue or investigating the data model.
+</Aside>

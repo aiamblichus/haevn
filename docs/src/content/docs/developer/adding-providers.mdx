@@ -1,0 +1,70 @@
+---
+title: Adding Providers
+description: How to add support for a new AI platform.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Each AI platform is implemented as a **provider** — a self-contained plugin consisting of an Extractor, a Transformer, and a Provider registration.
+
+## Provider structure
+
+Each provider lives in `src/providers/{platform}/`:
+
+```
+src/providers/myplatform/
+├── extractor.ts    # Fetches raw data from the platform
+├── transformer.ts  # Converts raw data to HAEVN.Chat format
+├── model.ts        # TypeScript types for the raw data
+└── provider.ts     # Registers the provider with the system
+```
+
+## Step-by-step guide
+
+<Steps>
+1. **Create the provider directory**
+
+   ```bash
+   mkdir src/providers/myplatform
+   ```
+
+2. **Define your raw data model** (`model.ts`)
+
+   Define TypeScript types matching the platform's API or DOM structure.
+
+3. **Write the Extractor** (`extractor.ts`)
+
+   Implement the `Extractor<TRaw>` interface. For API-based platforms, this makes fetch calls using the existing browser session. For DOM-based platforms, this reads from the page DOM.
+
+4. **Write the Transformer** (`transformer.ts`)
+
+   Implement the `Transformer<TRaw>` interface. This converts your raw data into the canonical `HAEVN.Chat` format. See [Data Model](/developer/data-model/) for the format spec.
+
+5. **Register the provider** (`provider.ts`)
+
+   Export a `Provider` object with your extractor, transformer, and platform metadata (name, icon URL, host patterns).
+
+6. **Register in init.ts**
+
+   Add your provider to the provider registry in `src/background/init.ts`.
+
+7. **Add host permissions**
+
+   Add the platform's domain to `manifest.json`'s `host_permissions` array.
+
+8. **Add platform detection**
+
+   Update `src/utils/platform.ts` to recognize the platform's URLs and return the correct provider ID.
+</Steps>
+
+<Aside type="tip">
+  The best way to understand the provider pattern is to read an existing simple provider. `src/providers/qwen/` is a good starting point.
+</Aside>
+
+## Testing your provider
+
+```bash
+pnpm test
+```
+
+Write unit tests for your transformer in `tests/providers/myplatform/`. Use real (anonymized) API response fixtures to validate the transformation.

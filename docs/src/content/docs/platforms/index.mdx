@@ -1,0 +1,40 @@
+---
+title: Platforms
+description: All AI platforms supported by HAEVN.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import providersImg from '../../../assets/screenshots/options-providers.png';
+
+HAEVN supports 9 AI platforms. Each platform has its own sync method and feature set.
+
+<Image src={providersImg} alt="The HAEVN Providers view showing all supported platforms with their downloaded chat counts" />
+
+## Platform comparison
+
+| Platform | Sync method | Images | Thinking blocks | Tool calls |
+|---|---|---|---|---|
+| [ChatGPT](/platforms/chatgpt/) | API | ✅ | — | ✅ |
+| [Claude](/platforms/claude/) | API | ✅ | ✅ | ✅ |
+| [Google Gemini](/platforms/gemini/) | Navigation | ✅ | — | — |
+| [Poe](/platforms/poe/) | Navigation | ✅ | — | — |
+| [Open WebUI](/platforms/openwebui/) | API | ✅ | — | ✅ |
+| [Qwen](/platforms/qwen/) | API | — | — | — |
+| [DeepSeek](/platforms/deepseek/) | API | — | ✅ | — |
+| [Google AI Studio](/platforms/aistudio/) | Navigation | ✅ | — | — |
+| [Grok](/platforms/grok/) | API | ✅ | — | ✅ |
+
+## Sync methods explained
+
+**API sync** — HAEVN calls the platform's internal API to fetch conversations. This is fast (seconds per conversation), runs silently in the background, and doesn't require the platform to be visible in a tab.
+
+**Navigation sync** — HAEVN navigates through the platform's web interface to extract conversations. This is slower (requires actual page navigation) but works for platforms that don't expose a usable API. The platform tab must remain open during the sync.
+
+<Aside type="tip">
+  The Providers view (in the HAEVN options page) shows how many conversations have been downloaded from each platform, along with controls to start a bulk sync.
+</Aside>
+
+## Adding a platform
+
+If you use an AI platform not listed here, [open a GitHub issue](https://github.com/yourusername/haevn/issues) to request support. See the [developer guide](/developer/adding-providers/) if you'd like to contribute a new provider yourself.

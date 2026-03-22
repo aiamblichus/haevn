@@ -1,0 +1,42 @@
+---
+title: ChatGPT
+description: Syncing ChatGPT conversations with HAEVN.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" />
+
+HAEVN syncs ChatGPT via the OpenAI API, making it one of the fastest platforms to sync. Both individual conversations and full bulk syncs run entirely in the background.
+
+## Supported URLs
+
+- `chat.openai.com`
+- `chatgpt.com`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| DALL-E generated images | ✅ |
+| File attachments (PDFs, code, etc.) | ✅ |
+| Web search results | ✅ |
+| Code interpreter output | ✅ |
+| Memory references | ✅ |
+| Voice transcriptions | ✅ |
+| Custom GPT conversations | ✅ |
+| Shared conversation links | — |
+
+## Importing from ChatGPT
+
+ChatGPT's native export is a ZIP file of your full conversation history. This is a great starting point to populate your HAEVN archive before using the extension for ongoing sync.
+
+See [Import → Importing from ChatGPT](/user-guide/import/#importing-from-chatgpt) for step-by-step instructions.
+
+## Known limitations
+
+- **Archived / deleted conversations** — conversations you've deleted on ChatGPT are not recoverable via the API.
+- **Temporary chats** — conversations using the "temporary chat" feature are not stored by OpenAI and cannot be synced.
+- **Voice conversations** — the transcript (if available) is synced; audio is not.

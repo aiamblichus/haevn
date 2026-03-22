@@ -1,0 +1,39 @@
+---
+title: Poe
+description: Syncing Poe conversations with HAEVN.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+<Badge text="Navigation sync" variant="caution" /> <Badge text="Slower" variant="note" />
+
+Poe hosts conversations with many different AI models (Claude, GPT-4, Llama, Gemini, and hundreds of community-created bots). HAEVN syncs all of them using navigation-based extraction.
+
+## Supported URLs
+
+- `poe.com`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| Bot-generated images | ✅ |
+| File attachments | ✅ |
+| Which bot was used | ✅ (stored in metadata) |
+| Multi-bot conversations | ✅ |
+
+## Bulk sync behavior
+
+Bulk sync navigates through `poe.com/chats` to find all your conversations, then visits each one to extract the content. The Poe tab must remain open during the sync.
+
+<Aside type="caution">
+  Poe has a large number of conversations for active users. If you've used Poe extensively, the initial bulk sync may take a significant amount of time. You can pause and resume at any time.
+</Aside>
+
+## Known limitations
+
+- **Deleted conversations** — conversations deleted on Poe cannot be recovered.
+- **Shared conversation links** — conversations viewed via shared links (not from your own account) are not accessible.
+- **Bot metadata** — the full bot configuration (system prompt, etc.) for custom bots is not synced.

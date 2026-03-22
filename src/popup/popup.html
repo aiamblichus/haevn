@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HAEVN Chat Sync</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body
+    class="w-[380px] h-[500px] bg-background text-foreground flex flex-col overflow-hidden"
+    style="font-family: 'JetBrains Mono', monospace;"
+  >
+    <!-- Header -->
+    <header
+      class="flex-shrink-0 p-4 border-b-2 border-[hsl(var(--border))] bg-[hsl(var(--card))] backdrop-blur-sm flex items-center justify-between"
+    >
+      <div class="flex items-center gap-3">
+        <div
+          class="w-9 h-9 flex items-center justify-center"
+        >
+          <img 
+            src="../icons/haevn-logo.png" 
+            alt="HAEVN Logo" 
+            class="w-full h-full object-contain guardian-glow-logo"
+          />
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-[hsl(var(--foreground))] uppercase tracking-widest">HAEVN</h1>
+          <p class="text-xs text-[hsl(var(--muted-foreground))] uppercase tracking-wider">HAVEN FOR YOUR CHATS</p>
+        </div>
+      </div>
+      <div class="relative flex items-center justify-center min-w-[120px]">
+        <div
+          id="archiveLoadingIndicator"
+          class="flex items-center justify-center gap-1.5 text-[hsl(var(--primary))] font-bold text-xs uppercase tracking-wider"
+        >
+          <span class="loading-dots">LOADING</span>
+        </div>
+        <button
+          id="manageSyncedChatsBtn"
+          disabled
+          class="hidden flex items-center justify-center gap-1.5 bg-[hsl(var(--card))] text-[hsl(var(--primary))] font-bold py-1.5 px-3 border-2 border-[hsl(var(--primary))] hover:shadow-[0_0_8px_hsl(var(--primary)/0.5)] transition-all text-xs uppercase tracking-wider brutalist-hover disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg
+            class="w-3.5 h-3.5"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+            ></path>
+          </svg>
+          <span>ARCHIVE</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow overflow-y-auto p-3 space-y-2.5">
+        <!-- Platform Detection -->
+        <div class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--border))] p-3 space-y-2" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);">
+          <div class="flex items-center gap-3">
+            <div
+              id="platform-icon"
+              class="w-8 h-8 bg-[hsl(var(--muted))] flex items-center justify-center border-2 border-[hsl(var(--border))]"
+            >
+              <span class="text-lg">👁️</span>
+            </div>
+            <div class="flex-1">
+              <p id="platform-name" class="font-bold text-[hsl(var(--foreground))] uppercase tracking-wider text-xs">
+                DETECTING...
+              </p>
+              <p class="text-xs text-[hsl(var(--muted-foreground))] uppercase tracking-wider">
+                ANALYZING PAGE
+              </p>
+            </div>
+          </div>
+          <div class="bg-[hsl(var(--muted))] p-2 border-2 border-[hsl(var(--border))]">
+            <p
+              id="platform-url"
+              class="text-xs text-[hsl(var(--muted-foreground))] break-all font-mono"
+            >
+              NO URL DETECTED
+            </p>
+          </div>
+        </div>
+
+        <!-- Unsupported Platform Message -->
+        <div
+          id="unsupported-platform-message"
+          class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--border))] p-3 space-y-1.5 hidden" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);"
+        >
+          <p class="text-xs font-bold text-[hsl(var(--foreground))] uppercase tracking-wider">
+            VISIT SUPPORTED SITES:
+          </p>
+          <ul
+            class="text-xs text-[hsl(var(--muted-foreground))] space-y-0.5 list-none"
+            style="font-family: 'JetBrains Mono', monospace;"
+          >
+            <li class="before:content-['▶'] before:text-[hsl(var(--primary))] before:mr-2">ChatGPT (chat.openai.com, chatgpt.com)</li>
+            <li class="before:content-['▶'] before:text-[hsl(var(--primary))] before:mr-2">Claude (claude.ai)</li>
+            <li class="before:content-['▶'] before:text-[hsl(var(--primary))] before:mr-2">Google Gemini (gemini.google.com)</li>
+            <li class="before:content-['▶'] before:text-[hsl(var(--primary))] before:mr-2">Poe (poe.com)</li>
+            <li class="before:content-['▶'] before:text-[hsl(var(--primary))] before:mr-2">Open WebUI (self-hosted)</li>
+          </ul>
+        </div>
+
+        <!-- Bulk Sync Progress Section -->
+        <div id="syncProgressSection" class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--secondary))] p-3 space-y-3 hidden" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);">
+          <p class="text-xs font-bold text-[hsl(var(--foreground))] uppercase tracking-wider">
+            BULK SYNC IN PROGRESS...
+          </p>
+          <div class="w-full bg-[hsl(var(--muted))] h-2 border border-[hsl(var(--border))]">
+            <div id="progress-bar" class="bg-[hsl(var(--secondary))] h-full transition-all" style="width: 0%;"></div>
+          </div>
+          <p id="progress-text" class="text-center text-xs text-[hsl(var(--muted-foreground))]">Initializing...</p>
+          <button
+            id="stopSyncBtn"
+            class="w-full flex items-center justify-center gap-2 bg-[hsl(var(--destructive))] text-[hsl(var(--destructive-foreground))] font-bold py-2 px-4 border-2 border-[hsl(var(--destructive))] hover:shadow-[0_0_8px_hsl(var(--destructive)/0.5)] transition-all text-xs uppercase tracking-wider brutalist-hover"
+          >
+            <span>STOP SYNC</span>
+          </button>
+        </div>
+
+        <!-- Sync Actions -->
+        <div id="syncActionsSection" class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--secondary))] p-3 space-y-2 hidden" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);">
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              id="exportSingleBtn"
+              disabled
+              class="flex items-center justify-center gap-2 bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] font-bold py-2.5 px-4 border-2 border-[hsl(var(--secondary))] hover:shadow-[0_0_8px_hsl(var(--secondary)/0.5)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs uppercase tracking-wider brutalist-hover lighthouse-glow"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                ></path>
+              </svg>
+              <span>SYNC</span>
+            </button>
+            <button
+              id="syncAllBtn"
+              disabled
+              class="flex items-center justify-center gap-2 bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] font-bold py-2.5 px-4 border-2 border-[hsl(var(--secondary))] hover:shadow-[0_0_8px_hsl(var(--secondary)/0.5)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs uppercase tracking-wider brutalist-hover lighthouse-glow hidden"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h5M20 20v-5h-5M4 4l16 16"
+                ></path>
+              </svg>
+              <span>SYNC ALL</span>
+            </button>
+          </div>
+          <!-- Sync Status and Overwrite Checkbox -->
+          <div class="flex items-center justify-between gap-2 pt-1">
+            <div
+              id="syncIndicator"
+              class="hidden flex items-center gap-1"
+            >
+              <div id="syncIndicatorDot" class="w-2 h-2 rounded-full"></div>
+              <span id="syncIndicatorText" class="text-xs uppercase tracking-wider font-bold"></span>
+            </div>
+            <div class="flex items-center gap-2 ml-auto">
+              <input
+                type="checkbox"
+                id="overwriteExistingCheckbox"
+                class="w-4 h-4 border-2 border-[hsl(var(--secondary))] accent-[hsl(var(--secondary))] focus:ring-2 focus:ring-[hsl(var(--secondary))]"
+              />
+              <label
+                for="overwriteExistingCheckbox"
+                class="text-xs text-[hsl(var(--muted-foreground))] cursor-pointer uppercase tracking-wider font-bold"
+              >
+                OVERWRITE EXISTING
+              </label>
+            </div>
+          </div>
+        </div>
+
+      <!-- Export Section -->
+      <div id="exportSection" class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--accent))] p-3 space-y-2 hidden" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);">
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              id="exportBtn"
+              disabled
+              class="flex items-center justify-center gap-2 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] font-bold py-2.5 px-4 border-2 border-[hsl(var(--primary))] hover:shadow-[0_0_8px_hsl(var(--primary)/0.5)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs uppercase tracking-wider brutalist-hover"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                ></path>
+              </svg>
+              <span>EXPORT</span>
+            </button>
+            <button
+              id="exportAllBtn"
+              disabled
+              class="flex items-center justify-center gap-2 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] font-bold py-2.5 px-4 border-2 border-[hsl(var(--primary))] hover:shadow-[0_0_8px_hsl(var(--primary)/0.5)] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs uppercase tracking-wider brutalist-hover"
+            >
+              <svg
+                class="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                ></path>
+              </svg>
+              <span>EXPORT ALL</span>
+            </button>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-[hsl(var(--muted-foreground))] uppercase tracking-wider font-bold">
+            Export format: HAEVN archive
+          </div>
+        </div>
+    </main>
+
+    <!-- Active-tab confirmation dialog -->
+    <div
+      id="activeTabConfirmDialog"
+      class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+    >
+      <div
+        class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--secondary))] p-4 space-y-4 w-full max-w-xs"
+        style="box-shadow: 4px 4px 0 0 rgba(0,0,0,0.4);"
+      >
+        <div class="space-y-2">
+          <p class="text-sm font-bold uppercase tracking-wider text-[hsl(var(--secondary))]">Keep this tab visible</p>
+          <p id="activeTabConfirmMessage" class="text-xs text-[hsl(var(--muted-foreground))] leading-relaxed"></p>
+        </div>
+        <div class="flex gap-2">
+          <button
+            id="activeTabConfirmCancel"
+            class="flex-1 text-xs uppercase tracking-wider font-bold py-2 px-3 border-2 border-[hsl(var(--border))] hover:border-[hsl(var(--secondary))] transition-all"
+          >Cancel</button>
+          <button
+            id="activeTabConfirmProceed"
+            class="flex-1 text-xs uppercase tracking-wider font-bold py-2 px-3 bg-[hsl(var(--secondary))] text-[hsl(var(--secondary-foreground))] border-2 border-[hsl(var(--secondary))] hover:shadow-[0_0_8px_hsl(var(--secondary)/0.5)] transition-all"
+          >Start Sync</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

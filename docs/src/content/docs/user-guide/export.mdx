@@ -1,0 +1,77 @@
+---
+title: Export
+description: Download your conversations as JSON or Markdown.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+HAEVN can export any conversation — or your entire archive — in two formats: **JSON** (structured data) and **Markdown** (human-readable text).
+
+## Export formats
+
+<Tabs>
+  <TabItem label="JSON">
+    **Best for:** Backup, programmatic use, re-importing into HAEVN, or piping into other tools.
+
+    The JSON export preserves the complete data model: all messages, branches, metadata, timestamps, tool calls, thinking blocks, and binary attachments (base64-encoded). This is the lossless format — everything HAEVN knows about a conversation is in this file.
+
+    ```json
+    {
+      "id": "abc123",
+      "title": "My Conversation",
+      "source": "chatgpt",
+      "createdAt": "2024-01-15T14:23:00Z",
+      "messages": { ... }
+    }
+    ```
+  </TabItem>
+  <TabItem label="Markdown">
+    **Best for:** Reading in note-taking apps (Obsidian, Notion, Bear), sharing with others, or archiving as plain text.
+
+    The Markdown export produces a clean, human-readable document with the conversation title, metadata header, and all messages formatted as sections. Code blocks are preserved with language hints. Images are included as inline links or alt-text descriptions.
+
+    Works seamlessly with Obsidian's note linking, Notion's Markdown import, and any text editor.
+  </TabItem>
+</Tabs>
+
+## Exporting a single conversation
+
+**From the Archive:** Click **Export** on any conversation row. A dialog will ask you to choose JSON or Markdown, then the file downloads immediately.
+
+**From the Viewer:** Click the **Export** button in the viewer toolbar.
+
+**From Search results:** Click **Export** on any search result row.
+
+## Exporting multiple conversations
+
+To export a selection of conversations:
+
+1. In the Archive, use the checkboxes to select the conversations you want.
+2. Click **Export Selected** in the toolbar.
+3. Choose JSON or Markdown format.
+4. HAEVN generates a ZIP file containing one file per conversation, plus any extracted media files.
+
+## Exporting your entire archive
+
+Click **Export All** in the Archive toolbar to download your complete archive as a ZIP file. For large archives, ZIP generation runs in the background — the download will start automatically when it's ready.
+
+<Aside type="tip">
+  **Backing up your archive:** Use Export All to JSON periodically as a backup. The resulting ZIP can be re-imported into HAEVN on another machine using the [Import](/user-guide/import/) feature.
+</Aside>
+
+## What's included in exports
+
+| Content | JSON | Markdown |
+|---|---|---|
+| All messages | ✅ | ✅ |
+| Timestamps | ✅ | ✅ (header) |
+| Platform metadata | ✅ | ✅ (header) |
+| Images (binary) | ✅ (base64) | ✅ (inline reference) |
+| Thinking blocks | ✅ | ✅ (as section) |
+| Tool calls | ✅ | ✅ (as section) |
+| Conversation branches | ✅ (full tree) | ✅ (main branch only) |
+| Code blocks | ✅ | ✅ (with language) |
+
+<Aside>
+  Markdown exports use the **main branch** of a conversation (the most recent response path). To export all branches, use JSON format.
+</Aside>

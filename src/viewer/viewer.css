@@ -1,0 +1,713 @@
+/* Brutalist Terminal Typography - Scandinavian Folk Horror + Vaporwave */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap");
+
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind base;
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind components;
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Scandinavian Folk Horror + Vaporwave Palette */
+    /* Muted earth tones (folk horror) + neon accents (vaporwave) */
+    --background: 210 25% 8%; /* Deep forest navy - folk horror darkness */
+    --foreground: 180 20% 88%; /* Muted cyan - terminal text */
+    --card: 210 20% 12%; /* Dark card backgrounds */
+    --card-foreground: 180 20% 88%;
+    --popover: 210 20% 10%;
+    --popover-foreground: 180 20% 88%;
+    --primary: 180 100% 41%; /* Teal - vaporwave neon */
+    --primary-foreground: 210 25% 8%;
+    --secondary: 45 85% 52%; /* Gold - lighthouse */
+    --secondary-foreground: 210 25% 8%;
+    --muted: 210 15% 18%; /* Muted earth tone */
+    --muted-foreground: 180 15% 55%; /* Muted text */
+    --accent: 300 76% 72%; /* Purple - vaporwave magenta */
+    --accent-foreground: 210 25% 8%;
+    --destructive: 0 84.2% 60.2%; /* Red for errors */
+    --destructive-foreground: 210 25% 98%;
+    --border: 180 30% 25%; /* Teal-tinted borders */
+    --input: 210 20% 15%; /* Dark input backgrounds */
+    --ring: 180 100% 41%; /* Teal focus ring */
+    --radius: 0rem; /* Brutalist: no rounded corners */
+
+    /* Terminal prompt colors */
+    --prompt-user: 180 100% 41%; /* Teal for user */
+    --prompt-assistant: 300 76% 72%; /* Purple for assistant */
+    --prompt-system: 45 85% 52%; /* Gold for system */
+  }
+
+  html {
+    -webkit-font-smoothing: subpixel-antialiased; /* Terminal aesthetic */
+    -moz-osx-font-smoothing: auto;
+    /* Scandinavian folk horror background - deep forest with mist */
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.03) 0px,
+        transparent 1px,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 3px
+      ), linear-gradient(135deg, #0a1628 0%, #1a2332 25%, #0f1419 50%, #1a2332 75%, #0a1628 100%);
+    background-size:
+      100% 4px,
+      100% 100%;
+    min-height: 100vh;
+    /* Subtle scanline effect (vaporwave CRT) */
+    position: relative;
+  }
+
+  html::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 206, 209, 0.02) 0px,
+      transparent 1px,
+      transparent 2px,
+      rgba(218, 112, 214, 0.02) 3px
+    );
+    pointer-events: none;
+    z-index: 9999;
+    mix-blend-mode: overlay;
+  }
+
+  body {
+    background: transparent;
+    color: hsl(var(--foreground));
+    font-family: "JetBrains Mono", "Courier New", monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    letter-spacing: 0.01em;
+  }
+}
+
+@layer components {
+  /* Brutalist terminal highlight */
+  .highlight {
+    background-color: rgba(212, 175, 55, 0.4); /* Gold highlight - brutalist */
+    padding: 0 3px;
+    box-shadow: 0 0 6px rgba(212, 175, 55, 0.6);
+    font-weight: 600;
+    color: #ffd700;
+  }
+
+  /* Terminal-style message containers - brutalist geometric */
+  .message-container {
+    @apply flex relative;
+    margin-bottom: 2rem;
+    position: relative;
+  }
+
+  .message-container.user {
+    @apply justify-end;
+  }
+
+  .message-container.assistant {
+    @apply justify-start;
+  }
+
+  /* Brutalist terminal card - no rounded corners, bold borders */
+  .message-bubble {
+    @apply max-w-4xl;
+    position: relative;
+    padding: 1.5rem 1.5rem 1.5rem 3rem; /* Extra left padding for prompt strip */
+    margin-bottom: 0.5rem;
+    border: 2px solid;
+    background: hsl(var(--card));
+    font-size: 15px;
+    line-height: 1.7;
+    /* Brutalist: sharp corners, exposed structure */
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      4px 4px 0 0 rgba(0, 0, 0, 0.2); /* Brutalist shadow offset */
+  }
+
+  /* Terminal prompt strip - left margin color bar */
+  .message-bubble::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    border-right: 2px solid;
+  }
+
+  /* Message header wrapper for copy button positioning */
+  .message-header-wrapper {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding-right: 36px; /* Space for copy button */
+  }
+
+  /* Copy button - top right of message */
+  .message-copy-button {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid hsl(var(--border));
+    background: hsl(var(--card));
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: "JetBrains Mono", monospace;
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      1px 1px 0 0 rgba(0, 0, 0, 0.15);
+    z-index: 10;
+  }
+
+  .message-copy-button:hover {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      1px 1px 0 0 rgba(0, 0, 0, 0.15),
+      0 0 8px hsl(var(--primary) / 0.4);
+  }
+
+  .message-copy-button:active {
+    transform: translate(1px, 1px);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      0 0 0 0 rgba(0, 0, 0, 0.15);
+  }
+
+  .message-bubble.user {
+    border-color: hsl(var(--prompt-user));
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+  }
+
+  .message-bubble.user::before {
+    background: hsl(var(--prompt-user));
+    border-right-color: hsl(var(--prompt-user));
+    box-shadow: 0 0 8px hsl(var(--prompt-user) / 0.5); /* Vaporwave neon glow */
+  }
+
+  .message-bubble.assistant {
+    border-color: hsl(var(--prompt-assistant));
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+  }
+
+  .message-bubble.assistant::before {
+    background: hsl(var(--prompt-assistant));
+    border-right-color: hsl(var(--prompt-assistant));
+    box-shadow: 0 0 8px hsl(var(--prompt-assistant) / 0.5); /* Vaporwave neon glow */
+  }
+
+  /* Brutalist thinking block - terminal-style collapsible */
+  .thinking-bubble {
+    @apply mt-2;
+    border: 2px solid hsl(var(--prompt-assistant));
+    background: hsl(var(--card));
+    margin-left: -3rem; /* Align with message content */
+    margin-right: 0;
+    padding-left: 3rem;
+    position: relative;
+  }
+
+  .thinking-bubble::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background: hsl(var(--prompt-assistant));
+    box-shadow: 0 0 6px hsl(var(--prompt-assistant) / 0.6);
+  }
+
+  .thinking-header {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-xs leading-tight cursor-pointer;
+    background: hsl(var(--card));
+    color: hsl(var(--prompt-assistant));
+    border: none;
+    border-bottom: 2px solid hsl(var(--prompt-assistant));
+    font-weight: 700;
+    font-family: "JetBrains Mono", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 0;
+    width: 100%;
+    transition: all 0.2s ease;
+  }
+
+  .thinking-header:hover {
+    background: hsl(var(--prompt-assistant) / 0.1);
+    box-shadow: inset 0 0 10px hsl(var(--prompt-assistant) / 0.2);
+  }
+
+  .thinking-content {
+    @apply p-4 whitespace-pre-wrap break-words;
+    background: hsl(var(--card));
+    color: hsl(var(--muted-foreground));
+    font-size: 13px;
+    line-height: 1.6;
+    border-top: 1px solid hsl(var(--prompt-assistant) / 0.3);
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  /* Brutalist system prompt - terminal warning style */
+  .system-container {
+    @apply flex justify-center;
+    margin-bottom: 2rem;
+  }
+
+  .system-bubble {
+    @apply max-w-4xl w-full;
+    border: 2px solid hsl(var(--prompt-system));
+    background: hsl(var(--card));
+    padding: 1.5rem 1.5rem 1.5rem 3rem;
+    position: relative;
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      4px 4px 0 0 rgba(0, 0, 0, 0.2);
+  }
+
+  .system-bubble::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background: hsl(var(--prompt-system));
+    box-shadow: 0 0 10px hsl(var(--prompt-system) / 0.6);
+  }
+
+  .system-label {
+    @apply text-xs font-bold mb-3 uppercase tracking-widest;
+    color: hsl(var(--prompt-system));
+    font-family: "JetBrains Mono", monospace;
+    letter-spacing: 0.15em;
+  }
+
+  .system-content {
+    @apply whitespace-pre-wrap break-words;
+    color: hsl(var(--foreground));
+    font-size: 15px;
+    line-height: 1.7;
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  /* Brutalist attachment grid - geometric, exposed */
+  .attachment-grid {
+    @apply mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4;
+  }
+
+  .attachment-item {
+    border: 2px solid hsl(var(--border));
+    background: hsl(var(--card));
+    overflow: hidden;
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      2px 2px 0 0 rgba(0, 0, 0, 0.15);
+    transition: all 0.2s ease;
+  }
+
+  .attachment-item:hover {
+    border-color: hsl(var(--primary));
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      2px 2px 0 0 rgba(0, 0, 0, 0.15),
+      0 0 12px hsl(var(--primary) / 0.3);
+  }
+
+  .attachment-item img,
+  .attachment-item video {
+    @apply w-full h-auto object-cover;
+    display: block;
+  }
+
+  .attachment-placeholder {
+    @apply p-4 flex items-center gap-3;
+    color: hsl(var(--muted-foreground));
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+  }
+
+  /* Brutalist branch navigation - terminal-style controls */
+  .branch-nav {
+    @apply flex items-center justify-center gap-3 my-4;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 13px;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .branch-nav-btn {
+    @apply w-8 h-8 flex items-center justify-center;
+    border: 2px solid hsl(var(--border));
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    border-radius: 0;
+    transition: all 0.2s ease;
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  .branch-nav-btn:hover:not(:disabled) {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
+  }
+
+  .branch-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* Brutalist markdown styles - terminal aesthetic */
+  .message-bubble h1,
+  .message-bubble h2,
+  .message-bubble h3,
+  .message-bubble h4,
+  .message-bubble h5,
+  .message-bubble h6 {
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--foreground));
+    line-height: 1.4;
+  }
+
+  .message-bubble h1 {
+    font-size: 1.75rem;
+    border-bottom: 2px solid hsl(var(--border));
+    padding-bottom: 0.5rem;
+  }
+
+  .message-bubble h2 {
+    font-size: 1.5rem;
+    border-bottom: 1px solid hsl(var(--border));
+    padding-bottom: 0.4rem;
+  }
+
+  .message-bubble h3 {
+    font-size: 1.25rem;
+  }
+
+  .message-bubble h4 {
+    font-size: 1.1rem;
+  }
+
+  .message-bubble p {
+    margin-bottom: 1rem;
+    line-height: 1.7;
+  }
+
+  .message-bubble p:last-child {
+    margin-bottom: 0;
+  }
+
+  .message-bubble ul,
+  .message-bubble ol {
+    margin-bottom: 1rem;
+    margin-left: 1.5rem;
+    padding-left: 0.5rem;
+  }
+
+  .message-bubble ul {
+    list-style: none;
+  }
+
+  .message-bubble ul li::before {
+    content: "▶";
+    color: hsl(var(--primary));
+    font-weight: bold;
+    display: inline-block;
+    width: 1em;
+    margin-left: -1.5em;
+    margin-right: 0.5em;
+  }
+
+  .message-bubble ol {
+    list-style: decimal;
+    list-style-position: outside;
+  }
+
+  .message-bubble li {
+    margin-bottom: 0.5rem;
+    line-height: 1.7;
+  }
+
+  .message-bubble blockquote {
+    border-left: 4px solid hsl(var(--primary));
+    padding-left: 1rem;
+    margin: 1.5rem 0;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    background: hsl(var(--muted) / 0.3);
+    font-style: italic;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .message-bubble code {
+    background: hsl(var(--muted));
+    padding: 0.2rem 0.4rem;
+    font-size: 0.9em;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--primary));
+    border: 1px solid hsl(var(--border));
+    border-radius: 0;
+  }
+
+  .message-bubble pre {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    border: 2px solid hsl(var(--border));
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      2px 2px 0 0 rgba(0, 0, 0, 0.15);
+  }
+
+  .message-bubble pre code {
+    background: transparent;
+    padding: 0;
+    border: none;
+    font-size: 0.9em;
+    color: inherit;
+  }
+
+  .message-bubble a {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+    text-decoration-color: hsl(var(--primary) / 0.5);
+    transition: all 0.2s ease;
+  }
+
+  .message-bubble a:hover {
+    color: hsl(var(--secondary));
+    text-decoration-color: hsl(var(--secondary));
+    text-shadow: 0 0 4px hsl(var(--secondary) / 0.5);
+  }
+
+  .message-bubble strong {
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+
+  .message-bubble em {
+    font-style: italic;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .message-bubble hr {
+    border: none;
+    border-top: 2px solid hsl(var(--border));
+    margin: 2rem 0;
+    height: 0;
+  }
+
+  .message-bubble table {
+    border-collapse: collapse;
+    border: 2px solid hsl(var(--border));
+    margin: 1.5rem 0;
+    width: 100%;
+  }
+
+  .message-bubble th,
+  .message-bubble td {
+    border: 1px solid hsl(var(--border));
+    padding: 0.75rem;
+    text-align: left;
+  }
+
+  .message-bubble th {
+    background: hsl(var(--muted));
+    font-weight: 700;
+    color: hsl(var(--foreground));
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  /* System and thinking content inherit brutalist markdown styles */
+  .system-content h1,
+  .system-content h2,
+  .system-content h3,
+  .system-content h4,
+  .system-content h5,
+  .system-content h6 {
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--foreground));
+  }
+
+  .system-content code {
+    background: hsl(var(--muted));
+    padding: 0.2rem 0.4rem;
+    font-size: 0.9em;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--prompt-system));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .system-content pre {
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    border: 2px solid hsl(var(--border));
+    border-radius: 0;
+  }
+
+  .system-content pre code {
+    background: transparent;
+    padding: 0;
+    border: none;
+  }
+
+  .system-content a {
+    color: hsl(var(--prompt-system));
+    text-decoration: underline;
+  }
+
+  .thinking-content h1,
+  .thinking-content h2,
+  .thinking-content h3,
+  .thinking-content h4,
+  .thinking-content h5,
+  .thinking-content h6 {
+    font-weight: 700;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .thinking-content code {
+    background: hsl(var(--muted));
+    padding: 0.2rem 0.4rem;
+    font-size: 0.9em;
+    font-family: "JetBrains Mono", monospace;
+    color: hsl(var(--prompt-assistant));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .thinking-content pre {
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    border: 2px solid hsl(var(--border));
+    border-radius: 0;
+  }
+
+  .thinking-content pre code {
+    background: transparent;
+    padding: 0;
+    border: none;
+  }
+
+  /* Image Modal - Brutalist style */
+  .image-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    padding: 2rem;
+  }
+
+  .image-modal-content {
+    position: relative;
+    max-width: 95vw;
+    max-height: 95vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .image-modal-img {
+    max-width: 100%;
+    max-height: 95vh;
+    object-fit: contain;
+    border: 2px solid hsl(var(--border));
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      8px 8px 0 0 rgba(0, 0, 0, 0.2);
+    background: hsl(var(--card));
+  }
+
+  .image-modal-close,
+  .image-modal-download {
+    position: absolute;
+    z-index: 10001;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid hsl(var(--border));
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: "JetBrains Mono", monospace;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      2px 2px 0 0 rgba(0, 0, 0, 0.15);
+  }
+
+  .image-modal-close {
+    top: 16px;
+    right: 16px;
+  }
+
+  .image-modal-download {
+    top: 16px;
+    right: 72px;
+  }
+
+  .image-modal-close:hover,
+  .image-modal-download:hover {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary) / 0.1);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      2px 2px 0 0 rgba(0, 0, 0, 0.15),
+      0 0 12px hsl(var(--primary) / 0.5);
+  }
+
+  .image-modal-close:active,
+  .image-modal-download:active {
+    transform: translate(2px, 2px);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.2),
+      0 0 0 0 rgba(0, 0, 0, 0.15);
+  }
+}

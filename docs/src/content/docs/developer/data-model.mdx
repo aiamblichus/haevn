@@ -1,0 +1,29 @@
+---
+title: Data Model
+description: The HAEVN.Chat format and how data is stored.
+---
+
+The canonical data format is documented in the [Data Formats reference](/reference/data-formats/). This page covers the internal storage model and how data flows through the system.
+
+## Storage layers
+
+| Layer | Technology | What's stored |
+|---|---|---|
+| Primary store | IndexedDB (Dexie) | Chat metadata, message content, thumbnails, search index |
+| Media store | OPFS | Full-size images, documents, audio, video |
+| Config | chrome.storage.local | Settings, operational state |
+
+## Dexie schema (key tables)
+
+- **`chats`** — one record per conversation (metadata + message tree)
+- **`searchIndex`** — Lunr.js serialized index
+- **`thumbnails`** — compressed image thumbnails (for Gallery view)
+- **`operationalState`** — bulk sync state machine (survives service worker restarts)
+
+## Soft delete
+
+Conversations are soft-deleted (a `deletedAt` flag is set). They're filtered out at query time via compound indexes. The **Janitor service** runs every 30 minutes to permanently remove soft-deleted records and their associated OPFS media.
+
+## Message tree
+
+Conversations store a flat map of messages keyed by ID, with each message holding a `parentId` reference. This represents the branching structure of conversations where multiple response paths exist. The Viewer reconstructs the tree from this flat map for display.

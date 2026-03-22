@@ -1,0 +1,41 @@
+---
+title: Claude
+description: Syncing Claude conversations with HAEVN.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" />
+
+HAEVN syncs Claude conversations via the Anthropic API. It supports the full range of Claude's capabilities, including extended thinking blocks and tool use.
+
+## Supported URLs
+
+- `claude.ai`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| File attachments | ✅ |
+| **Extended thinking blocks** | ✅ |
+| Tool calls (web search, analysis, etc.) | ✅ |
+| Projects and project context | ✅ |
+| Artifacts (code, documents) | ✅ |
+
+### Thinking blocks
+
+Claude's extended thinking feature is fully supported. When a conversation includes thinking content, HAEVN preserves the complete internal reasoning. In the Viewer, thinking blocks appear as collapsible sections above the response — click to expand and read the model's full chain of thought.
+
+## Claude Code (import only)
+
+HAEVN can import **Claude Code** session files. These are the JSONL files Claude Code generates in your project's `.claude/` directory. Import them via the [Import](/user-guide/import/) feature.
+
+Note: Live sync of Claude Code sessions is not currently supported — only file-based import.
+
+## Known limitations
+
+- **Starred conversations** — the star status is not preserved in the HAEVN archive.
+- **Projects** — project-level instructions and context are not currently synced alongside conversations.

@@ -1,0 +1,61 @@
+---
+title: Installation
+description: How to install HAEVN in Chrome.
+---
+
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+HAEVN runs as a Chrome extension (Manifest V3). It requires Chrome or any Chromium-based browser (Edge, Brave, Arc, etc.).
+
+## Install from the Chrome Web Store
+
+<Steps>
+1. Open the [HAEVN page on the Chrome Web Store](#) *(link coming soon)*.
+
+2. Click **Add to Chrome**.
+
+3. In the confirmation dialog, click **Add extension**.
+
+4. The HAEVN icon will appear in your Chrome toolbar. If you don't see it, click the puzzle-piece icon (Extensions) and pin HAEVN.
+</Steps>
+
+## Install manually (developer / early access)
+
+If you have a local build or a downloaded `.zip` of the extension:
+
+<Steps>
+1. Open `chrome://extensions` in your browser.
+
+2. Enable **Developer mode** using the toggle in the top-right corner.
+
+3. Click **Load unpacked**.
+
+4. Select the `dist/` folder from your HAEVN build.
+
+5. The extension will load and the HAEVN icon will appear in your toolbar.
+</Steps>
+
+<Aside type="caution">
+  Manually loaded extensions are not auto-updated. You'll need to reload the extension and click **Update** whenever you install a new build.
+</Aside>
+
+## Verify the installation
+
+Click the HAEVN icon in your toolbar. A small popup will appear showing the HAEVN interface. If you're on a supported platform (like ChatGPT or Claude), you'll see sync options. If you're on any other page, it will show a list of supported sites to visit.
+
+Click **Archive** in the popup to open the full archive manager — this is your home base for browsing, searching, and managing all your synced conversations.
+
+## Permissions
+
+HAEVN requests the following browser permissions:
+
+| Permission | Why it's needed |
+|---|---|
+| Storage | Saves your synced conversations locally |
+| Tabs | Detects which AI platform you're currently on |
+| Scripting | Injects a content script to read conversation data |
+| Host permissions | Accesses the APIs of each supported platform |
+
+<Aside>
+  All data stays in your browser. HAEVN does not send anything to external servers. See [Privacy & Storage](/reference/privacy/) for details.
+</Aside>

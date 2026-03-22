@@ -1,0 +1,27 @@
+---
+title: Qwen
+description: Syncing Qwen conversations with HAEVN.
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" />
+
+Qwen is Alibaba's family of large language models, accessible via their web chat interface. HAEVN syncs Qwen conversations via API.
+
+## Supported URLs
+
+- `chat.qwen.ai`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| Code blocks | ✅ |
+| Mathematical notation | ✅ |
+
+## Known limitations
+
+- **Images** — image generation and image uploads are not currently captured.
+- **Long-context mode** — very long conversations in Qwen's extended context mode are synced but may have truncated content in the search index.

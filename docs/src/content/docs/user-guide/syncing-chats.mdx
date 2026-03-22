@@ -1,0 +1,119 @@
+---
+title: Syncing Chats
+description: How to sync individual conversations and bulk-sync your entire history.
+---
+
+import { Aside, Steps, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
+import providersImg from "../../../assets/screenshots/options-providers.png";
+
+HAEVN offers two ways to sync conversations: **single chat sync** (one conversation at a time) and **bulk sync** (your entire history from a platform).
+
+## Single chat sync
+
+Single chat sync is the fastest way to save a conversation you're currently viewing.
+
+<Steps>
+1. Navigate to a conversation on any [supported platform](/platforms/).
+
+2. Click the **HAEVN icon** in your Chrome toolbar.
+
+3. The popup shows the conversation title and its sync status.
+
+4. Click **SYNC**. HAEVN captures the full conversation and saves it locally.
+   </Steps>
+
+The sync typically completes in under two seconds. Once done, the status changes to **SYNCED** and the conversation appears in your archive.
+
+<Aside type="tip">
+  You can re-sync a conversation at any time to pick up new messages. By
+  default, re-syncing updates the existing archive entry. To create a fresh
+  copy, enable the **Overwrite** option in the popup before syncing.
+</Aside>
+
+## Bulk sync
+
+Bulk sync downloads your entire conversation history from a platform in one operation. This is the best way to get started — import everything at once and then use single chat sync going forward.
+
+{/_ VIDEO: Record a 90-second screencast showing: 1. Opening the HAEVN popup on chatgpt.com 2. Clicking "Sync All" — transition to the Providers tab in the options page 3. The ChatGPT card showing a progress bar: "Syncing 23/450..." 4. Speeding up to show the counter incrementing 5. Progress bar completing — "Downloaded 450" count updates 6. Switching to the Archive tab, showing the newly synced chats
+Narration: "HAEVN syncs your entire ChatGPT history in the background. You can keep using your browser while it runs."
+_/}
+
+### Starting a bulk sync
+
+<Tabs>
+  <TabItem label="From the popup">
+    Click the **HAEVN icon** on any supported platform. Click the **Sync All**
+    button (below the main Sync button). HAEVN will open the Providers view and
+    begin syncing in the background.
+  </TabItem>
+  <TabItem label="From Providers">
+    Open the archive (click **Archive** in the popup, or right-click the HAEVN
+    icon → Options). Navigate to **Providers** in the left sidebar. Find the
+    platform you want to sync and click **SYNC ALL**.
+  </TabItem>
+</Tabs>
+
+<Image
+  src={providersImg}
+  alt="The Providers view showing all supported platforms with their downloaded chat counts and Sync All buttons. The Poe card shows an active sync in progress at 93%."
+/>
+
+### Monitoring progress
+
+The Providers view shows real-time progress for any active sync:
+
+- A **progress bar** shows completion percentage
+- The counter shows `Syncing X/Y...` (current / total)
+- The **Downloaded** count updates as conversations are saved
+
+For API-based providers (ChatGPT, Claude, Open WebUI) you can navigate away freely — the sync runs in the background. For navigation-based providers (AI Studio, Gemini) keep the extraction tab visible until the sync completes.
+
+### Pausing and cancelling
+
+Click **CANCEL SYNC** on the platform card to stop a bulk sync. If you close the browser while a sync is running, HAEVN will automatically resume it the next time you open Chrome.
+
+<Aside>
+  Bulk sync is rate-limited to avoid overloading the platform's servers. Syncing
+  100 conversations typically takes 1–3 minutes. Large archives (1000+
+  conversations) can take longer — leave it running in the background.
+</Aside>
+
+## What gets synced
+
+HAEVN captures the complete conversation, not just the text:
+
+| Content                                                     | Synced? |
+| ----------------------------------------------------------- | ------- |
+| All messages (user and assistant)                           | ✅      |
+| Images (uploaded and AI-generated)                          | ✅      |
+| File attachments (PDFs, documents)                          | ✅      |
+| Code blocks                                                 | ✅      |
+| Thinking blocks (Claude extended thinking)                  | ✅      |
+| Tool calls and results (web search, code interpreter, etc.) | ✅      |
+| Conversation branches (when you regenerate a response)      | ✅      |
+| Timestamps for each message                                 | ✅      |
+
+<Aside type="caution">
+  Not all content types are available on every platform. See the [Platforms
+  section](/platforms/) for per-platform details.
+</Aside>
+
+## Sync methods
+
+Different platforms use different sync methods, which affects speed and behavior:
+
+| Method         | Platforms                   | Speed  | Notes                                  |
+| -------------- | --------------------------- | ------ | -------------------------------------- |
+| **API**        | ChatGPT, Claude, Open WebUI | Fast   | Runs silently in the background        |
+| **Navigation** | Poe, Gemini, AI Studio      | Slower | HAEVN navigates through your chat list |
+
+API-based sync is preferred where available. Navigation-based sync opens a dedicated extraction tab to extract content directly from the page.
+
+<Aside type="caution">
+  **AI Studio and Gemini require the extraction tab to stay visible.** Both
+  platforms use virtualised rendering — content only loads when the tab is in
+  the foreground. If you switch away from the extraction tab or minimise the
+  window during bulk sync, the sync will stall. The progress bar in the
+  Providers view will show a reminder while sync is active.
+</Aside>

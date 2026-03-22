@@ -1,0 +1,58 @@
+---
+title: Privacy & Storage
+description: Where your data lives and how HAEVN protects it.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Where your data is stored
+
+HAEVN stores everything locally in your browser. There are no external servers, no accounts, and no cloud storage.
+
+| What | Where |
+|---|---|
+| Conversation data and metadata | IndexedDB (browser storage) |
+| Search index | IndexedDB |
+| Media files (images, documents, audio, video) | Origin Private File System (OPFS) |
+| Extension settings (Open WebUI URL, etc.) | `chrome.storage.local` |
+
+**None of this data ever leaves your machine.** HAEVN does not:
+- Send telemetry or analytics
+- Upload conversations to any server
+- Require an account or login
+- Connect to any service other than the AI platforms you explicitly sync from
+
+## Storage limits
+
+Chrome's storage quotas apply:
+
+| Storage type | Typical quota |
+|---|---|
+| IndexedDB | ~50MB per extension (configurable) |
+| OPFS | ~600MB+ (device dependent, much larger) |
+
+Media files are stored in OPFS specifically because it supports much larger files than IndexedDB. Text content, metadata, thumbnails, and the search index all live in IndexedDB.
+
+<Aside type="tip">
+  Check your current OPFS usage by running `haevnDebug.opfs.usage()` in the Options page console.
+</Aside>
+
+## What HAEVN accesses
+
+When syncing, HAEVN uses your existing browser session (cookies) to access the AI platform you're on. It makes the same API calls that the platform's own website would make. No credentials are stored by HAEVN — it relies entirely on your browser's existing authentication.
+
+## Backing up your data
+
+Because everything is local, **if you uninstall the extension or clear your browser data, your archive is gone**. To prevent data loss:
+
+- Use [Export All](/user-guide/export/) to download regular JSON backups
+- These backups can be re-imported into HAEVN on any machine
+
+## Clearing your data
+
+To delete all HAEVN data:
+
+1. Uninstall the HAEVN extension from Chrome
+2. Chrome will prompt you whether to also delete the extension's stored data — choose "Yes"
+
+Or, to clear data while keeping the extension installed, use the archive's bulk delete feature to remove individual conversations, or run `haevnDebug.db.delete()` and reinstall the extension.

@@ -1,0 +1,64 @@
+---
+title: Managing Your Archive
+description: Browse, sort, filter, and manage all your synced conversations.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import archiveImg from '../../../assets/screenshots/options-archive.png';
+
+The **Archive** is your central view for all synced conversations. Open it by clicking **Archive** in the HAEVN popup, or by right-clicking the extension icon and choosing **Options**.
+
+<Image src={archiveImg} alt="The HAEVN archive showing a paginated list of conversations with platform icons, titles, and per-row action buttons" />
+
+## Browsing conversations
+
+The archive lists all your synced conversations in a table. Each row shows:
+
+- **Platform icon** — which AI service the conversation came from
+- **Title** — the conversation title as it appears on the platform
+- **Last Modified** — when the conversation was last updated
+- **Actions** — per-conversation buttons (described below)
+
+Use the pagination controls at the bottom to navigate between pages. You can change the number of rows shown per page (10, 25, 50, or 100).
+
+## Sorting and filtering
+
+**Sort by:** Use the Sort dropdown to order conversations by:
+- **Sync Time** (default) — most recently synced first
+- **Title** — alphabetical
+- **Last Modified** — by the conversation's last activity
+
+**Filter by platform:** Use the Provider dropdown to show only conversations from a specific platform (ChatGPT, Claude, Gemini, etc.).
+
+## Per-conversation actions
+
+Each row has four action buttons:
+
+| Button | What it does |
+|---|---|
+| **Sync Now** | Re-syncs the conversation to pick up new messages |
+| **Open at Provider** | Opens the original conversation on the source platform |
+| **Open in Viewer** | Opens the conversation in HAEVN's [built-in viewer](/user-guide/viewer/) |
+| **Export** | Downloads this conversation as a JSON or Markdown file |
+| **Delete** | Removes the conversation from your archive |
+
+<Aside>
+  Deleted conversations are soft-deleted and removed from view immediately, but the actual cleanup happens in the background. You have a short window to reconsider — just re-sync the conversation if you change your mind.
+</Aside>
+
+## Bulk actions
+
+You can act on multiple conversations at once:
+
+1. **Select conversations** using the checkboxes on the left of each row. Use the checkbox in the header row to select all conversations on the current page.
+
+2. Once one or more are selected, the **Export Selected** and **Delete Selected** buttons activate in the toolbar.
+
+3. Click **Export Selected** to download the selected conversations as a ZIP file (choose JSON or Markdown format in the dialog).
+
+4. Click **Delete Selected** to remove all selected conversations from the archive.
+
+## Refreshing the view
+
+If you've just completed a sync or import and the archive isn't showing the latest data, click the **Refresh** button in the toolbar to reload the list.

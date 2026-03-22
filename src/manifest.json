@@ -1,0 +1,96 @@
+{
+  "manifest_version": 3,
+  "name": "HAEVN Chat Exporter",
+  "version": "1.0.0",
+  "description": "Export and preserve conversations from Gemini, ChatGPT, and other AI platforms",
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "tabs",
+    "storage",
+    "downloads",
+    "notifications",
+    "alarms",
+    "offscreen",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "*://gemini.google.com/*",
+    "*://bard.google.com/*",
+    "*://claude.ai/*",
+    "*://poe.com/*",
+    "*://chat.openai.com/*",
+    "*://chatgpt.com/*",
+    "*://chat.qwen.ai/*",
+    "*://cdn.qwenlm.ai/*",
+    "*://chat.deepseek.com/*",
+    "*://aistudio.google.com/*",
+    "*://grok.com/*",
+    "*://x.ai/*",
+    "*://assets.grok.com/*",
+    "*://*.googleusercontent.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://gemini.google.com/*",
+        "*://bard.google.com/*",
+        "*://chat.openai.com/*",
+        "*://chatgpt.com/*",
+        "*://poe.com/*",
+        "*://claude.ai/*",
+        "*://chat.qwen.ai/*",
+        "*://chat.deepseek.com/*",
+        "*://aistudio.google.com/*",
+        "*://grok.com/*",
+        "*://x.ai/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "HAEVN Chat Exporter",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "viewer.html",
+        "viewer.js",
+        "viewer.css",
+        "logs.html",
+        "logs-viewer.js",
+        "logs-viewer.css",
+        "icons/*",
+        "import.worker.js",
+        "search.worker.js",
+        "stats.worker.js",
+        "thumbnail.worker.js",
+        "bulkExport.worker.js",
+        "bulkSync.worker.js",
+        "*.js.map"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

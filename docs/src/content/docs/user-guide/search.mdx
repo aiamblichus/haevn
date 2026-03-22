@@ -1,0 +1,58 @@
+---
+title: Search
+description: Find any conversation instantly with full-text search.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import searchImg from '../../../assets/screenshots/search-results.png';
+
+HAEVN indexes the full text of every synced conversation, so you can search across your entire archive in milliseconds — regardless of which platform a conversation came from.
+
+## How to search
+
+Type in the **search box** at the top of the Archive view. Results appear automatically as you type, grouped by conversation and showing matching snippets.
+
+<Image src={searchImg} alt="Search results for 'poem' showing matching conversations from multiple platforms, with highlighted snippets from the matching messages" />
+
+Each result shows:
+- The **conversation title** and source platform
+- **Matching message snippets** with the search term highlighted in context
+- A **Show more** button if there are many matching messages within a conversation
+- **Open in Viewer** and **Export** buttons to act on results directly
+
+<Aside type="tip">
+  Click **Open in Viewer** directly from a search result — the viewer will scroll to the matching message and highlight the search term in context.
+</Aside>
+
+## Search tips
+
+**Exact phrases:** Wrap your query in quotes to match a specific phrase.
+```
+"Ingeborg Bachmann"
+```
+
+**Multiple terms:** Separate words with spaces to find conversations containing all of them.
+```
+python async function
+```
+
+**Titles only:** The search covers both titles and full message content, so short queries often match more than you'd expect. If you're looking for a specific conversation title, try a distinctive phrase from the title.
+
+## How search works
+
+HAEVN uses **Lunr.js** to build a full-text index of your conversations. The index is built incrementally as conversations are synced — new conversations become searchable immediately after syncing.
+
+Key characteristics:
+- The index runs entirely **in your browser** — no search queries leave your machine
+- Search is **case-insensitive**
+- Common stop words ("the", "a", "is") are excluded from the index
+- The index is stored locally and persists across browser sessions
+
+<Aside>
+  If search shows no results when you expect some, the index may need to be rebuilt. Open the browser console on the Options page and run `haevnDebug.rebuildIndex()`. See [Troubleshooting](/reference/troubleshooting/) for more.
+</Aside>
+
+## Filtering search results
+
+After searching, use the **Provider** dropdown to filter results to a specific platform. This is useful when you know the conversation was on ChatGPT vs Claude, for example.

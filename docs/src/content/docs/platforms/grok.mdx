@@ -1,0 +1,31 @@
+---
+title: Grok
+description: Syncing Grok conversations with HAEVN.
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" />
+
+Grok is xAI's conversational AI, integrated with X (formerly Twitter). HAEVN syncs Grok conversations via API.
+
+## Supported URLs
+
+- `grok.com`
+- `x.ai`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| Grok-generated images | ✅ |
+| X post references | ✅ |
+| Web search results | ✅ |
+| Tool calls | ✅ |
+
+## Known limitations
+
+- **Real-time data** — Grok's real-time X data access is captured as text in the response; live post embeds are not rendered interactively in the Viewer.
+- **Voice conversations** — audio is not captured; transcript only (where available).

@@ -1,0 +1,925 @@
+/* Brutalist Terminal Typography - Scandinavian Folk Horror + Vaporwave */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&display=swap");
+
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind base;
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind components;
+/* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Scandinavian Folk Horror + Vaporwave Palette */
+    /* Muted earth tones (folk horror) + neon accents (vaporwave) */
+    --background: 210 25% 8%; /* Deep forest navy - folk horror darkness */
+    --foreground: 180 20% 88%; /* Muted cyan - terminal text */
+    --card: 210 20% 12%; /* Dark card backgrounds */
+    --card-foreground: 180 20% 88%;
+    --popover: 210 20% 10%;
+    --popover-foreground: 180 20% 88%;
+    --primary: 180 100% 41%; /* Teal - vaporwave neon */
+    --primary-foreground: 210 25% 8%;
+    --secondary: 45 85% 52%; /* Gold - lighthouse */
+    --secondary-foreground: 210 25% 8%;
+    --muted: 210 15% 18%; /* Muted earth tone */
+    --muted-foreground: 180 15% 55%; /* Muted text */
+    --accent: 300 76% 72%; /* Purple - vaporwave magenta */
+    --accent-foreground: 210 25% 8%;
+    --destructive: 0 84.2% 60.2%; /* Red for errors */
+    --destructive-foreground: 210 25% 98%;
+    --border: 180 30% 25%; /* Teal-tinted borders */
+    --input: 210 20% 15%; /* Dark input backgrounds */
+    --ring: 180 100% 41%; /* Teal focus ring */
+    --radius: 0rem; /* Brutalist: no rounded corners */
+
+    /* Terminal prompt colors */
+    --prompt-user: 180 100% 41%; /* Teal for user */
+    --prompt-assistant: 300 76% 72%; /* Purple for assistant */
+    --prompt-system: 45 85% 52%; /* Gold for system */
+  }
+
+  html {
+    -webkit-font-smoothing: subpixel-antialiased; /* Terminal aesthetic */
+    -moz-osx-font-smoothing: auto;
+    /* Scandinavian folk horror background - deep forest with mist */
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.03) 0px,
+        transparent 1px,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 3px
+      ), linear-gradient(135deg, #0a1628 0%, #1a2332 25%, #0f1419 50%, #1a2332 75%, #0a1628 100%);
+    background-size:
+      100% 4px,
+      100% 100%;
+    min-height: 100vh;
+    /* Subtle scanline effect (vaporwave CRT) */
+    position: relative;
+  }
+
+  html::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 206, 209, 0.02) 0px,
+      transparent 1px,
+      transparent 2px,
+      rgba(218, 112, 214, 0.02) 3px
+    );
+    pointer-events: none;
+    z-index: 9999;
+    mix-blend-mode: overlay;
+  }
+
+  body {
+    background: transparent;
+    color: hsl(var(--foreground));
+    font-family: "JetBrains Mono", "Courier New", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    letter-spacing: 0.01em;
+  }
+}
+
+@layer utilities {
+  .animate-in {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  .animate-out {
+    animation: fadeOut 0.2s ease-in-out;
+  }
+
+  .fade-in-0 {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  .fade-out-0 {
+    animation: fadeOut 0.2s ease-in-out;
+  }
+
+  .zoom-in-95 {
+    animation: zoomIn 0.2s ease-in-out;
+  }
+
+  .zoom-out-95 {
+    animation: zoomOut 0.2s ease-in-out;
+  }
+
+  .slide-in-from-left-1\/2 {
+    animation: slideInFromLeft 0.2s ease-in-out;
+  }
+
+  .slide-out-to-left-1\/2 {
+    animation: slideOutToLeft 0.2s ease-in-out;
+  }
+
+  .slide-in-from-top-\[48\%\] {
+    animation: slideInFromTop 0.2s ease-in-out;
+  }
+
+  .slide-out-to-top-\[48\%\] {
+    animation: slideOutToTop 0.2s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fadeOut {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes zoomIn {
+    from {
+      transform: scale(0.95);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes zoomOut {
+    from {
+      transform: scale(1);
+    }
+    to {
+      transform: scale(0.95);
+    }
+  }
+
+  @keyframes slideInFromLeft {
+    from {
+      transform: translateX(-50%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes slideOutToLeft {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  @keyframes slideInFromTop {
+    from {
+      transform: translateY(-48%);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slideOutToTop {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(-48%);
+    }
+  }
+
+  .slide-in-from-top-1 {
+    animation: slideInFromTop1 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .slide-in-from-right-1 {
+    animation: slideInFromRight1 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .slide-in-from-left-1 {
+    animation: slideInFromLeft1 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .slide-in-from-bottom-1 {
+    animation: slideInFromBottom1 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes slideInFromTop1 {
+    from {
+      transform: translateY(-4px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideInFromRight1 {
+    from {
+      transform: translateX(4px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideInFromLeft1 {
+    from {
+      transform: translateX(-4px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slideInFromBottom1 {
+    from {
+      transform: translateY(4px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 206, 209, 0.05); /* Subtle teal tint */
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(0, 206, 209, 0.3); /* Teal thumb */
+    border-radius: 3px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5); /* Brighter teal on hover */
+  }
+}
+
+/* Brutalist Terminal Animations */
+@layer utilities {
+  .guardian-glow {
+    animation: guardianPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes guardianPulse {
+    0%,
+    100% {
+      box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
+    }
+    50% {
+      box-shadow:
+        0 0 16px hsl(var(--primary) / 0.7),
+        0 0 24px hsl(var(--accent) / 0.3);
+    }
+  }
+
+  /* Logo-specific glow that follows the transparent shape */
+  .guardian-glow-logo {
+    animation: guardianPulseLogo 3s ease-in-out infinite;
+  }
+
+  @keyframes guardianPulseLogo {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.4));
+    }
+    50% {
+      filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.7))
+        drop-shadow(0 0 12px hsl(var(--accent) / 0.3));
+    }
+  }
+
+  .lighthouse-glow {
+    animation: lighthousePulse 4s ease-in-out infinite;
+  }
+
+  @keyframes lighthousePulse {
+    0%,
+    100% {
+      box-shadow: 0 0 8px hsl(var(--secondary) / 0.4);
+    }
+    50% {
+      box-shadow:
+        0 0 16px hsl(var(--secondary) / 0.7),
+        0 0 24px hsl(var(--secondary) / 0.5);
+    }
+  }
+
+  /* Brutalist terminal button hover */
+  .brutalist-hover {
+    transition: all 0.2s ease;
+  }
+
+  .brutalist-hover:hover {
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.3),
+      4px 4px 0 0 rgba(0, 0, 0, 0.2),
+      0 0 12px hsl(var(--primary) / 0.4);
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Loading dots animation */
+  .loading-dots {
+    position: relative;
+  }
+
+  .loading-dots::after {
+    content: "...";
+    animation: loadingDots 1.5s steps(4, end) infinite;
+  }
+
+  @keyframes loadingDots {
+    0%,
+    20% {
+      content: ".";
+    }
+    40% {
+      content: "..";
+    }
+    60%,
+    100% {
+      content: "...";
+    }
+  }
+}
+
+details > summary {
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details[open] summary svg {
+  transform: rotate(180deg);
+}
+
+/* ============================================
+   MANIFESTO STYLES
+   Liminal, threshold space - sacred geometry meets corrupted data
+   Scandinavian folk horror + vaporwave + digital brutalism
+   ============================================ */
+
+.manifesto-container {
+  font-family: "JetBrains Mono", "Courier New", monospace;
+  color: hsl(var(--foreground));
+  position: relative;
+  animation: fadeIn 0.8s ease-in;
+}
+
+/* Subtle glitch overlay on entire manifesto */
+.manifesto-container::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 206, 209, 0.01) 2px,
+      rgba(0, 206, 209, 0.01) 4px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(218, 112, 214, 0.01) 2px,
+      rgba(218, 112, 214, 0.01) 4px
+    );
+  mix-blend-mode: overlay;
+  opacity: 0.3;
+  animation: glitchScan 8s linear infinite;
+}
+
+@keyframes glitchScan {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-2px);
+    opacity: 0.4;
+  }
+}
+
+/* Header Section */
+.manifesto-header {
+  position: relative;
+  z-index: 2;
+}
+
+.manifesto-title-wrapper {
+  position: relative;
+}
+
+.manifesto-title {
+  font-family: "Playfair Display", serif;
+  font-weight: 900;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(var(--accent)) 50%,
+    hsl(var(--secondary)) 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow:
+    0 0 20px hsl(var(--primary) / 0.3),
+    0 0 40px hsl(var(--accent) / 0.2),
+    1px 0 0 hsl(var(--accent) / 0.3),
+    -1px 0 0 hsl(var(--primary) / 0.3);
+  letter-spacing: 0.05em;
+  position: relative;
+  animation:
+    titleGlow 4s ease-in-out infinite,
+    chromaticShift 8s ease-in-out infinite;
+}
+
+@keyframes titleGlow {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.2);
+  }
+}
+
+@keyframes chromaticShift {
+  0%,
+  100% {
+    text-shadow:
+      0 0 20px hsl(var(--primary) / 0.3),
+      0 0 40px hsl(var(--accent) / 0.2),
+      1px 0 0 hsl(var(--accent) / 0.3),
+      -1px 0 0 hsl(var(--primary) / 0.3);
+  }
+  50% {
+    text-shadow:
+      0 0 30px hsl(var(--primary) / 0.5),
+      0 0 60px hsl(var(--accent) / 0.3),
+      2px 0 0 hsl(var(--accent) / 0.4),
+      -2px 0 0 hsl(var(--primary) / 0.4);
+  }
+}
+
+.manifesto-emojis {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.manifesto-emoji {
+  display: inline-block;
+  font-size: 2rem;
+  filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.4));
+  animation: emojiFloat 3s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 0.5s);
+}
+
+.manifesto-emoji:nth-child(1) {
+  --i: 0;
+}
+.manifesto-emoji:nth-child(2) {
+  --i: 1;
+}
+.manifesto-emoji:nth-child(3) {
+  --i: 2;
+}
+
+@keyframes emojiFloat {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(5deg);
+  }
+}
+
+/* Divider - Sacred geometry element */
+.manifesto-divider {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(var(--primary) / 0.3) 20%,
+    hsl(var(--accent) / 0.5) 50%,
+    hsl(var(--primary) / 0.3) 80%,
+    transparent 100%
+  );
+  position: relative;
+  margin: 3rem 0;
+  box-shadow:
+    0 0 10px hsl(var(--primary) / 0.2),
+    0 0 20px hsl(var(--accent) / 0.1);
+}
+
+.manifesto-divider::before,
+.manifesto-divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid hsl(var(--primary));
+  transform: translateY(-50%) rotate(45deg);
+  box-shadow: 0 0 8px hsl(var(--primary) / 0.6);
+}
+
+.manifesto-divider::before {
+  left: 10%;
+}
+
+.manifesto-divider::after {
+  right: 10%;
+}
+
+/* Section Titles */
+.manifesto-section-title {
+  font-family: "Playfair Display", serif;
+  font-weight: 700;
+  color: hsl(var(--primary));
+  text-shadow:
+    0 0 10px hsl(var(--primary) / 0.4),
+    0 0 20px hsl(var(--primary) / 0.2);
+  letter-spacing: 0.1em;
+  margin-bottom: 2rem;
+  position: relative;
+  padding-left: 1rem;
+  border-left: 3px solid hsl(var(--primary) / 0.5);
+  box-shadow: -4px 0 8px hsl(var(--primary) / 0.2);
+}
+
+.manifesto-section-title::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: hsl(var(--accent));
+  animation: sectionGlow 2s ease-in-out infinite;
+}
+
+@keyframes sectionGlow {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* Content */
+.manifesto-content {
+  position: relative;
+  z-index: 2;
+}
+
+.manifesto-paragraph {
+  font-size: 1.1rem;
+  line-height: 1.9;
+  color: hsl(var(--foreground) / 0.9);
+  margin-bottom: 1.5rem;
+  text-align: justify;
+  hyphens: auto;
+  letter-spacing: 0.02em;
+  position: relative;
+}
+
+.manifesto-paragraph::first-letter {
+  font-size: 1.4em;
+  font-weight: 700;
+  color: hsl(var(--primary));
+  float: left;
+  line-height: 0.8;
+  margin-right: 0.1em;
+  margin-top: 0.1em;
+  text-shadow: 0 0 8px hsl(var(--primary) / 0.5);
+}
+
+.manifesto-emphasis {
+  font-style: italic;
+  color: hsl(var(--accent));
+  text-shadow: 0 0 6px hsl(var(--accent) / 0.4);
+  font-weight: 500;
+}
+
+.manifesto-strong {
+  color: hsl(var(--secondary));
+  text-shadow: 0 0 8px hsl(var(--secondary) / 0.5);
+  font-weight: 700;
+}
+
+/* Callout Boxes - Sacred geometry containers */
+.manifesto-callout {
+  padding: 1.5rem 2rem;
+  margin: 2rem 0;
+  border: 2px solid hsl(var(--primary) / 0.3);
+  background: hsl(var(--card) / 0.6);
+  position: relative;
+  box-shadow:
+    inset 0 0 20px hsl(var(--primary) / 0.1),
+    0 0 20px hsl(var(--primary) / 0.2);
+  clip-path: polygon(
+    0% 0%,
+    calc(100% - 20px) 0%,
+    100% 20px,
+    100% 100%,
+    20px 100%,
+    0% calc(100% - 20px)
+  );
+  animation: calloutPulse 4s ease-in-out infinite;
+}
+
+@keyframes calloutPulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 20px hsl(var(--primary) / 0.1),
+      0 0 20px hsl(var(--primary) / 0.2);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 30px hsl(var(--primary) / 0.2),
+      0 0 30px hsl(var(--primary) / 0.4),
+      0 0 40px hsl(var(--accent) / 0.2);
+  }
+}
+
+.manifesto-callout::before,
+.manifesto-callout::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid hsl(var(--primary));
+  box-shadow: 0 0 8px hsl(var(--primary) / 0.6);
+}
+
+.manifesto-callout::before {
+  top: -6px;
+  left: -6px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.manifesto-callout::after {
+  bottom: -6px;
+  right: -6px;
+  border-left: none;
+  border-top: none;
+}
+
+.manifesto-callout-important {
+  border-color: hsl(var(--secondary) / 0.5);
+  box-shadow:
+    inset 0 0 20px hsl(var(--secondary) / 0.1),
+    0 0 20px hsl(var(--secondary) / 0.3);
+}
+
+.manifesto-callout-important::before,
+.manifesto-callout-important::after {
+  border-color: hsl(var(--secondary));
+  box-shadow: 0 0 8px hsl(var(--secondary) / 0.6);
+}
+
+.manifesto-callout-teal {
+  border-color: hsl(var(--primary) / 0.5);
+}
+
+.manifesto-callout-purple {
+  border-color: hsl(var(--accent) / 0.5);
+  box-shadow:
+    inset 0 0 20px hsl(var(--accent) / 0.1),
+    0 0 20px hsl(var(--accent) / 0.2);
+}
+
+.manifesto-callout-purple::before,
+.manifesto-callout-purple::after {
+  border-color: hsl(var(--accent));
+  box-shadow: 0 0 8px hsl(var(--accent) / 0.6);
+}
+
+.manifesto-callout-gold {
+  border-color: hsl(var(--secondary) / 0.5);
+}
+
+.manifesto-callout-final {
+  border-width: 3px;
+  padding: 2rem 2.5rem;
+  text-align: center;
+  background: linear-gradient(135deg, hsl(var(--card) / 0.8) 0%, hsl(var(--card) / 0.6) 100%);
+}
+
+/* List Items */
+.manifesto-list {
+  list-style: none;
+  counter-reset: manifesto-counter;
+}
+
+.manifesto-list-item {
+  position: relative;
+  padding-left: 2rem;
+  margin-bottom: 1rem;
+  counter-increment: manifesto-counter;
+  color: hsl(var(--foreground) / 0.85);
+  line-height: 1.8;
+}
+
+.manifesto-list-item::before {
+  content: counter(manifesto-counter, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: 0.9em;
+  color: hsl(var(--primary));
+  text-shadow: 0 0 6px hsl(var(--primary) / 0.5);
+  width: 1.5rem;
+  text-align: right;
+}
+
+.manifesto-list-item::after {
+  content: "";
+  position: absolute;
+  left: 1.8rem;
+  top: 0.6em;
+  width: 4px;
+  height: 4px;
+  background: hsl(var(--accent));
+  box-shadow: 0 0 6px hsl(var(--accent) / 0.6);
+  transform: rotate(45deg);
+}
+
+/* Footer */
+.manifesto-footer {
+  margin-top: 4rem;
+  padding-top: 3rem;
+  border-top: 1px solid hsl(var(--border) / 0.3);
+  position: relative;
+  z-index: 2;
+}
+
+.manifesto-tagline {
+  font-family: "Crimson Text", serif;
+  font-style: italic;
+  color: hsl(var(--accent));
+  text-shadow: 0 0 10px hsl(var(--accent) / 0.4);
+  letter-spacing: 0.05em;
+}
+
+.manifesto-meta {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.95rem;
+}
+
+.manifesto-links {
+  margin: 1.5rem 0;
+}
+
+.manifesto-link {
+  color: hsl(var(--primary));
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  text-shadow: 0 0 6px hsl(var(--primary) / 0.3);
+  position: relative;
+}
+
+.manifesto-link:hover {
+  color: hsl(var(--primary));
+  text-shadow: 0 0 12px hsl(var(--primary) / 0.6);
+  transform: translateY(-1px);
+}
+
+.manifesto-link::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 0;
+  height: 1px;
+  background: hsl(var(--primary));
+  transition: width 0.3s ease;
+  box-shadow: 0 0 4px hsl(var(--primary) / 0.6);
+}
+
+.manifesto-link:hover::after {
+  width: 100%;
+}
+
+.manifesto-footer-text {
+  color: hsl(var(--muted-foreground) / 0.7);
+  font-style: italic;
+  margin-top: 2rem;
+}
+
+/* Subtle data corruption effects on hover */
+.manifesto-section:hover .manifesto-paragraph {
+  animation: textGlitch 0.3s ease-in-out;
+}
+
+@keyframes textGlitch {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-1px);
+  }
+  75% {
+    transform: translateX(1px);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .manifesto-title {
+    font-size: 2.5rem;
+  }
+
+  .manifesto-section-title {
+    font-size: 1.8rem;
+  }
+
+  .manifesto-paragraph {
+    font-size: 1rem;
+  }
+
+  .manifesto-callout {
+    padding: 1rem 1.5rem;
+  }
+}
+
+/* Disabled checkbox styling */
+#overwriteExistingCheckbox:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#overwriteExistingCheckbox:disabled + label {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Print styles */
+@media print {
+  .manifesto-container::before {
+    display: none;
+  }
+
+  .manifesto-title,
+  .manifesto-section-title {
+    color: #000;
+    text-shadow: none;
+  }
+}

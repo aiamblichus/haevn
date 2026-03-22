@@ -1,0 +1,55 @@
+---
+title: Architecture
+description: How HAEVN is structured internally.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+HAEVN is a Chrome Manifest V3 extension. The key architectural constraint is that **MV3 service workers cannot spawn Web Workers** — HAEVN works around this with a three-tier architecture.
+
+## Three-tier worker model
+
+```
+Service Worker (background.js)
+    ↓ chrome.runtime messages
+Offscreen Document (offscreen.html)
+    ↓ postMessage
+Web Workers (search.worker, stats.worker, ...)
+```
+
+- **Service Worker** — handles all Chrome extension events (tab changes, alarms, messages from content scripts and popup)
+- **Offscreen Document** — a hidden HTML page that lives for 30 seconds after last use; hosts the Web Workers
+- **Web Workers** — CPU-intensive operations: search indexing, ZIP generation, stats calculation, thumbnail generation
+
+<Aside>
+  The Offscreen Document is destroyed after 30 seconds of inactivity (Chrome
+  constraint). HAEVN recreates it on demand when a worker operation is needed.
+</Aside>
+
+## Data pipeline
+
+Every sync follows this path:
+
+```
+Platform (DOM/API) → Extractor → Transformer → HAEVN.Chat → Repository → Search Index
+```
+
+1. **Extractor** — platform-specific code that fetches raw data (API calls or DOM extraction)
+2. **Transformer** — normalizes raw data into the `HAEVN.Chat` format
+3. **Repository (SyncService)** — persists to IndexedDB via Dexie, triggers OPFS writes for media
+4. **Search Index** — Lunr.js index updated via the search Web Worker
+
+## Key directories
+
+| Path                        | Purpose                                           |
+| --------------------------- | ------------------------------------------------- |
+| `src/providers/{platform}/` | Extractor + Transformer for each platform         |
+| `src/background/handlers/`  | Message routing (82 handlers)                     |
+| `src/services/`             | ChatRepository, SearchIndexManager, SearchService |
+| `src/offscreen/`            | Offscreen document + worker pool                  |
+| `src/popup/`                | Extension popup UI                                |
+| `src/options/`              | Archive manager UI                                |
+| `src/viewer/`               | Standalone conversation viewer                    |
+| `src/content/`              | Content script injected into platform pages       |
+
+See the [charter/architecture/](https://github.com/yourusername/haevn/tree/main/charter/architecture/) directory in the repo for detailed architecture documents and Mermaid diagrams.

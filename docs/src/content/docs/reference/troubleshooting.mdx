@@ -1,0 +1,123 @@
+---
+title: Troubleshooting
+description: Solutions to common HAEVN issues.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Search returns no results
+
+**Symptom:** Typing in the search box shows "No results" or "SCANNED 0 CHATS".
+
+**Cause:** The search index may be empty or corrupted.
+
+**Fix:** Open the browser DevTools console on the Options page and run:
+
+```js
+haevnDebug.rebuildIndex()
+```
+
+This rebuilds the index from scratch. For large archives (1000+ conversations), rebuilding may take a few minutes.
+
+---
+
+## Sync button is missing or greyed out
+
+**Symptom:** The HAEVN popup opens but doesn't show a Sync button.
+
+**Causes and fixes:**
+
+1. **You're on an unsupported page** — the popup shows a list of supported platforms. Navigate to one of them and try again.
+2. **Extension not loaded** — go to `chrome://extensions` and check that HAEVN is enabled and has no errors.
+3. **Build is outdated** — if you're loading the extension manually, reload it from `chrome://extensions`.
+
+---
+
+## Bulk sync stops mid-way
+
+**Symptom:** Bulk sync shows progress, then appears to freeze or stop.
+
+**Cause:** The browser may have suspended the service worker (Chrome MV3 service workers shut down after inactivity).
+
+**Fix:** Bulk sync is automatically resumed the next time you open Chrome or navigate to any page with the extension active. You can also trigger a resume by opening the Options page.
+
+---
+
+## Conversations are missing from the archive
+
+**Symptom:** You know you synced a conversation but it doesn't appear in the archive.
+
+**Fixes:**
+
+1. Click **Refresh** in the archive toolbar.
+2. Check the Provider filter — make sure it's set to "All".
+3. Try searching for the conversation title in the search box.
+4. Check the logs: open the Options page DevTools console and run `haevnDebug.getLogs(50)`.
+
+---
+
+## Images are not showing in the Viewer or Gallery
+
+**Symptom:** Conversations with images show blank spaces or broken image placeholders.
+
+**Cause:** Media files are stored in OPFS (Origin Private File System). If OPFS storage is full or corrupted, images may not load.
+
+**Fix:** Check storage usage:
+
+```js
+haevnDebug.opfs.usage()
+```
+
+If storage is near the quota, try exporting and deleting older conversations to free space.
+
+---
+
+## The extension popup is blank or not loading
+
+**Symptom:** Clicking the HAEVN icon shows a blank popup.
+
+**Fix:**
+1. Go to `chrome://extensions`.
+2. Find HAEVN and click the **reload** icon (circular arrow).
+3. Try clicking the HAEVN icon again.
+
+If the problem persists, check the extension's error log: click **Details** on the HAEVN extension card, then **Inspect views** → **background page** to see any errors in the service worker console.
+
+---
+
+## Debug tools
+
+HAEVN includes a `haevnDebug` console API available on the Options page. Common commands:
+
+```js
+// View recent logs
+haevnDebug.getLogs(100)
+
+// Search the archive
+haevnDebug.search("my query")
+
+// Get a specific chat
+haevnDebug.getChat("chat-id-here")
+
+// Rebuild the search index
+haevnDebug.rebuildIndex()
+
+// Check storage
+haevnDebug.opfs.usage()
+
+// Reload the extension
+haevnDebug.reload()
+```
+
+<Aside type="tip">
+  To see these commands and more, run `haevnDebug.help()` in the Options page console.
+</Aside>
+
+---
+
+## Getting help
+
+If you encounter an issue not covered here, [open a GitHub issue](https://github.com/yourusername/haevn/issues) with:
+- What you expected to happen
+- What actually happened
+- The output of `haevnDebug.getLogs(100)` from the Options page console

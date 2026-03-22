@@ -1,0 +1,75 @@
+---
+title: Quick Start
+description: Sync your first conversation in under two minutes.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import archiveImg from '../../../assets/screenshots/options-archive.png';
+import viewerImg from '../../../assets/screenshots/viewer.png';
+
+This guide walks you through syncing your first conversation and viewing it in the archive. It takes about two minutes.
+
+{/* VIDEO: Record a 60-90 second screencast showing the complete flow:
+    1. Starting on chatgpt.com with a conversation open
+    2. Clicking the HAEVN extension icon in the toolbar — popup appears showing the chat title and a "Sync" button
+    3. Clicking Sync — button changes to a spinning/loading state, then shows "SYNCED ✓"
+    4. Clicking the "Archive" button to open the options page
+    5. The archive view loads, showing the newly synced chat at the top
+    6. Clicking "Open in Viewer" on that chat — viewer opens in a new tab
+    7. Scrolling through the beautifully rendered conversation
+    End title card: "Your conversations, yours forever."
+*/}
+
+## Step 1: Go to a supported platform
+
+Navigate to any supported AI platform in Chrome. For this guide, we'll use ChatGPT, but the flow is identical for Claude, Gemini, and all other supported platforms.
+
+Open a conversation that you'd like to save. It can be any conversation — ongoing or completed.
+
+## Step 2: Click the HAEVN icon
+
+Click the **HAEVN icon** in your Chrome toolbar (the eye/wave logo). A small popup will appear.
+
+On a supported platform, the popup shows:
+- The **title** of the current conversation
+- Whether it has been synced before (SYNCED / UNSYNCED)
+- A **Sync** button to save it now
+
+<Aside type="tip">
+  If you don't see the HAEVN icon, click the puzzle-piece icon in Chrome's toolbar and pin HAEVN to make it always visible.
+</Aside>
+
+## Step 3: Click Sync
+
+Click the **SYNC** button. HAEVN will capture the full conversation — messages, images, code blocks, and any other content — and save it to your local archive.
+
+The button will briefly show a loading state, then confirm the sync is complete.
+
+## Step 4: Open your archive
+
+Click the **Archive** button in the popup (or right-click the HAEVN icon and choose **Options**).
+
+The archive opens in a new tab, showing all your synced conversations:
+
+<Image src={archiveImg} alt="The HAEVN archive showing a list of synced conversations with platform icons, titles, and timestamps" />
+
+Your newly synced conversation will appear at the top of the list.
+
+## Step 5: Read it in the viewer
+
+Click **Open in Viewer** on any conversation. The viewer opens in a new tab and renders the full conversation with proper formatting:
+
+<Image src={viewerImg} alt="The HAEVN viewer rendering a conversation with formatted messages, code blocks, and metadata" />
+
+The viewer supports markdown, code syntax highlighting, images, thinking blocks, and tool calls — exactly as they appeared in the original platform.
+
+---
+
+## What's next?
+
+Now that you've synced your first conversation, here are some things to try:
+
+- **[Bulk sync](/user-guide/syncing-chats/#bulk-sync)** — save your entire history from a platform at once
+- **[Search](/user-guide/search/)** — find any conversation instantly by content
+- **[Export](/user-guide/export/)** — download your archive as JSON or Markdown

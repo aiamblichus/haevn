@@ -1,0 +1,40 @@
+---
+title: Google Gemini
+description: Syncing Google Gemini conversations with HAEVN.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+<Badge text="Navigation sync" variant="caution" /> <Badge text="Slower" variant="note" />
+
+HAEVN syncs Gemini by navigating through your conversation list in the browser. Because Gemini doesn't expose a public API for conversation history, HAEVN needs to navigate each conversation to extract its content.
+
+## Supported URLs
+
+- `gemini.google.com`
+- `bard.google.com`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| Gemini-generated images | ✅ |
+| File attachments | ✅ |
+| Web search grounding | ✅ |
+| Gems (custom personas) conversations | ✅ |
+| Extensions (Workspace, YouTube, etc.) | ✅ |
+
+## Bulk sync behavior
+
+Because Gemini sync uses navigation, bulk sync requires the Gemini tab to remain open and visible. HAEVN will navigate through your conversation list automatically — don't close the Gemini tab or navigate away while a bulk sync is running.
+
+<Aside type="caution">
+  Navigation-based sync is slower than API sync. Expect roughly 3–5 seconds per conversation. A large Gemini archive (500+ conversations) can take 30+ minutes to fully sync.
+</Aside>
+
+## Known limitations
+
+- **Response branches** — if you've used the regenerate feature to explore different response paths, only the current displayed branch is captured.
+- **Real-time responses** — HAEVN syncs the final response content; intermediate streaming text is not preserved.

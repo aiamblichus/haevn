@@ -1,0 +1,64 @@
+---
+title: Import
+description: Import existing conversation exports from ChatGPT or a HAEVN backup.
+---
+
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+HAEVN can import conversations from external sources — useful for seeding your archive with existing exports before you start using the sync extension, or for restoring from a backup.
+
+## Supported import formats
+
+| Source | Format | How to get it |
+|---|---|---|
+| **ChatGPT** | ZIP file | Settings → Data controls → Export data |
+| **HAEVN backup** | ZIP or JSON | From a previous HAEVN export |
+
+<Aside>
+  Claude Code session files (JSONL format) can also be imported. See the [Claude Code platform page](/platforms/claude/) for details.
+</Aside>
+
+## How to import
+
+<Steps>
+1. Open the archive (click **Archive** in the HAEVN popup, or right-click the extension icon → **Options**).
+
+2. Click the **IMPORT** button in the archive toolbar.
+
+3. In the import dialog, click **Choose file** and select your ZIP or JSON export file.
+
+4. Click **Import**. HAEVN processes the file and adds the conversations to your archive.
+
+5. The search index rebuilds automatically once the import completes.
+</Steps>
+
+## Importing from ChatGPT
+
+ChatGPT's native export format is a ZIP file containing your full conversation history. To export from ChatGPT:
+
+<Steps>
+1. Go to [chatgpt.com](https://chatgpt.com) and open **Settings**.
+
+2. Navigate to **Data controls** → **Export data**.
+
+3. Click **Export** and wait for the email with your download link (this can take several minutes to hours depending on your history size).
+
+4. Download the ZIP file from the link in the email.
+
+5. Import the ZIP file into HAEVN using the steps above.
+</Steps>
+
+<Aside type="tip">
+  Importing a ChatGPT ZIP file is a great way to get your full history into HAEVN immediately, before you start using the extension's sync feature for ongoing conversations.
+</Aside>
+
+## What happens during import
+
+- Each conversation is added to your archive with its original timestamps and metadata
+- Attachments and images are extracted and stored in OPFS
+- Duplicate conversations (matching source ID) are skipped by default
+- The search index is rebuilt after all conversations are imported
+
+<Aside type="caution">
+  Large exports (thousands of conversations) can take several minutes to process. Keep the Options page open while the import runs.
+</Aside>

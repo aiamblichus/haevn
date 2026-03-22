@@ -1,0 +1,78 @@
+---
+title: Data Formats
+description: The HAEVN.Chat format and export file structures.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+HAEVN uses a canonical internal format called **HAEVN.Chat** to represent conversations from all platforms. This is the format used in JSON exports.
+
+## HAEVN.Chat structure
+
+```json
+{
+  "id": "uuid-v4",
+  "source": "chatgpt",
+  "sourceId": "original-platform-id",
+  "title": "Conversation title",
+  "createdAt": "2024-01-15T14:23:00.000Z",
+  "modifiedAt": "2024-01-15T15:47:00.000Z",
+  "messages": {
+    "message-id-1": {
+      "id": "message-id-1",
+      "parentId": null,
+      "timestamp": "2024-01-15T14:23:00.000Z",
+      "request": {
+        "kind": "request",
+        "parts": [
+          { "type": "text", "text": "Hello, can you help me with..." }
+        ]
+      },
+      "responses": [
+        {
+          "kind": "response",
+          "parts": [
+            { "type": "text", "text": "Of course! I'd be happy to help..." }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+## Content part types
+
+Each message part has a `type` field:
+
+| Type | Description |
+|---|---|
+| `text` | Plain or Markdown text content |
+| `code` | Code block with optional `language` field |
+| `image` | Image — either `url` (external) or `data` (base64) |
+| `document` | File attachment with `name`, `mimeType`, and optionally `data` |
+| `audio` | Audio file or URL |
+| `video` | Video file or URL |
+| `thinking` | Model thinking/reasoning block |
+| `tool_call` | Tool invocation with `name` and `input` |
+| `tool_result` | Tool output with `name` and `output` |
+
+## ZIP export structure
+
+When exporting multiple conversations, HAEVN creates a ZIP with this layout:
+
+```
+export.zip
+├── chats/
+│   ├── {chat-id}.json   (or .md for Markdown export)
+│   └── ...
+└── attachments/
+    ├── {chat-id}/
+    │   ├── image-filename.png
+    │   └── document-filename.pdf
+    └── ...
+```
+
+<Aside>
+  The `attachments/` directory is only present in JSON exports. Markdown exports include attachment references as inline links but do not embed binary files.
+</Aside>

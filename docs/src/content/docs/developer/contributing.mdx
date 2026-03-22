@@ -1,0 +1,81 @@
+---
+title: Contributing
+description: How to set up the development environment and contribute to HAEVN.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+## Development setup
+
+<Steps>
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/yourusername/haevn.git
+   cd haevn
+   ```
+
+2. **Install dependencies**
+
+   ```bash
+   pnpm install
+   ```
+
+3. **Build the extension**
+
+   ```bash
+   pnpm run build
+   ```
+
+4. **Load in Chrome**
+
+   - Open `chrome://extensions`
+   - Enable **Developer mode**
+   - Click **Load unpacked** and select the `dist/` folder
+
+5. **Start developing**
+
+   Make code changes, rebuild with `pnpm run build`, then reload the extension.
+</Steps>
+
+## Development workflow
+
+```bash
+# Build
+pnpm run build
+
+# Run tests
+pnpm test
+
+# Lint
+pnpm run lint
+pnpm run lint:fix   # auto-fix
+
+# Reload the extension after building
+# (run from any page with the extension active)
+haevnDebug.reload()
+```
+
+## Code style
+
+HAEVN uses **Biome** for linting and formatting:
+
+- 2-space indentation, 100 character line width
+- Double quotes, trailing commas
+- camelCase for functions/variables, PascalCase for components/types
+
+Run `pnpm run lint:fix` before committing to auto-fix any issues.
+
+<Aside type="tip">
+  The `fireAndForget()` utility is the correct way to call non-critical async operations. Don't use bare `.catch(() => {})`.
+</Aside>
+
+## Submitting a PR
+
+1. Fork the repository and create a branch from `main`
+2. Make your changes following the conventions above
+3. Add or update tests where applicable
+4. Run `pnpm test` and `pnpm run lint` — both must pass
+5. Open a PR with a clear description of what changed and why
+
+For new platform providers, see [Adding Providers](/developer/adding-providers/).

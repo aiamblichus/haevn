@@ -1,0 +1,39 @@
+---
+title: Google AI Studio
+description: Syncing Google AI Studio conversations with HAEVN.
+---
+
+import { Aside, Badge } from "@astrojs/starlight/components";
+
+<Badge text="Navigation sync" variant="caution" />
+<Badge text="Slower" variant="note" />
+
+Google AI Studio is Google's developer playground for Gemini models. It supports a wider range of Gemini features than the consumer Gemini app, including system instructions, multi-modal inputs, and the Gemini API explorer. HAEVN syncs AI Studio conversations using navigation-based extraction.
+
+## Supported URLs
+
+- `aistudio.google.com`
+
+## What gets synced
+
+| Content                               | Supported |
+| ------------------------------------- | --------- |
+| Text messages                         | ✅        |
+| User-uploaded images                  | ✅        |
+| AI-generated images                   | ✅        |
+| File attachments (PDFs, audio, video) | ✅        |
+| System instructions                   | ✅        |
+| Model and generation parameters       | ✅        |
+
+## Known limitations
+
+- **Streamed responses** — HAEVN captures the final rendered content; intermediate streaming states are not preserved.
+- **Function calling** — function call definitions are not currently captured.
+- **Prompt history** — AI Studio's prompt history format differs from conversation format; only standard chat conversations are synced.
+- **Bulk sync requires a visible tab** — AI Studio uses virtualised rendering: content only hydrates when the tab is in the foreground. During bulk sync, keep the HAEVN extraction tab visible. Switching away or minimising the window will cause the sync to stall.
+
+<Aside>
+  AI Studio conversations are often shorter, experimental prompts rather than
+  full conversations. HAEVN treats them identically to any other conversation,
+  so they're fully searchable alongside your ChatGPT and Claude archives.
+</Aside>

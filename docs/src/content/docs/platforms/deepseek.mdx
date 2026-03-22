@@ -1,0 +1,36 @@
+---
+title: DeepSeek
+description: Syncing DeepSeek conversations with HAEVN.
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" />
+
+DeepSeek is known for its strong reasoning capabilities, including the DeepSeek-R1 model's chain-of-thought reasoning. HAEVN captures DeepSeek's thinking traces alongside the final responses.
+
+## Supported URLs
+
+- `chat.deepseek.com`
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| **Reasoning / thinking traces** | ✅ |
+| Code blocks | ✅ |
+| Mathematical notation | ✅ |
+
+### Thinking traces
+
+DeepSeek's reasoning models produce visible thinking traces — intermediate reasoning steps before the final answer. HAEVN captures these traces and displays them in the Viewer as collapsible sections, similar to Claude's extended thinking blocks.
+
+<Aside type="tip">
+  DeepSeek's thinking traces can be long — sometimes longer than the final response itself. HAEVN preserves them in full, making it possible to study how the model approached a problem.
+</Aside>
+
+## Known limitations
+
+- **Images** — image generation and uploads are not currently supported.
+- **Deep Research mode** — deep research responses are captured as text; inline source citations may not render with full formatting.

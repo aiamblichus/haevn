@@ -1,0 +1,60 @@
+---
+title: Introduction
+description: What HAEVN is and how it works.
+---
+
+import { Card, CardGrid, Aside } from '@astrojs/starlight/components';
+
+**HAEVN** is a Chrome extension that captures your AI conversations and stores them permanently in your browser — searchable, exportable, and entirely yours.
+
+Every conversation you have with ChatGPT, Claude, Gemini, or any other supported platform lives only as long as that company decides to keep it. HAEVN changes that. With one click, it pulls a conversation into a local archive that never expires, never requires a subscription, and never leaves your machine.
+
+## How it works
+
+<CardGrid>
+  <Card title="Sync" icon="down-caret">
+    Visit any supported AI platform and click the HAEVN icon to save the current conversation. Or sync your entire history at once with Bulk Sync.
+  </Card>
+  <Card title="Search" icon="magnifier">
+    Full-text search across every conversation you've ever had — across all platforms — in milliseconds.
+  </Card>
+  <Card title="Own it" icon="document">
+    Your archive lives in your browser's local storage. No cloud, no servers, no account required. Export to JSON or Markdown anytime.
+  </Card>
+</CardGrid>
+
+## What gets preserved
+
+HAEVN captures more than plain text. For each conversation it preserves:
+
+- All messages, in order, with timestamps
+- **Images and file attachments** — both uploaded and AI-generated
+- **Thinking blocks** — Claude's internal reasoning steps, when visible
+- **Tool calls** — web searches, code execution, and other tool outputs
+- **Code blocks** with language metadata
+- Conversation branches (when you regenerate a response)
+
+## Supported platforms
+
+HAEVN currently syncs from 9 platforms:
+
+| Platform | Website |
+|---|---|
+| ChatGPT | chat.openai.com |
+| Claude | claude.ai |
+| Google Gemini | gemini.google.com |
+| Poe | poe.com |
+| Open WebUI | Self-hosted |
+| Qwen | chat.qwen.ai |
+| DeepSeek | chat.deepseek.com |
+| Google AI Studio | aistudio.google.com |
+| Grok | grok.com |
+
+<Aside type="tip">
+  You can also **import** existing exports from ChatGPT's native ZIP format, or from a previous HAEVN backup.
+</Aside>
+
+## Next steps
+
+- [Install HAEVN →](/getting-started/installation/)
+- [Sync your first conversation →](/getting-started/quick-start/)

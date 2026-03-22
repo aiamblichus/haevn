@@ -1,0 +1,41 @@
+---
+title: Developer Guide
+description: How to contribute to and extend HAEVN.
+---
+
+import { CardGrid, Card } from '@astrojs/starlight/components';
+
+HAEVN is open source and built to be extended. The plugin architecture makes it straightforward to add support for new AI platforms, and the codebase is well-documented.
+
+<CardGrid>
+  <Card title="Architecture" icon="puzzle">
+    Understand the three-tier worker model, data pipeline, and how the pieces fit together.
+
+    [Read more →](/developer/architecture/)
+  </Card>
+  <Card title="Adding Providers" icon="add-document">
+    Step-by-step guide to adding support for a new AI platform.
+
+    [Read more →](/developer/adding-providers/)
+  </Card>
+  <Card title="Data Model" icon="list-format">
+    The HAEVN.Chat format and how data flows from extraction to storage.
+
+    [Read more →](/developer/data-model/)
+  </Card>
+  <Card title="Contributing" icon="github">
+    How to set up the development environment, run tests, and submit a PR.
+
+    [Read more →](/developer/contributing/)
+  </Card>
+</CardGrid>
+
+## Tech stack
+
+- **Language:** TypeScript 5.9 (strict mode)
+- **Build:** esbuild (multi-entry, ~30s full rebuild)
+- **Runtime:** Chrome Extension MV3 (Service Worker)
+- **UI:** React 18, Tailwind CSS, shadcn/ui
+- **Storage:** Dexie (IndexedDB) + OPFS
+- **Search:** Lunr.js in a Web Worker
+- **Testing:** Vitest + fake-indexeddb

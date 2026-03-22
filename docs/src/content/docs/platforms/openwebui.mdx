@@ -1,0 +1,52 @@
+---
+title: Open WebUI
+description: Syncing self-hosted Open WebUI conversations with HAEVN.
+---
+
+import { Steps, Aside, Badge } from '@astrojs/starlight/components';
+import { Image } from 'astro:assets';
+import settingsImg from '../../../assets/screenshots/options-settings.png';
+
+<Badge text="API sync" variant="tip" /> <Badge text="Fast" variant="note" /> <Badge text="Requires setup" variant="caution" />
+
+Open WebUI is a popular self-hosted frontend for running local AI models (Ollama, LM Studio, etc.). HAEVN syncs Open WebUI conversations via its API, but you need to tell HAEVN where your instance is running.
+
+## Setup: Configure your Open WebUI URL
+
+<Steps>
+1. Open the HAEVN archive (click **Archive** in the popup, or right-click → **Options**).
+
+2. Click **Settings** in the left sidebar.
+
+3. Enter your Open WebUI base URL in the **Open WebUI Base URL** field.
+
+   <Image src={settingsImg} alt="The HAEVN Settings page showing the Open WebUI Base URL field with http://localhost:8080 entered" />
+
+4. Click **Save**.
+</Steps>
+
+Once configured, HAEVN will detect any page from your Open WebUI instance and enable sync for it.
+
+## Supported URLs
+
+Any URL that matches your configured base URL (e.g. `http://localhost:8080`, `https://ai.mycompany.com`).
+
+## What gets synced
+
+| Content | Supported |
+|---|---|
+| Text messages | ✅ |
+| User-uploaded images | ✅ |
+| Model-generated images | ✅ |
+| File attachments | ✅ |
+| Model name and parameters | ✅ |
+| Tool calls (if configured) | ✅ |
+
+<Aside type="tip">
+  Open WebUI is one of the best-supported platforms for HAEVN because its API follows the OpenAI standard format. All content types are reliably captured.
+</Aside>
+
+## Known limitations
+
+- **Authentication** — HAEVN uses your existing browser session to authenticate with Open WebUI. If your Open WebUI requires separate login, make sure you're logged in before syncing.
+- **Multiple instances** — HAEVN currently supports one Open WebUI instance at a time. If you have multiple instances, you'll need to change the URL in Settings to switch between them.
