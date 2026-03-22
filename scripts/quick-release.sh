@@ -30,7 +30,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 # Commit changes
-git add package.json package-lock.json src/manifest.json
+git add package.json pnpm-lock.yaml src/manifest.json
 git commit -m "$COMMIT_MSG"
 
 # Create tag
@@ -43,14 +43,14 @@ read -p "Push to origin and trigger release? (y/n) " -n 1 -r
 echo ""
 
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    git push origin main
-    git push origin v$NEW_VERSION
+    git push upstream main
+    git push upstream v$NEW_VERSION
     echo ""
     echo "🚀 Release v$NEW_VERSION pushed!"
-    echo "Monitor the release at: https://github.com/YOUR_USERNAME/haevn/actions"
+    echo "Monitor the release at: https://github.com/aiamblichus/haevn/actions"
 else
     echo ""
     echo "Release prepared but not pushed. To push manually:"
-    echo "  git push origin main"
-    echo "  git push origin v$NEW_VERSION"
+    echo "  git push upstream main"
+    echo "  git push upstream v$NEW_VERSION"
 fi

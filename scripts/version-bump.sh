@@ -32,7 +32,7 @@ fi
 echo "Bumping version from $CURRENT_VERSION to $NEW_VERSION"
 
 # Update package.json
-npm version $NEW_VERSION --no-git-tag-version
+pnpm version $NEW_VERSION --no-git-tag-version
 
 # Update manifest.json
 if command -v jq &> /dev/null; then
@@ -63,7 +63,7 @@ echo "Next steps:"
 echo "  1. Review changes: git diff"
 echo "  2. Commit changes: git add -A && git commit -m 'chore: bump version to $NEW_VERSION'"
 echo "  3. Create tag: git tag -a v$NEW_VERSION -m 'Release version $NEW_VERSION'"
-echo "  4. Push: git push origin main --tags"
+echo "  4. Push: git push upstream main --tags"
 echo ""
 echo "Or use the quick release command:"
-echo "  npm run release"
+echo "  pnpm run release"
