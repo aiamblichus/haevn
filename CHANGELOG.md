@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.0.1] - 2026-03-22
+
+- Initial release
+
+
 All notable changes to HAEVN will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
