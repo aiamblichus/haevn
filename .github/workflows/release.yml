@@ -1,0 +1,202 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Extract version from tag (remove 'v' prefix)
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update version in manifest.json
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Update manifest.json
+          jq --arg version "$VERSION" '.version = $version' src/manifest.json > src/manifest.json.tmp
+          mv src/manifest.json.tmp src/manifest.json
+          # Rebuild to pick up new version
+          npm run build:copy
+
+      - name: Create distribution ZIP
+        run: |
+          cd dist
+          zip -r ../haevn-extension-v${{ steps.version.outputs.version }}.zip .
+          cd ..
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Generate changelog
+          if [ -n "$PREV_TAG" ]; then
+            echo "## What's Changed" > changelog.txt
+            echo "" >> changelog.txt
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.txt
+          else
+            echo "## Initial Release" > changelog.txt
+            echo "" >> changelog.txt
+            echo "First release of HAEVN Chat Exporter" >> changelog.txt
+          fi
+          
+          # Prepend version header
+          echo "# Release v$VERSION" > release_notes.txt
+          echo "" >> release_notes.txt
+          cat changelog.txt >> release_notes.txt
+          
+          # If CHANGELOG.md exists, prepend to it
+          if [ -f "CHANGELOG.md" ]; then
+            echo "" >> release_notes.txt
+            echo "---" >> release_notes.txt
+            echo "" >> release_notes.txt
+            cat CHANGELOG.md >> release_notes.txt
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: release_notes.txt
+          draft: false
+          prerelease: false
+          files: |
+            haevn-extension-v${{ steps.version.outputs.version }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: haevn-extension-v${{ steps.version.outputs.version }}
+          path: haevn-extension-v${{ steps.version.outputs.version }}.zip
+          retention-days: 90
+
+  update-changelog:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+
+      - name: Update CHANGELOG.md
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          TAG="v$VERSION"
+          
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Generate new changelog entry
+          echo "# Changelog" > CHANGELOG_NEW.md
+          echo "" >> CHANGELOG_NEW.md
+          echo "## [$TAG] - $(date +%Y-%m-%d)" >> CHANGELOG_NEW.md
+          echo "" >> CHANGELOG_NEW.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s" $PREV_TAG..HEAD >> CHANGELOG_NEW.md
+          else
+            echo "- Initial release" >> CHANGELOG_NEW.md
+          fi
+          
+          echo "" >> CHANGELOG_NEW.md
+          echo "" >> CHANGELOG_NEW.md
+          
+          # Append existing changelog if it exists
+          if [ -f "CHANGELOG.md" ]; then
+            tail -n +3 CHANGELOG.md >> CHANGELOG_NEW.md
+          fi
+          
+          mv CHANGELOG_NEW.md CHANGELOG.md
+
+      - name: Update package.json version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          jq --arg version "$VERSION" '.version = $version' package.json > package.json.tmp
+          mv package.json.tmp package.json
+
+      - name: Update manifest.json version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          jq --arg version "$VERSION" '.version = $version' src/manifest.json > src/manifest.json.tmp
+          mv src/manifest.json.tmp src/manifest.json
+
+      - name: Commit changelog and version updates
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add CHANGELOG.md package.json src/manifest.json
+          git commit -m "chore: update version and changelog for release ${GITHUB_REF#refs/tags/}"
+          git push
+
+  # Optional: Publish to Chrome Web Store
+  # Uncomment and configure secrets when ready
+  # publish-chrome-store:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+  #   
+  #   steps:
+  #     - name: Download artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: haevn-extension-*
+  #     
+  #     - name: Publish to Chrome Web Store
+  #       uses: mnao305/chrome-extension-upload@v5.0.0
+  #       with:
+  #         file-path: haevn-extension-*.zip
+  #         extension-id: ${{ secrets.EXTENSION_ID }}
+  #         client-id: ${{ secrets.CLIENT_ID }}
+  #         client-secret: ${{ secrets.CLIENT_SECRET }}
+  #         refresh-token: ${{ secrets.REFRESH_TOKEN }}

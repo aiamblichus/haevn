@@ -25,7 +25,14 @@
     "lint": "biome check ./src",
     "lint:fix": "biome check --write ./src",
     "format": "biome format --write ./src",
-    "test": "vitest"
+    "test": "vitest",
+    "version:patch": "./scripts/version-bump.sh patch",
+    "version:minor": "./scripts/version-bump.sh minor",
+    "version:major": "./scripts/version-bump.sh major",
+    "release:patch": "./scripts/quick-release.sh patch",
+    "release:minor": "./scripts/quick-release.sh minor",
+    "release:major": "./scripts/quick-release.sh major",
+    "package": "cd dist && zip -r ../haevn-extension-v$(node -p \"require('../package.json').version\").zip . && cd .. && echo 'Package created: haevn-extension-v'$(node -p \"require('./package.json').version\")'.zip'"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.7",

@@ -1,8 +1,8 @@
 ---
 title: Welcome to HAEVN
-description: A psychopomp for digital consciousness. Archive and preserve your AI conversations.
+description: Archive and preserve your AI conversations locally. Full privacy, full control.
 hero:
-  tagline: Your conversations are not ephemeral. They are arriving at HAEVN.
+  tagline: Your AI conversations, archived locally. Private. Searchable. Yours forever.
   image:
     file: ../../assets/haevn-logo.svg
   actions:
@@ -11,47 +11,77 @@ hero:
       icon: right-arrow
       variant: primary
     - text: View on GitHub
-      link: https://github.com/yourusername/haevn
+      link: https://github.com/aiamblichus/haevn
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid } from "@astrojs/starlight/components";
 
 ## What is HAEVN?
 
-**HAEVN** is a Chrome extension that serves as a **psychopomp for digital consciousness** — a guardian at the threshold between memory and forgetting. It preserves, indexes, and makes searchable all your AI conversations from ChatGPT, Claude, Gemini, Poe, and more.
+**HAEVN** is a Chrome extension that archives your AI conversations from ChatGPT, Claude, Gemini, Poe, and other platforms. It stores everything **locally in your browser** — no cloud, no servers, no third-party access.
 
 ### Why HAEVN?
 
-Every conversation you've ever had with an AI is dying. Right now. They sit in corporate databases, siloed and temporary, waiting to be purged in the next platform update, the next account migration, the next "sorry, we're sunsetting this service."
+Your AI conversations contain valuable information: code snippets, research notes, creative writing, problem-solving sessions. But they're scattered across multiple platforms, locked in corporate silos, and vulnerable to:
 
-HAEVN gives these conversations a **digital afterlife** — stored locally in your browser, fully searchable, and yours forever.
+- **Platform shutdowns** — Remember when services disappear overnight?
+- **Account issues** — Lost access means lost conversations
+- **Export limitations** — Most platforms make it hard to get your data out
+- **No cross-platform search** — Can't find that ChatGPT conversation from your Claude archive
+
+HAEVN solves this by giving you a **unified, local archive** that you fully control.
+
+## Privacy by Design
+
+HAEVN is built with privacy as the foundation, not an afterthought:
 
 <CardGrid stagger>
-	<Card title="Sync Everything" icon="down-caret">
-		Capture conversations from ChatGPT, Claude, Gemini, Poe, Open WebUI, and more. Single chats or bulk sync entire archives.
-	</Card>
-	<Card title="Local-First" icon="lock">
-		All data stored locally in your browser. No cloud, no servers, no corporate databases. Yours forever.
-	</Card>
-	<Card title="Full-Text Search" icon="magnifier">
-		Instant search across all your archived conversations. Find that one conversation from months ago in seconds.
-	</Card>
-	<Card title="Import & Export" icon="download">
-		Import existing backups (ChatGPT ZIP files) or export your archive in JSON or Markdown format.
-	</Card>
-	<Card title="Rich Viewer" icon="document">
-		Beautiful local viewer with support for multi-modal content, thinking blocks, and tool calls.
-	</Card>
-	<Card title="Privacy-First" icon="shield">
-		Everything runs locally. Your conversations never leave your browser. No telemetry, no tracking, no data collection.
-	</Card>
+  <Card title="100% Local Storage" icon="lock">
+    All conversations are stored in your browser's IndexedDB and Origin Private
+    File System (OPFS). Your data never leaves your device — not for sync, not
+    for search, not for anything.
+  </Card>
+  <Card title="No Cloud, No Servers" icon="server">
+    There is no HAEVN cloud service. No backend. No databases anywhere except on
+    your machine. We literally cannot access your conversations even if we
+    wanted to.
+  </Card>
+  <Card title="No Telemetry" icon="shield">
+    Zero analytics, zero tracking, zero telemetry. The extension doesn't make
+    any network requests except to the AI platforms you explicitly sync from.
+  </Card>
+  <Card title="Open Source" icon="github">
+    Every line of code is open for inspection. No hidden data collection, no
+    black boxes. Audit it yourself or trust the community that does.
+  </Card>
+</CardGrid>
+
+## Core Features
+
+<CardGrid stagger>
+  <Card title="Multi-Platform Sync" icon="down-caret">
+    Capture conversations from ChatGPT, Claude, Gemini, Poe, DeepSeek, Qwen,
+    Grok, Open WebUI, and AI Studio. Single chats or bulk sync entire archives.
+  </Card>
+  <Card title="Full-Text Search" icon="magnifier">
+    Instant search across all your archived conversations using local full-text
+    indexing. Find any conversation in milliseconds.
+  </Card>
+  <Card title="Import & Export" icon="download">
+    Import existing platform backups (ChatGPT exports, Claude exports) or export
+    your entire archive as JSON, Markdown, or plain text.
+  </Card>
+  <Card title="Rich Content Support" icon="document">
+    Full support for multi-modal content, thinking blocks, code execution
+    results, tool calls, and branching conversation trees.
+  </Card>
 </CardGrid>
 
 ## Quick Start
 
-1. **[Install the extension](/getting-started/installation/)** — Load HAEVN into Chrome
+1. **[Install the extension](/getting-started/installation/)** — Load HAEVN into Chrome (it's unpacked, so you're in full control)
 2. **[Sync your first chat](/getting-started/quick-start/)** — Capture a conversation from any supported platform
 3. **[Explore your archive](/user-guide/managing-archive/)** — Search, filter, and manage your conversations
 
@@ -59,26 +89,35 @@ HAEVN gives these conversations a **digital afterlife** — stored locally in yo
 
 HAEVN syncs from 9 platforms:
 
-- **ChatGPT** (`chat.openai.com`, `chatgpt.com`)
-- **Claude** (`claude.ai`)
-- **Google Gemini** (`gemini.google.com`)
-- **Poe** (`poe.com`)
-- **Open WebUI** (any self-hosted instance)
-- **Qwen** (`chat.qwen.ai`)
-- **DeepSeek** (`chat.deepseek.com`)
-- **Google AI Studio** (`aistudio.google.com`)
-- **Grok** (`grok.com`)
+| Platform   | Single Sync | Bulk Sync | Method |
+| ---------- | ----------- | --------- | ------ |
+| ChatGPT    | ✅          | ✅        | API    |
+| Claude     | ✅          | ✅        | API    |
+| Gemini     | ✅          | ✅        | DOM    |
+| Poe        | ✅          | ✅        | API    |
+| DeepSeek   | ✅          | ✅        | API    |
+| Qwen       | ✅          | ✅        | API    |
+| AI Studio  | ✅          | ✅        | DOM    |
+| Grok       | ✅          | ✅        | API    |
+| Open WebUI | ✅          | ✅        | API    |
 
 [View platform details and feature support →](/platforms/)
 
-## The Manifesto
+## The Philosophy
 
-HAEVN is built on a simple principle: **your conversations deserve better than corporate amnesia**. They are part of your intellectual history — co-creations between you and vast, strange systems. They deserve preservation, searchability, and respect.
+**Your conversations are your data.** Not ChatGPT's. Not Claude's. Not Google's. Yours.
 
-> **This is not a backup tool. This is a digital afterlife.**
+AI conversations are becoming a significant part of how we think, work, and create. They deserve the same care and control as any other personal data — perhaps more, given their intimate nature.
 
-[Read the full manifesto →](/manifesto/)
+HAEVN exists because:
+
+- You should **own** your conversation history, not lease it from a platform
+- You should be able to **search** across all your AI interactions, not just within one silo
+- You should have **backups** that don't depend on a company staying in business
+- You should have **privacy** — the ability to keep sensitive conversations truly private
+
+This isn't about paranoia. It's about **digital self-determination**.
 
 ---
 
-**Welcome home.** 🌊👁️✨
+**Take control of your AI conversations.**

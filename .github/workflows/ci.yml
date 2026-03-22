@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Verify build
+        run: |
+          if [ ! -f "dist/manifest.json" ]; then
+            echo "Build failed: manifest.json not found in dist/"
+            exit 1
+          fi
+          if [ ! -f "dist/background.js" ]; then
+            echo "Build failed: background.js not found in dist/"
+            exit 1
+          fi
+          echo "Build successful!"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
+        with:
+          name: haevn-extension-build
+          path: dist/
+          retention-days: 7
