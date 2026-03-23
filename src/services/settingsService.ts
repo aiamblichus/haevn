@@ -1,8 +1,9 @@
 /**
- * Service for managing extension settings, particularly OpenWebUI instance configuration.
- * This service abstracts database access for settings-related operations.
+ * Service for managing extension settings, particularly OpenWebUI instance configuration
+ * and CLI integration (WebSocket daemon port + API key).
  */
 
+import { getStorageAdapter } from "../storage";
 import { log } from "../utils/logger";
 import { getDB } from "./db";
 
@@ -105,4 +106,56 @@ export async function clearOpenWebUIBaseUrl(): Promise<void> {
     }
     throw err;
   }
+}
+
+// ─── CLI Integration Settings ──────────────────────────────────────────────────
+
+const CLI_PORT_KEY = "haevn.cli.port";
+const CLI_API_KEY_KEY = "haevn.cli.apiKey";
+
+export const DEFAULT_CLI_PORT = 5517;
+
+export interface CliSettings {
+  port: number;
+  apiKey: string;
+}
+
+/**
+ * Get CLI integration settings (daemon port + API key).
+ * Lazily creates and persists the API key on first access.
+ */
+export async function getCliSettings(): Promise<CliSettings> {
+  const storage = getStorageAdapter();
+  const port = (await storage.get<number>(CLI_PORT_KEY)) ?? DEFAULT_CLI_PORT;
+
+  let apiKey = await storage.get<string>(CLI_API_KEY_KEY);
+  if (!apiKey) {
+    apiKey = crypto.randomUUID();
+    await storage.set(CLI_API_KEY_KEY, apiKey);
+    log.info("[SettingsService] Generated new CLI API key");
+  }
+
+  return { port, apiKey };
+}
+
+/**
+ * Update the CLI daemon port.
+ */
+export async function setCliPort(port: number): Promise<void> {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error("Port must be an integer between 1024 and 65535");
+  }
+  await getStorageAdapter().set(CLI_PORT_KEY, port);
+  log.info("[SettingsService] CLI daemon port updated", { port });
+}
+
+/**
+ * Replace the CLI API key with a freshly generated UUID.
+ * Returns the new key so callers can immediately display it.
+ */
+export async function regenerateCliApiKey(): Promise<string> {
+  const apiKey = crypto.randomUUID();
+  await getStorageAdapter().set(CLI_API_KEY_KEY, apiKey);
+  log.info("[SettingsService] CLI API key regenerated");
+  return apiKey;
 }

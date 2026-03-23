@@ -1,0 +1,34 @@
+{
+  "name": "@haevn/cli",
+  "version": "0.1.0",
+  "description": "CLI tool for searching and accessing HAEVN chat archives",
+  "type": "module",
+  "bin": {
+    "haevn": "./dist/index.mjs"
+  },
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "templates"],
+  "scripts": {
+    "build": "unbuild",
+    "dev": "unbuild --stub",
+    "start": "node ./dist/index.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check ./src",
+    "lint:fix": "biome check --write ./src"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "consola": "^3.4.2",
+    "pathe": "^2.0.3",
+    "picocolors": "^1.1.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.7",
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.5.14",
+    "typescript": "^5.9.3",
+    "unbuild": "^3.5.0"
+  }
+}

@@ -1,4 +1,5 @@
 import { clearStaleImportState } from "../background/import/importOrchestrator";
+import { handleWsReconnectAlarm, initWsBridge, WS_RECONNECT_ALARM } from "./wsBridge";
 import { registerAllProviders } from "../providers/index";
 import { getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
@@ -14,6 +15,9 @@ import { clearStaleOperationLocks } from "./state";
 
 // Register all providers
 registerAllProviders();
+
+// Connect to the HAEVN CLI daemon via WebSocket (no-op if daemon is not running).
+initWsBridge();
 
 // Clear any stale operation locks and states on startup (from crashed/interrupted operations)
 clearStaleOperationLocks().catch((err) => log.warn("Failed to clear stale operation locks", err));
@@ -108,5 +112,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       .catch((err) => {
         log.error("[Janitor] Cleanup failed", err);
       });
+  }
+  if (alarm.name === WS_RECONNECT_ALARM) {
+    handleWsReconnectAlarm();
   }
 });

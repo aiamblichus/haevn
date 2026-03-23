@@ -266,6 +266,9 @@ export type BackgroundRequest =
   | { action: "getOpenWebUIBaseUrl" }
   | { action: "setOpenWebUIBaseUrl"; baseUrl: string }
   | { action: "clearOpenWebUIBaseUrl" }
+  | { action: "getCliSettings" }
+  | { action: "setCliPort"; port: number }
+  | { action: "regenerateCliApiKey" }
   // Logger operations
   | { action: "getLogs"; filter?: LogFilter }
   | { action: "getLoggerConfig" }

@@ -2,7 +2,10 @@
 
 import {
   clearOpenWebUIBaseUrl,
+  getCliSettings,
   getOpenWebUIBaseUrl,
+  regenerateCliApiKey,
+  setCliPort,
   setOpenWebUIBaseUrl,
 } from "../../services/settingsService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
@@ -68,6 +71,59 @@ export async function handleClearOpenWebUIBaseUrl(
     sendResponse({
       success: false,
       error: err instanceof Error ? err.message : "Failed to clear OpenWebUI base URL",
+    });
+  }
+}
+
+// ─── CLI Integration ──────────────────────────────────────────────────────────
+
+export async function handleGetCliSettings(
+  _message: Extract<BackgroundRequest, { action: "getCliSettings" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const settings = await getCliSettings();
+    sendResponse({ success: true, ...settings });
+  } catch (err: unknown) {
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to get CLI settings",
+    });
+  }
+}
+
+export async function handleSetCliPort(
+  message: Extract<BackgroundRequest, { action: "setCliPort" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    await setCliPort(message.port);
+    // Reconnect the WS bridge with the new port (lazy import to avoid circular deps).
+    const { resetWsBridge } = await import("../wsBridge");
+    resetWsBridge();
+    sendResponse({ success: true });
+  } catch (err: unknown) {
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to set CLI port",
+    });
+  }
+}
+
+export async function handleRegenerateCliApiKey(
+  _message: Extract<BackgroundRequest, { action: "regenerateCliApiKey" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const apiKey = await regenerateCliApiKey();
+    // Reconnect immediately so the new key is used for auth.
+    const { resetWsBridge } = await import("../wsBridge");
+    resetWsBridge();
+    sendResponse({ success: true, apiKey });
+  } catch (err: unknown) {
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to regenerate CLI API key",
     });
   }
 }
