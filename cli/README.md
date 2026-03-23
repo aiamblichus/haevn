@@ -104,6 +104,27 @@ Options:
 - `-k, --api-key <key>` - API key from HAEVN extension settings
 - `-p, --port <n>` - Port (default: 5517)
 
+### `import` - Import transcript artifacts
+
+```bash
+# Import one Claude Code session JSONL
+haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
+
+# Import multiple files in one run
+haevn import --format claude_code ./sessions/*.jsonl
+
+# Skip existing chat IDs, don't overwrite
+haevn import --format claude_code --no-overwrite ./sessions/*.jsonl
+
+# Skip index rebuild after import
+haevn import --format claude_code --skip-index ./sessions/*.jsonl
+```
+
+Options:
+- `--format <fmt>` - Input format (`claude_code`, `codex`)
+- `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
+- `--skip-index` - Skip search indexing after import (default: rebuild index at end)
+
 ## Setup
 
 1. Open HAEVN extension Settings and copy your CLI API key.
@@ -160,6 +181,7 @@ cli/
 │   │   ├── list.ts
 │   │   ├── branches.ts
 │   │   ├── export.ts
+│   │   ├── import.ts
 │   │   └── daemon.ts
 │   ├── daemon/           # Daemon client and config
 │   │   ├── client.ts

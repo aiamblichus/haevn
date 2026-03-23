@@ -17,6 +17,7 @@ import branchesCommand from "./commands/branches";
 import daemonCommand from "./commands/daemon";
 import exportCommand from "./commands/export";
 import getCommand from "./commands/get";
+import importCommand from "./commands/import";
 import listCommand from "./commands/list";
 import searchCommand from "./commands/search";
 import { consola } from "./utils/output";
@@ -48,6 +49,7 @@ const mainCommand = defineCommand({
     list: listCommand,
     branches: branchesCommand,
     export: exportCommand,
+    import: importCommand,
     daemon: daemonCommand,
   },
   async setup(ctx) {

@@ -50,7 +50,14 @@ export type CliRequest =
   | { id: string; action: "get"; chatId: string; options?: GetOptions }
   | { id: string; action: "list"; options?: ListOptions }
   | { id: string; action: "branches"; chatId: string }
-  | { id: string; action: "export"; chatId: string; options?: ExportOptions };
+  | { id: string; action: "export"; chatId: string; options?: ExportOptions }
+  | {
+      id: string;
+      action: "import";
+      format: ImportFormat;
+      files: ImportFilePayload[];
+      options?: ImportOptions;
+    };
 
 export interface SearchOptions {
   platform?: string;
@@ -75,6 +82,27 @@ export interface ListOptions {
 
 export interface ExportOptions {
   includeMedia?: boolean;
+}
+
+export type ImportFormat = "claude_code" | "codex";
+
+export interface ImportFilePayload {
+  name: string;
+  content: string;
+}
+
+export interface ImportOptions {
+  overwrite?: boolean;
+  skipIndex?: boolean;
+}
+
+export interface ImportResult {
+  format: ImportFormat;
+  total: number;
+  processed: number;
+  saved: number;
+  skipped: number;
+  errors: number;
 }
 
 /**

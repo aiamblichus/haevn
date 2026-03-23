@@ -29,16 +29,16 @@
  */
 
 import type { ChatMessage, SearchResult } from "../model/haevn_model";
+import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
+import { transformToHaevnChat } from "../providers/claudecode/transformer";
+import { ImportService } from "../services/importService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
-type WsIncoming =
-  | { type: "authOk" }
-  | { type: "authError"; message: string }
-  | WsRequest;
+type WsIncoming = { type: "authOk" } | { type: "authError"; message: string } | WsRequest;
 
 /** A CLI request forwarded by the daemon – same shape as the NM protocol. */
 type WsRequest =
@@ -46,7 +46,14 @@ type WsRequest =
   | { id: string; action: "get"; chatId: string; options?: WsGetOptions }
   | { id: string; action: "list"; options?: WsListOptions }
   | { id: string; action: "branches"; chatId: string }
-  | { id: string; action: "export"; chatId: string; options?: WsExportOptions };
+  | { id: string; action: "export"; chatId: string; options?: WsExportOptions }
+  | {
+      id: string;
+      action: "import";
+      format: WsImportFormat;
+      files: WsImportFilePayload[];
+      options?: WsImportOptions;
+    };
 
 interface WsSearchOptions {
   platform?: string;
@@ -71,6 +78,27 @@ interface WsListOptions {
 
 interface WsExportOptions {
   includeMedia?: boolean;
+}
+
+type WsImportFormat = "claude_code" | "codex";
+
+interface WsImportFilePayload {
+  name: string;
+  content: string;
+}
+
+interface WsImportOptions {
+  overwrite?: boolean;
+  skipIndex?: boolean;
+}
+
+interface WsImportResult {
+  format: WsImportFormat;
+  total: number;
+  processed: number;
+  saved: number;
+  skipped: number;
+  errors: number;
 }
 
 type WsResponse<T = unknown> =
@@ -234,7 +262,10 @@ export function resetWsBridge(): void {
 // ─── Connection management ────────────────────────────────────────────────────
 
 async function connect(): Promise<void> {
-  if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
+  if (
+    socket &&
+    (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)
+  ) {
     return; // already alive
   }
 
@@ -368,6 +399,8 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleBranches(id, req);
       case "export":
         return await handleExport(id, req);
+      case "import":
+        return await handleImport(id, req);
       default: {
         const _exhaustive: never = req;
         return { id, success: false, error: `Unknown action`, code: "UNKNOWN_ACTION" };
@@ -526,6 +559,86 @@ async function handleExport(
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
   return { id, success: true, data: chat };
+}
+
+async function handleImport(
+  id: string,
+  req: Extract<WsRequest, { action: "import" }>,
+): Promise<WsResponse<WsImportResult>> {
+  const { format, files, options } = req;
+  const overwrite = options?.overwrite ?? true;
+  const skipIndex = options?.skipIndex ?? false;
+
+  if (!Array.isArray(files) || files.length === 0) {
+    return { id, success: false, error: "At least one file is required", code: "BAD_REQUEST" };
+  }
+
+  if (format === "codex") {
+    return {
+      id,
+      success: false,
+      error: "Codex import is not implemented yet. Use --format claude_code for now.",
+      code: "NOT_IMPLEMENTED",
+    };
+  }
+
+  if (format !== "claude_code") {
+    return {
+      id,
+      success: false,
+      error: `Unsupported import format: ${format}`,
+      code: "BAD_REQUEST",
+    };
+  }
+
+  const summary: WsImportResult = {
+    format,
+    total: files.length,
+    processed: 0,
+    saved: 0,
+    skipped: 0,
+    errors: 0,
+  };
+
+  let bulkIndexingStarted = false;
+
+  try {
+    if (!skipIndex) {
+      await SyncService.startBulkSyncIndexing();
+      bulkIndexingStarted = true;
+    }
+
+    for (const file of files) {
+      summary.processed++;
+      try {
+        const extraction = await parseClaudeCodeJsonl(file.content);
+        const chat = transformToHaevnChat(extraction);
+
+        if (!overwrite) {
+          const existing = await SyncService.getChat(chat.id);
+          if (existing) {
+            summary.skipped++;
+            continue;
+          }
+        }
+
+        await ImportService.saveImportedChat(chat, extraction, { skipIndexing: true });
+        summary.saved++;
+      } catch (err) {
+        summary.errors++;
+        log.warn("[WsBridge] Import skipped due to parsing/transformation error", {
+          file: file.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  } finally {
+    if (bulkIndexingStarted) {
+      await SyncService.finishBulkSyncIndexing();
+    }
+  }
+
+  return { id, success: true, data: summary };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
