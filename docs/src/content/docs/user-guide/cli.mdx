@@ -1,6 +1,6 @@
 ---
 title: HAEVN CLI
-description: Use HAEVN from your terminal for search, branch navigation, and exports.
+description: Use HAEVN from your terminal for search, branch navigation, imports, and exports.
 ---
 
 The HAEVN CLI (`haevn`) gives you fast terminal access to your local archive.
@@ -33,6 +33,7 @@ haevn list -l 5
 - `haevn branches <chatId>` — inspect tree/forks with short message refs.
 - `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
 - `haevn export <chatId> -o file.json` — export full chat.
+- `haevn import --format <claude_code|codex> <file...>` — import local JSONL session files.
 
 ## Short message refs
 
@@ -107,6 +108,22 @@ Useful fields:
 - `search`: `chatId`, `messageRef`, `messageSnippet`, `source`
 - `branches`: `tree`, `branches[].leafMessageRef`, `branches[].path`
 - `get`: branch content suitable for markdown or structured JSON workflows
+
+## Import from local session files
+
+You can import local coding-session artifacts directly from the terminal:
+
+```bash
+# Claude Code session JSONL
+haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
+
+# Codex session JSONL
+haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
+```
+
+Flags:
+- `--no-overwrite` — skip chats that already exist (default is overwrite).
+- `--skip-index` — skip index rebuild after import (default is rebuild at end).
 
 ## Tips
 

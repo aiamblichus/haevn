@@ -3,7 +3,7 @@ import { parseCodexJsonl } from "../src/providers/codex/importer";
 import { transformCodexToHaevnChat } from "../src/providers/codex/transformer";
 
 describe("codex_transformer", () => {
-  it("should preserve developer/system, reasoning, and tool events", async () => {
+  it("should preserve developer/system and tool events while skipping reasoning blocks", async () => {
     const jsonl = [
       JSON.stringify({
         timestamp: "2026-03-23T10:00:00.000Z",
@@ -78,14 +78,14 @@ describe("codex_transformer", () => {
     expect(chat.id).toBe("session-123");
     expect(chat.source).toBe("codex");
     expect(chat.title).toBe("Hello");
-    expect(Object.keys(chat.messages).length).toBeGreaterThanOrEqual(6);
+    expect(Object.keys(chat.messages).length).toBeGreaterThanOrEqual(5);
 
     const allParts = Object.values(chat.messages).flatMap((msg) =>
       msg.message.flatMap((modelMsg) => modelMsg.parts),
     );
 
     expect(allParts.some((part) => part.part_kind === "system-prompt")).toBe(true);
-    expect(allParts.some((part) => part.part_kind === "thinking")).toBe(true);
+    expect(allParts.some((part) => part.part_kind === "thinking")).toBe(false);
     expect(allParts.some((part) => part.part_kind === "tool-call")).toBe(true);
     expect(allParts.some((part) => part.part_kind === "tool-return")).toBe(true);
   });

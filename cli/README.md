@@ -128,6 +128,10 @@ Options:
 - `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
 - `--skip-index` - Skip search indexing after import (default: rebuild index at end)
 
+Notes:
+- `claude_code` and `codex` are import-only providers (no live sync).
+- Codex reasoning blocks are encrypted in source logs and are skipped during import.
+
 ## Setup
 
 1. Open HAEVN extension Settings and copy your CLI API key.

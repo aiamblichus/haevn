@@ -1,6 +1,6 @@
 ---
 title: Import
-description: Import existing conversation exports from ChatGPT or a HAEVN backup.
+description: Import conversation exports and local coding-session JSONL files into HAEVN.
 ---
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -12,13 +12,18 @@ HAEVN can import conversations from external sources — useful for seeding your
 | Source | Format | How to get it |
 |---|---|---|
 | **ChatGPT** | ZIP file | Settings → Data controls → Export data |
-| **HAEVN backup** | ZIP or JSON | From a previous HAEVN export |
+| **Claude Code** | JSONL file | Local session files in your `.claude/` directory |
+| **Codex** | JSONL file | Local session files in your `.codex/sessions/` directory |
+| **HAEVN backup** | ZIP | From a previous HAEVN export |
 
 <Aside>
-  Claude Code session files (JSONL format) can also be imported. See the [Claude Code platform page](/platforms/claude/) for details.
+  Claude Code and Codex are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
 </Aside>
 
 ## How to import
+
+<Tabs>
+  <TabItem label="Options UI">
 
 <Steps>
 1. Open the archive (click **Archive** in the HAEVN popup, or right-click the extension icon → **Options**).
@@ -31,6 +36,24 @@ HAEVN can import conversations from external sources — useful for seeding your
 
 5. The search index rebuilds automatically once the import completes.
 </Steps>
+
+  </TabItem>
+  <TabItem label="CLI">
+
+```bash
+# Claude Code
+haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
+
+# Codex
+haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
+```
+
+Useful flags:
+- `--no-overwrite` to skip existing chat IDs.
+- `--skip-index` to skip index rebuild after import.
+
+  </TabItem>
+</Tabs>
 
 ## Importing from ChatGPT
 
@@ -56,8 +79,8 @@ ChatGPT's native export format is a ZIP file containing your full conversation h
 
 - Each conversation is added to your archive with its original timestamps and metadata
 - Attachments and images are extracted and stored in OPFS
-- Duplicate conversations (matching source ID) are skipped by default
-- The search index is rebuilt after all conversations are imported
+- Existing chats are overwritten by default (use `--no-overwrite` in CLI to skip existing IDs)
+- The search index is rebuilt after all conversations are imported (unless `--skip-index` in CLI)
 
 <Aside type="caution">
   Large exports (thousands of conversations) can take several minutes to process. Keep the Options page open while the import runs.

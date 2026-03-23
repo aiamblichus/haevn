@@ -18,7 +18,6 @@ import type {
   CodexResponseItemFunctionCallOutputPayload,
   CodexResponseItemFunctionCallPayload,
   CodexResponseItemMessagePayload,
-  CodexResponseItemReasoningPayload,
 } from "./model";
 
 function safeIso(ts: string | undefined): string {
@@ -49,15 +48,6 @@ function flattenTextContent(content: unknown[] | undefined): string {
   }
 
   return parts.join("\n\n").trim();
-}
-
-function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }
 
 function messagePayloadToModelMessage(
@@ -104,36 +94,6 @@ function messagePayloadToModelMessage(
     parts: [requestPart],
   };
   return request;
-}
-
-function reasoningPayloadToModelMessage(
-  payload: CodexResponseItemReasoningPayload,
-  timestampIso: string,
-): ModelMessage {
-  let content = "";
-
-  if (typeof payload.content === "string" && payload.content.trim()) {
-    content = payload.content.trim();
-  } else if (Array.isArray(payload.summary) && payload.summary.length > 0) {
-    content = payload.summary.map((entry) => stringifyUnknown(entry)).join("\n");
-  } else if (typeof payload.encrypted_content === "string" && payload.encrypted_content) {
-    content = `[Encrypted reasoning]\n${payload.encrypted_content}`;
-  } else {
-    content = "[Reasoning block]";
-  }
-
-  const response: ModelResponse = {
-    kind: "response",
-    parts: [
-      {
-        part_kind: "thinking",
-        content,
-      },
-    ],
-    timestamp: timestampIso,
-  };
-
-  return response;
 }
 
 function functionCallPayloadToModelMessage(
@@ -198,7 +158,9 @@ function lineToModelMessage(
     case "message":
       return messagePayloadToModelMessage(line.payload, tsIso);
     case "reasoning":
-      return reasoningPayloadToModelMessage(line.payload, tsIso);
+      // Reasoning blocks in Codex session logs are encrypted/non-readable.
+      // Skip importing them to avoid noisy unusable content.
+      return null;
     case "function_call":
       if (line.payload.call_id && line.payload.name) {
         toolNameByCallId.set(line.payload.call_id, line.payload.name);
