@@ -9,6 +9,7 @@ import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tr
 
 export interface BranchJsonOptions {
   includeThinking?: boolean;
+  skipSystem?: boolean;
 }
 
 /**
@@ -19,8 +20,11 @@ export function formatBranchAsJson(
   branchPath: string[],
   options: BranchJsonOptions = {},
 ): object {
-  const { includeThinking = false } = options;
-  const messages = getMessagesOnBranch(chat, branchPath);
+  const { includeThinking = false, skipSystem = false } = options;
+  const messages = getMessagesOnBranch(chat, branchPath).filter((msg) => {
+    if (!skipSystem) return true;
+    return getMessageRole(msg) !== "system";
+  });
   const refs = buildMessageRefIndex(chat);
 
   return {
@@ -34,7 +38,7 @@ export function formatBranchAsJson(
       messages: messages.map((msg) => ({
         ref: getMessageRef(refs, msg.id),
         role: getMessageRole(msg),
-        content: getMessageText(msg, { includeThinking }),
+        content: getMessageText(msg, { includeThinking, skipSystem }),
         timestamp: msg.timestamp,
       })),
     },

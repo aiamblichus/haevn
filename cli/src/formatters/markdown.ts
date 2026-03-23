@@ -10,6 +10,7 @@ export interface MarkdownOptions {
   includeMetadata?: boolean;
   includeMedia?: boolean;
   includeThinking?: boolean;
+  skipSystem?: boolean;
   /** Only render the last N messages of the branch (0 = all). */
   tail?: number;
   /** Only render the first N messages of the branch (0 = all). Takes precedence over tail. */
@@ -24,7 +25,13 @@ export function formatBranchAsMarkdown(
   branchPath: string[],
   options: MarkdownOptions = {},
 ): string {
-  const { includeMetadata = true, includeThinking = false, tail = 0, head = 0 } = options;
+  const {
+    includeMetadata = true,
+    includeThinking = false,
+    skipSystem = false,
+    tail = 0,
+    head = 0,
+  } = options;
   let messages = getMessagesOnBranch(chat, branchPath);
 
   // Apply head/tail window before filtering so the count is accurate.
@@ -40,7 +47,11 @@ export function formatBranchAsMarkdown(
   }
 
   // Filter out messages with no text (tool calls, image-only uploads)
-  const rendered = messages.filter((m) => getMessageText(m, { includeThinking }).trim());
+  const rendered = messages.filter((m) => {
+    const role = getMessageRole(m);
+    if (skipSystem && role === "system") return false;
+    return getMessageText(m, { includeThinking, skipSystem }).trim();
+  });
 
   const lines: string[] = [];
 
@@ -66,8 +77,8 @@ export function formatBranchAsMarkdown(
   // Messages
   for (const message of rendered) {
     const role = getMessageRole(message);
-    const text = formatMessageForMarkdown(message, includeThinking);
-    const roleLabel = role === "user" ? "User" : "Assistant";
+    const text = formatMessageForMarkdown(message, includeThinking, skipSystem);
+    const roleLabel = role === "system" ? "SYSTEM" : role === "user" ? "User" : "Assistant";
 
     lines.push(`## ${roleLabel}`);
     lines.push("");
@@ -93,9 +104,13 @@ export function formatBranchAsMarkdown(
   return lines.join("\n");
 }
 
-function formatMessageForMarkdown(message: ChatMessage, includeThinking: boolean): string {
+function formatMessageForMarkdown(
+  message: ChatMessage,
+  includeThinking: boolean,
+  skipSystem: boolean,
+): string {
   if (!includeThinking || getMessageRole(message) !== "assistant") {
-    return getMessageText(message, { includeThinking });
+    return getMessageText(message, { includeThinking, skipSystem });
   }
 
   const thinkingParts: string[] = [];

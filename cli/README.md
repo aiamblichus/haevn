@@ -48,6 +48,9 @@ haevn get chat_abc123 -f json
 # Include full thinking blocks
 haevn get chat_abc123 --include-thinking
 
+# Skip system instructions in output
+haevn get chat_abc123 --skip-system
+
 # Write to file
 haevn get chat_abc123 -o ./chat.md
 ```
@@ -59,6 +62,7 @@ Options:
 - `--include-metadata` - Include timestamps/model info (default: true)
 - `--include-media` - Include image descriptions/links (default: false)
 - `--include-thinking` - Include full thinking blocks (default: false, otherwise truncated preview)
+- `--skip-system` - Skip system instructions in output (default: false)
 
 ### `list` - Browse chats
 

@@ -134,7 +134,7 @@ export interface BranchInfo {
  */
 export interface TreeNode {
   messageId: string;
-  role: "user" | "assistant";
+  role: "system" | "user" | "assistant";
   preview: string;
   isLeaf: boolean;
   isOnPrimaryPath: boolean;

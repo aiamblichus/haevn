@@ -92,7 +92,7 @@ function summarizeNode(chat: Chat, messageId: string): string {
   const msg = chat.messages[messageId];
   if (!msg) return truncate(messageId, 12);
   const role = getMessageRole(msg);
-  const roleLabel = role === "user" ? "U" : "A";
+  const roleLabel = role === "system" ? "S" : role === "user" ? "U" : "A";
   return `${roleLabel}:${truncate(getMessagePreview(msg, 22), 22)}`;
 }
 
@@ -124,7 +124,12 @@ export function formatTreeText(chat: Chat, showIds = false): string {
 }
 
 function formatNodeLine(node: TreeNode, showIds: boolean): string {
-  const roleLabel = node.role === "user" ? pc.cyan("[user]") : pc.magenta("[asst]");
+  const roleLabel =
+    node.role === "system"
+      ? pc.yellow("[sys]")
+      : node.role === "user"
+        ? pc.cyan("[user]")
+        : pc.magenta("[asst]");
   const preview = pc.dim(truncate(node.preview, 40));
   const leafId = showIds && node.isLeaf ? ` ${pc.yellow(`→ ${node.messageId}`)}` : "";
   const inlineId = showIds && !node.isLeaf ? ` ${pc.dim(`(${truncate(node.messageId, 12)})`)}` : "";

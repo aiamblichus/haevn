@@ -54,6 +54,11 @@ export default defineCommand({
       description: "Include full thinking blocks instead of truncating previews",
       default: false,
     },
+    "skip-system": {
+      type: "boolean",
+      description: "Skip system instructions in output",
+      default: false,
+    },
     tail: {
       type: "string",
       alias: "t",
@@ -73,6 +78,7 @@ export default defineCommand({
       "include-metadata": includeMetadata,
       "include-media": includeMedia,
       "include-thinking": includeThinking,
+      "skip-system": skipSystem,
       tail,
       head,
     } = args;
@@ -105,6 +111,7 @@ export default defineCommand({
         includeMetadata,
         includeMedia,
         includeThinking,
+        skipSystem,
         tail: tail ? Number.parseInt(tail, 10) : 0,
         head: head ? Number.parseInt(head, 10) : 0,
       });
@@ -132,6 +139,7 @@ export function outputBranch(
     includeMetadata?: boolean;
     includeMedia?: boolean;
     includeThinking?: boolean;
+    skipSystem?: boolean;
     tail?: number;
     head?: number;
   } = {},
@@ -148,7 +156,10 @@ export function outputBranch(
 
   if (format === "json") {
     return toJsonString(
-      formatBranchAsJson(chat, branchPath, { includeThinking: options.includeThinking }),
+      formatBranchAsJson(chat, branchPath, {
+        includeThinking: options.includeThinking,
+        skipSystem: options.skipSystem,
+      }),
     );
   }
 
@@ -156,6 +167,7 @@ export function outputBranch(
     includeMetadata: options.includeMetadata ?? true,
     includeMedia: options.includeMedia ?? false,
     includeThinking: options.includeThinking ?? false,
+    skipSystem: options.skipSystem ?? false,
     tail: options.tail ?? 0,
     head: options.head ?? 0,
   });

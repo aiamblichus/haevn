@@ -12,6 +12,7 @@ import type { Chat, ChatMessage } from "../types/chat";
 
 export interface GetMessageTextOptions {
   includeThinking?: boolean;
+  skipSystem?: boolean;
 }
 
 /**
@@ -113,19 +114,30 @@ export function getMessagesOnBranch(chat: Chat, path: string[]): ChatMessage[] {
 }
 
 /**
- * Get the role of a message (user or assistant).
+ * Get the role of a message (system, user, or assistant).
  */
-export function getMessageRole(message: ChatMessage): "user" | "assistant" {
-  const firstPart = message.message[0];
-  if (!firstPart) return "user";
-  return firstPart.kind === "request" ? "user" : "assistant";
+export function getMessageRole(message: ChatMessage): "system" | "user" | "assistant" {
+  if (message.message.some((m) => m.kind === "response")) {
+    return "assistant";
+  }
+
+  const requestParts = message.message
+    .filter((m) => m.kind === "request")
+    .flatMap((m) => m.parts);
+
+  if (requestParts.length === 0) return "user";
+
+  const hasSystemPrompt = requestParts.some((p) => p.part_kind === "system-prompt");
+  const hasNonSystemPrompt = requestParts.some((p) => p.part_kind !== "system-prompt");
+
+  return hasSystemPrompt && !hasNonSystemPrompt ? "system" : "user";
 }
 
 /**
  * Get text content from a message (best effort extraction).
  */
 export function getMessageText(message: ChatMessage, options: GetMessageTextOptions = {}): string {
-  const { includeThinking = false } = options;
+  const { includeThinking = false, skipSystem = false } = options;
   const parts: string[] = [];
 
   for (const msg of message.message) {
@@ -136,7 +148,9 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
             parts.push(part.content);
           }
         } else if (part.part_kind === "system-prompt") {
-          parts.push(part.content);
+          if (!skipSystem) {
+            parts.push(part.content);
+          }
         }
       }
     } else if (msg.kind === "response") {
