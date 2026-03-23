@@ -27,9 +27,14 @@ export default defineCommand({
       description: "Output format (tree, json)",
       default: "tree",
     },
+    "show-ids": {
+      type: "boolean",
+      description: "Show raw message IDs in tree output",
+      default: false,
+    },
   },
   async run({ args }) {
-    const { chatId, format } = args;
+    const { chatId, format, "show-ids": showIds } = args;
 
     let chat: Chat;
     try {
@@ -42,7 +47,7 @@ export default defineCommand({
     if (format === "json") {
       consola.log(formatBranchesJson(chat));
     } else {
-      consola.log(formatTreeText(chat));
+      consola.log(formatTreeText(chat, showIds));
     }
   },
 });
@@ -76,7 +81,15 @@ export function buildTree(chat: Chat): TreeNode {
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
-export function formatTreeText(chat: Chat): string {
+function summarizeNode(chat: Chat, messageId: string): string {
+  const msg = chat.messages[messageId];
+  if (!msg) return truncate(messageId, 12);
+  const role = getMessageRole(msg);
+  const roleLabel = role === "user" ? "U" : "A";
+  return `${roleLabel}:${truncate(getMessagePreview(msg, 22), 22)}`;
+}
+
+export function formatTreeText(chat: Chat, showIds = false): string {
   const branches = getAllBranches(chat);
   const primaryBranch = branches.find((b) => b.isPrimary);
   const tree = buildTree(chat);
@@ -88,30 +101,36 @@ export function formatTreeText(chat: Chat): string {
     ),
   );
   lines.push("");
-  lines.push(renderTreeNode(tree, "", true));
+  lines.push(renderTreeNode(tree, "", true, showIds));
 
   if (primaryBranch) {
     lines.push("");
-    const pathPreview = primaryBranch.path.slice(-3).join(" → ");
+    const pathPreview = primaryBranch.path
+      .slice(-3)
+      .map((id) => summarizeNode(chat, id))
+      .join(" → ");
     lines.push(`Primary branch: ${pc.dim(pathPreview)}  (${primaryBranch.messageCount} messages)`);
   }
 
   return lines.join("\n");
 }
 
-function renderTreeNode(node: TreeNode, prefix: string, isLast: boolean): string {
+function renderTreeNode(node: TreeNode, prefix: string, isLast: boolean, showIds: boolean): string {
   const lines: string[] = [];
   const connector = isLast ? "└─ " : "├─ ";
   const roleLabel = node.role === "user" ? pc.cyan("[user]") : pc.magenta("[asst]");
   const preview = pc.dim(truncate(node.preview, 40));
-  const leafId = node.isLeaf ? ` ${pc.yellow(`→ ${node.messageId}`)}` : "";
+  const leafId = showIds && node.isLeaf ? ` ${pc.yellow(`→ ${node.messageId}`)}` : "";
+  const inlineId = showIds && !node.isLeaf ? ` ${pc.dim(`(${truncate(node.messageId, 12)})`)}` : "";
   const star = node.isOnPrimaryPath ? pc.bold("*") : " ";
 
-  lines.push(`${prefix}${connector}${star} ${roleLabel} ${preview}${leafId}`);
+  lines.push(`${prefix}${connector}${star} ${roleLabel} ${preview}${inlineId}${leafId}`);
 
   const childPrefix = prefix + (isLast ? "   " : "│  ");
   for (let i = 0; i < node.children.length; i++) {
-    lines.push(renderTreeNode(node.children[i], childPrefix, i === node.children.length - 1));
+    lines.push(
+      renderTreeNode(node.children[i], childPrefix, i === node.children.length - 1, showIds),
+    );
   }
 
   return lines.join("\n");

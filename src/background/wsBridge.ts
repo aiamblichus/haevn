@@ -28,7 +28,7 @@
  * A chrome.alarm fires every 30 s to wake a dormant SW and reconnect if needed.
  */
 
-import type { SearchResult } from "../model/haevn_model";
+import type { ChatMessage, SearchResult } from "../model/haevn_model";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
@@ -78,6 +78,86 @@ type WsResponse<T = unknown> =
 
 function toMessageDict<T extends { id: string }>(messages: T[]): Record<string, T> {
   return Object.fromEntries(messages.map((m) => [m.id, m]));
+}
+
+function stripBinaryFromMessage(message: ChatMessage): ChatMessage {
+  const cloned = structuredClone(message) as ChatMessage;
+
+  for (const modelMessage of cloned.message || []) {
+    if (modelMessage.kind === "request") {
+      for (const part of modelMessage.parts || []) {
+        if (part.part_kind !== "user-prompt" || !Array.isArray(part.content)) continue;
+        part.content = part.content.map((entry) => {
+          if (
+            typeof entry === "object" &&
+            entry !== null &&
+            "kind" in entry &&
+            (entry as { kind?: string }).kind === "binary"
+          ) {
+            const binary = entry as {
+              kind: "binary";
+              media_type: string;
+              identifier?: string;
+              vendor_metadata?: Record<string, unknown>;
+            };
+            return {
+              kind: "binary",
+              data: "[binary omitted]",
+              media_type: binary.media_type,
+              identifier: binary.identifier,
+              vendor_metadata: binary.vendor_metadata,
+            };
+          }
+          return entry;
+        });
+      }
+      continue;
+    }
+
+    for (const part of modelMessage.parts || []) {
+      if (
+        !(
+          part.part_kind === "image-response" ||
+          part.part_kind === "video-response" ||
+          part.part_kind === "audio-response" ||
+          part.part_kind === "document-response"
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        typeof part.content === "object" &&
+        part.content !== null &&
+        "kind" in part.content &&
+        (part.content as { kind?: string }).kind === "binary"
+      ) {
+        const binary = part.content as {
+          kind: "binary";
+          media_type: string;
+          identifier?: string;
+          vendor_metadata?: Record<string, unknown>;
+        };
+        part.content = {
+          kind: "binary",
+          data: "[binary omitted]",
+          media_type: binary.media_type,
+          identifier: binary.identifier,
+          vendor_metadata: binary.vendor_metadata,
+        };
+      }
+    }
+  }
+
+  return cloned;
+}
+
+function maybeStripBinary(
+  messages: ChatMessage[],
+  includeMedia: boolean | undefined,
+): ChatMessage[] {
+  if (includeMedia) return messages;
+  return messages.map(stripBinaryFromMessage);
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -352,7 +432,21 @@ async function handleGet(
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
-  const branchMessages = await SyncService.getPrimaryBranchMessages(req.chatId);
+  const requestedLeaf = req.options?.messageId;
+  const rawBranchMessages = requestedLeaf
+    ? await SyncService.getBranchMessages(req.chatId, requestedLeaf)
+    : await SyncService.getPrimaryBranchMessages(req.chatId);
+
+  if (requestedLeaf && rawBranchMessages.length === 0) {
+    return {
+      id,
+      success: false,
+      error: `Message not found in chat: ${requestedLeaf}`,
+      code: "NOT_FOUND",
+    };
+  }
+
+  const branchMessages = maybeStripBinary(rawBranchMessages, req.options?.includeMedia);
   return {
     id,
     success: true,
