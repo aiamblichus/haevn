@@ -48,6 +48,11 @@ export default defineCommand({
       description: "Include image descriptions/links",
       default: false,
     },
+    tail: {
+      type: "string",
+      alias: "t",
+      description: "Only show the last N messages",
+    },
   },
   async run({ args }) {
     const {
@@ -57,6 +62,7 @@ export default defineCommand({
       output,
       "include-metadata": includeMetadata,
       "include-media": includeMedia,
+      tail,
     } = args;
 
     let chat: Chat;
@@ -76,6 +82,7 @@ export default defineCommand({
       content = outputBranch(chat, messageId, format as "markdown" | "json", {
         includeMetadata,
         includeMedia,
+        tail: tail ? Number.parseInt(tail, 10) : 0,
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
@@ -97,7 +104,7 @@ export function outputBranch(
   chat: Chat,
   messageId?: string,
   format: "markdown" | "json" = "markdown",
-  options: { includeMetadata?: boolean; includeMedia?: boolean } = {},
+  options: { includeMetadata?: boolean; includeMedia?: boolean; tail?: number } = {},
 ): string {
   const branchPath = messageId
     ? getBranchContainingMessage(chat, messageId)
@@ -116,5 +123,6 @@ export function outputBranch(
   return formatBranchAsMarkdown(chat, branchPath, {
     includeMetadata: options.includeMetadata ?? true,
     includeMedia: options.includeMedia ?? false,
+    tail: options.tail ?? 0,
   });
 }

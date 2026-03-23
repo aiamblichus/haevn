@@ -9,6 +9,8 @@ import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tr
 export interface MarkdownOptions {
   includeMetadata?: boolean;
   includeMedia?: boolean;
+  /** Only render the last N messages of the branch (0 = all). */
+  tail?: number;
 }
 
 /**
@@ -19,8 +21,18 @@ export function formatBranchAsMarkdown(
   branchPath: string[],
   options: MarkdownOptions = {},
 ): string {
-  const { includeMetadata = true } = options;
-  const messages = getMessagesOnBranch(chat, branchPath);
+  const { includeMetadata = true, tail = 0 } = options;
+  let messages = getMessagesOnBranch(chat, branchPath);
+
+  // Apply tail window before filtering so the count is accurate
+  const totalMessages = messages.length;
+  const tailTruncated = tail > 0 && tail < totalMessages;
+  if (tailTruncated) {
+    messages = messages.slice(-tail);
+  }
+
+  // Filter out messages with no text (tool calls, image-only uploads)
+  const rendered = messages.filter((m) => getMessageText(m).trim());
 
   const lines: string[] = [];
 
@@ -36,8 +48,13 @@ export function formatBranchAsMarkdown(
     lines.push("");
   }
 
+  if (tailTruncated) {
+    lines.push(`_…${totalMessages - tail} earlier messages omitted (use without --tail to see all)_`);
+    lines.push("");
+  }
+
   // Messages
-  for (const message of messages) {
+  for (const message of rendered) {
     const role = getMessageRole(message);
     const text = getMessageText(message);
     const roleLabel = role === "user" ? "User" : "Assistant";
@@ -48,10 +65,13 @@ export function formatBranchAsMarkdown(
     lines.push("");
   }
 
-  // Footer with branch info
+  // Footer: human-readable count, no raw IDs
   lines.push("---");
   lines.push("");
-  lines.push(`_Branch: ${branchPath.join(" → ")} (${messages.length} messages)_`);
+  const branchCount = chat.branches ? Object.keys(chat.branches).length : 1;
+  const footerParts = [`${totalMessages} messages`];
+  if (branchCount > 1) footerParts.push(`${branchCount} branches`);
+  lines.push(`_${footerParts.join(" · ")}_`);
 
   return lines.join("\n");
 }
