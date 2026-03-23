@@ -8,6 +8,7 @@ import { formatBranchAsJson, toJsonString } from "../formatters/json";
 import { formatBranchAsMarkdown } from "../formatters/markdown";
 import { daemonRequest } from "../daemon/client.js";
 import type { Chat } from "../types/chat";
+import { resolveMessageRef } from "../utils/messageRefs";
 import { consola } from "../utils/output";
 import { getBranchContainingMessage, getPrimaryBranch } from "../utils/tree";
 
@@ -66,11 +67,21 @@ export default defineCommand({
     } = args;
 
     let chat: Chat;
+    let resolvedMessageId = messageId;
     try {
+      if (messageId) {
+        const branchChat = await daemonRequest<Chat>({ action: "branches", chatId });
+        const resolved = resolveMessageRef(branchChat, messageId);
+        if (!resolved.messageId) {
+          throw new Error(resolved.error || `Could not resolve message reference: ${messageId}`);
+        }
+        resolvedMessageId = resolved.messageId;
+      }
+
       chat = await daemonRequest<Chat>({
         action: "get",
         chatId,
-        options: { messageId, includeMetadata, includeMedia },
+        options: { messageId: resolvedMessageId, includeMetadata, includeMedia },
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
@@ -79,7 +90,7 @@ export default defineCommand({
 
     let content: string;
     try {
-      content = outputBranch(chat, messageId, format as "markdown" | "json", {
+      content = outputBranch(chat, resolvedMessageId, format as "markdown" | "json", {
         includeMetadata,
         includeMedia,
         tail: tail ? Number.parseInt(tail, 10) : 0,

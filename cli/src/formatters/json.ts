@@ -4,6 +4,7 @@
 
 import type { BranchInfo, CliResponse, SearchResult } from "../types";
 import type { Chat } from "../types/chat";
+import { buildMessageRefIndex, createMessageRef, getMessageRef } from "../utils/messageRefs";
 import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
 
 /**
@@ -11,6 +12,7 @@ import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tr
  */
 export function formatBranchAsJson(chat: Chat, branchPath: string[]): object {
   const messages = getMessagesOnBranch(chat, branchPath);
+  const refs = buildMessageRefIndex(chat);
 
   return {
     chatId: chat.id,
@@ -18,10 +20,10 @@ export function formatBranchAsJson(chat: Chat, branchPath: string[]): object {
     platform: chat.source,
     timestamp: chat.timestamp,
     branch: {
-      path: branchPath,
+      path: branchPath.map((id) => getMessageRef(refs, id)),
       messageCount: messages.length,
       messages: messages.map((msg) => ({
-        id: msg.id,
+        ref: getMessageRef(refs, msg.id),
         role: getMessageRole(msg),
         content: getMessageText(msg),
         timestamp: msg.timestamp,
@@ -35,7 +37,10 @@ export function formatBranchAsJson(chat: Chat, branchPath: string[]): object {
  */
 export function formatSearchResultsAsJson(results: SearchResult[]): object {
   return {
-    results,
+    results: results.map((result) => ({
+      ...result,
+      messageRef: createMessageRef(result.chatId, result.messageId),
+    })),
     total: results.length,
     hasMore: false, // TODO: implement pagination
   };
@@ -45,16 +50,17 @@ export function formatSearchResultsAsJson(results: SearchResult[]): object {
  * Format branches as JSON.
  */
 export function formatBranchesAsJson(chat: Chat, branches: BranchInfo[]): object {
+  const refs = buildMessageRefIndex(chat);
   return {
     chatId: chat.id,
     title: chat.title,
     branchCount: branches.length,
     branches: branches.map((b) => ({
-      leafMessageId: b.leafMessageId,
+      leafMessageRef: getMessageRef(refs, b.leafMessageId),
       messageCount: b.messageCount,
       firstPrompt: b.firstPrompt,
       isPrimary: b.isPrimary,
-      path: b.path,
+      path: b.path.map((id) => getMessageRef(refs, id)),
     })),
   };
 }

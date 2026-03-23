@@ -8,7 +8,14 @@ import { daemonRequest } from "../daemon/client.js";
 import type { TreeNode } from "../types";
 import type { Chat, ChatMessage } from "../types/chat";
 import { consola, pc, truncate } from "../utils/output";
-import { getAllBranches, getMessagePreview, getMessageRole, getPrimaryBranch } from "../utils/tree";
+import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
+import {
+  getAllBranches,
+  getMessagePreview,
+  getMessageRole,
+  getMessageText,
+  getPrimaryBranch,
+} from "../utils/tree";
 
 export default defineCommand({
   meta: {
@@ -93,6 +100,7 @@ export function formatTreeText(chat: Chat, showIds = false): string {
   const branches = getAllBranches(chat);
   const primaryBranch = branches.find((b) => b.isPrimary);
   const tree = buildTree(chat);
+  const refs = buildMessageRefIndex(chat);
 
   const lines: string[] = [];
   lines.push(
@@ -101,7 +109,7 @@ export function formatTreeText(chat: Chat, showIds = false): string {
     ),
   );
   lines.push("");
-  lines.push(renderTreeNode(tree, "", true, showIds));
+  lines.push(renderTreeNodeCompressed(tree, "", true, showIds, refs));
 
   if (primaryBranch) {
     lines.push("");
@@ -115,22 +123,53 @@ export function formatTreeText(chat: Chat, showIds = false): string {
   return lines.join("\n");
 }
 
-function renderTreeNode(node: TreeNode, prefix: string, isLast: boolean, showIds: boolean): string {
-  const lines: string[] = [];
-  const connector = isLast ? "└─ " : "├─ ";
+function formatNodeLine(node: TreeNode, showIds: boolean): string {
   const roleLabel = node.role === "user" ? pc.cyan("[user]") : pc.magenta("[asst]");
   const preview = pc.dim(truncate(node.preview, 40));
   const leafId = showIds && node.isLeaf ? ` ${pc.yellow(`→ ${node.messageId}`)}` : "";
   const inlineId = showIds && !node.isLeaf ? ` ${pc.dim(`(${truncate(node.messageId, 12)})`)}` : "";
   const star = node.isOnPrimaryPath ? pc.bold("*") : " ";
+  return `${star} ${roleLabel} ${preview}${inlineId}${leafId}`;
+}
 
-  lines.push(`${prefix}${connector}${star} ${roleLabel} ${preview}${inlineId}${leafId}`);
+function renderTreeNodeCompressed(
+  node: TreeNode,
+  prefix: string,
+  isLast: boolean,
+  showIds: boolean,
+  refs: ReturnType<typeof buildMessageRefIndex>,
+): string {
+  const lines: string[] = [];
 
-  const childPrefix = prefix + (isLast ? "   " : "│  ");
-  for (let i = 0; i < node.children.length; i++) {
-    lines.push(
-      renderTreeNode(node.children[i], childPrefix, i === node.children.length - 1, showIds),
-    );
+  // Collapse linear runs (single-child chains) into one indentation level.
+  const chain: TreeNode[] = [node];
+  let cursor = node;
+  while (cursor.children.length === 1) {
+    cursor = cursor.children[0];
+    chain.push(cursor);
+  }
+
+  for (let i = 0; i < chain.length; i++) {
+    const connector = i === 0 ? (isLast ? "└─ " : "├─ ") : "   ";
+    const ref = pc.bold(pc.dim(`[${getMessageRef(refs, chain[i].messageId)}]`));
+    lines.push(`${prefix}${connector}${ref} ${formatNodeLine(chain[i], showIds)}`);
+  }
+
+  if (cursor.children.length > 1) {
+    const branchPrefix = prefix + (isLast ? "   " : "│  ");
+    lines.push(`${branchPrefix}${pc.dim(`┬ fork (${cursor.children.length} branches)`)}`);
+
+    for (let i = 0; i < cursor.children.length; i++) {
+      lines.push(
+        renderTreeNodeCompressed(
+          cursor.children[i],
+          branchPrefix,
+          i === cursor.children.length - 1,
+          showIds,
+          refs,
+        ),
+      );
+    }
   }
 
   return lines.join("\n");
@@ -138,17 +177,37 @@ function renderTreeNode(node: TreeNode, prefix: string, isLast: boolean, showIds
 
 export function formatBranchesJson(chat: Chat): string {
   const branches = getAllBranches(chat);
+  const refs = buildMessageRefIndex(chat);
+
+  const tree = (() => {
+    const root = buildTree(chat);
+    const toNodeJson = (node: TreeNode): unknown => ({
+      ref: getMessageRef(refs, node.messageId),
+      role: node.role,
+      preview: node.preview,
+      content: getMessageText(chat.messages[node.messageId] as ChatMessage),
+      isLeaf: node.isLeaf,
+      isOnPrimaryPath: node.isOnPrimaryPath,
+      children: node.children.map(toNodeJson),
+    });
+    return toNodeJson(root);
+  })();
+
   return toJsonString({
     chatId: chat.id,
     title: chat.title,
     branchCount: branches.length,
-    primaryBranch: branches.find((b) => b.isPrimary)?.leafMessageId,
+    primaryBranch: (() => {
+      const leaf = branches.find((b) => b.isPrimary)?.leafMessageId;
+      return leaf ? getMessageRef(refs, leaf) : undefined;
+    })(),
     branches: branches.map((b) => ({
-      leafMessageId: b.leafMessageId,
+      leafMessageRef: getMessageRef(refs, b.leafMessageId),
       messageCount: b.messageCount,
       firstPrompt: b.firstPrompt,
       isPrimary: b.isPrimary,
-      path: b.path,
+      path: b.path.map((id) => getMessageRef(refs, id)),
     })),
+    tree,
   });
 }

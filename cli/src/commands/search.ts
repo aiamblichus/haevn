@@ -6,6 +6,7 @@ import { defineCommand } from "citty";
 import { toJsonString } from "../formatters/json";
 import { daemonRequest } from "../daemon/client.js";
 import type { SearchResult } from "../types";
+import { createMessageRef } from "../utils/messageRefs";
 import { consola, formatPlatform, formatRelativeTime, header, pc, truncate } from "../utils/output";
 
 export default defineCommand({
@@ -61,7 +62,15 @@ export default defineCommand({
     }
 
     if (format === "json") {
-      consola.log(toJsonString({ results, total: results.length }));
+      consola.log(
+        toJsonString({
+          results: results.map((result) => ({
+            ...result,
+            messageRef: createMessageRef(result.chatId, result.messageId),
+          })),
+          total: results.length,
+        }),
+      );
       return;
     }
 
@@ -104,7 +113,9 @@ export function formatSearchResultsText(results: SearchResult[]): string {
     const time = formatRelativeTime(result.messageTimestamp);
     const platform = formatPlatform(result.source);
 
-    lines.push(`  ${pc.dim("┌─")} ${pc.dim(result.messageId)}`);
+    lines.push(
+      `  ${pc.dim("┌─")} ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`,
+    );
     lines.push(`  ${pc.dim("│")} ${snippet}`);
     lines.push(`  ${pc.dim("└─")} ${roleLabel} · ${platform} · ${pc.dim(time)}`);
   }
