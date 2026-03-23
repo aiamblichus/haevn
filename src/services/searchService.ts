@@ -417,9 +417,17 @@ export namespace SearchService {
       maxChatsToScan?: number;
       resultsPerChat?: number;
       filterProvider?: string;
+      contextChars?: number;
     },
   ): { cancel: () => void } {
-    const { onResults, onComplete, onError, maxChatsToScan = 1000, filterProvider } = options;
+    const {
+      onResults,
+      onComplete,
+      onError,
+      maxChatsToScan = 1000,
+      filterProvider,
+      contextChars,
+    } = options;
 
     log.info(`[SearchService] searchChatsStreaming called:`, {
       query,
@@ -466,6 +474,7 @@ export namespace SearchService {
             requestId,
             maxResults: maxChatsToScan,
             filterProvider,
+            contextChars,
             // @ts-expect-error - 'hydrate' is new, typescript might not know it yet if we didn't update types
             hydrate: true,
           },

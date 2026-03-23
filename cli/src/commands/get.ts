@@ -26,7 +26,7 @@ export default defineCommand({
     message: {
       type: "string",
       alias: "m",
-      description: "Message ID – fetch the branch containing this message",
+      description: "Message ref or ID – fetch the branch containing this message",
     },
     format: {
       type: "string",

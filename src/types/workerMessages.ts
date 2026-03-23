@@ -17,6 +17,7 @@ export type SearchWorkerMessage =
       requestId: string;
       hydrate?: boolean;
       filterProvider?: string;
+      contextChars?: number;
     }
   | { type: "rebuild" }
   | { type: "startBulk" }

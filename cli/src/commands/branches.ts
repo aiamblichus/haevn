@@ -36,7 +36,7 @@ export default defineCommand({
     },
     "show-ids": {
       type: "boolean",
-      description: "Show raw message IDs in tree output",
+      description: "Show raw message IDs in addition to short refs",
       default: false,
     },
   },

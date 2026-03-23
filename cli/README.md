@@ -39,6 +39,8 @@ haevn get chat_abc123
 
 # Get specific branch containing a message
 haevn get chat_abc123 --message msg_xyz789
+# Or use short message ref shown by `haevn branches` / `haevn search`
+haevn get chat_abc123 --message a1b2c3d4e5f6
 
 # Output as JSON
 haevn get chat_abc123 -f json
@@ -48,7 +50,7 @@ haevn get chat_abc123 -o ./chat.md
 ```
 
 Options:
-- `-m, --message <id>` - Get branch containing this message
+- `-m, --message <ref|id>` - Get branch containing this message (short ref or full ID)
 - `-f, --format <fmt>` - Output format (markdown, json)
 - `-o, --output <file>` - Write to file
 - `--include-metadata` - Include timestamps/model info (default: true)
@@ -78,6 +80,7 @@ haevn branches chat_abc123 --format json
 
 Options:
 - `-f, --format <fmt>` - Output format (tree, json)
+- `--show-ids` - Include raw message IDs (tree always shows short refs)
 
 ### `export` - Export full chat
 
@@ -142,7 +145,7 @@ Human-readable output with colors and formatting:
 Structured output for piping to other tools:
 
 ```bash
-haevn search "query" --format json | jq '.results[0].messageId'
+haevn search "query" --format json | jq '.results[0].messageRef'
 ```
 
 ## Development

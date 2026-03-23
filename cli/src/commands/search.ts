@@ -30,6 +30,11 @@ export default defineCommand({
       alias: "l",
       description: "Maximum number of chats to scan (default: 20)",
     },
+    context: {
+      type: "string",
+      alias: "c",
+      description: "Snippet context window in characters (default: 120)",
+    },
     format: {
       type: "string",
       alias: "f",
@@ -46,15 +51,16 @@ export default defineCommand({
     },
   },
   async run({ args }) {
-    const { query, platform, format, after, before } = args;
+    const { query, platform, format, after, before, context } = args;
     const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
+    const contextChars = context ? Number.parseInt(context, 10) : 120;
 
     let results: SearchResult[];
     try {
       results = await daemonRequest<SearchResult[]>({
         action: "search",
         query,
-        options: { platform, limit, after, before },
+        options: { platform, limit, after, before, contextChars },
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));

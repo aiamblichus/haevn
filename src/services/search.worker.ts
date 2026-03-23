@@ -261,12 +261,17 @@ function parseSearchQuery(query: string): ParsedQuery {
 function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
   const hay = text.toLowerCase();
 
-  for (const p of parsed.phrases) {
-    if (!hay.includes(p.toLowerCase())) return false;
+  if (parsed.phrases.length > 0) {
+    const phraseHit = parsed.phrases.some((p) => hay.includes(p.toLowerCase()));
+    if (!phraseHit) return false;
   }
 
-  for (const t of parsed.terms) {
-    if (!hay.includes(t.toLowerCase())) return false;
+  if (parsed.terms.length > 0) {
+    const termHit = parsed.terms.some((t) => {
+      const needle = t.toLowerCase();
+      return hay.includes(needle) || hay.split(/\W+/).some((token) => token.startsWith(needle));
+    });
+    if (!termHit) return false;
   }
 
   return parsed.phrases.length > 0 || parsed.terms.length > 0;
@@ -660,6 +665,7 @@ function generateSnippets(
   chat: Chat,
   map: SourceMap,
   positions: [number, number][],
+  snippetRadius: number,
 ): SearchResult[] {
   const results: SearchResult[] = [];
   const _text = map.map((_m) => "").join(""); // Wait, we don't have the full text here?
@@ -706,8 +712,8 @@ function generateSnippets(
 
     // Simple snippet generation
     // TODO: Support multiple hits in one snippet or highlighting
-    const start = Math.max(0, hitRelativeStart - SNIPPET_RADIUS);
-    const end = Math.min(msgText.length, hitRelativeStart + firstHit[1] + SNIPPET_RADIUS);
+    const start = Math.max(0, hitRelativeStart - snippetRadius);
+    const end = Math.min(msgText.length, hitRelativeStart + firstHit[1] + snippetRadius);
 
     let snippet = msgText.slice(start, end);
 
@@ -909,25 +915,38 @@ async function performSearch(
       .join(" ");
   }
 
+  const runSegmentSearch = (queryText: string): LunrResult[] => {
+    const found: LunrResult[] = [];
+    for (const [id, seg] of segments) {
+      try {
+        const results = seg.index.search(queryText) as LunrResult[];
+        const filtered = hasPhrases
+          ? results.filter((r) =>
+              phraseConstraints.every((p) =>
+                verifyPhrase(r.matchData, p, (seg.index as LunrIndexWithPipeline).pipeline),
+              ),
+            )
+          : results;
+        found.push(...filtered);
+      } catch (e) {
+        log.warn(`[SearchWorker] Error searching segment ${id}:`, e);
+      }
+    }
+    return found;
+  };
+
   // 2. Search (Get IDs and Metadata)
-  const rawResults: LunrResult[] = [];
+  let rawResults: LunrResult[] = runSegmentSearch(finalQuery);
 
-  for (const [id, seg] of segments) {
-    try {
-      const results = seg.index.search(finalQuery) as LunrResult[];
-
-      // Post-filter for phrases
-      const filtered = hasPhrases
-        ? results.filter((r) =>
-            phraseConstraints.every((p) =>
-              verifyPhrase(r.matchData, p, (seg.index as LunrIndexWithPipeline).pipeline),
-            ),
-          )
-        : results;
-
-      rawResults.push(...filtered);
-    } catch (e) {
-      log.warn(`[SearchWorker] Error searching segment ${id}:`, e);
+  // Relaxed fallback: if strict query returns nothing, retry with prefix matching (OR semantics).
+  if (rawResults.length === 0 && !hasPhrases) {
+    const relaxedTerms = query
+      .split(/\s+/)
+      .map((t) => t.trim().replace(/[+\-~*^:"()]/g, ""))
+      .filter((t) => t.length >= 3)
+      .map((t) => `${t.toLowerCase()}*`);
+    if (relaxedTerms.length > 0) {
+      rawResults = runSegmentSearch(relaxedTerms.join(" "));
     }
   }
 
@@ -975,6 +994,10 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       const hydrate = msg.hydrate === true;
       const filterProvider =
         typeof msg.filterProvider === "string" ? msg.filterProvider : undefined;
+      const snippetRadius =
+        typeof msg.contextChars === "number" && msg.contextChars > 0
+          ? Math.min(500, msg.contextChars)
+          : SNIPPET_RADIUS;
       // maxResults is used to limit total hydration
       const maxResults = msg.maxResults || 1000;
       const parsedQuery = parseSearchQuery(msg.query);
@@ -1032,7 +1055,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
               const positions = collectMatchPositions(r.matchData);
               // 3. Generate Snippets
               // Optimization: Pre-calculate map if possible, but extractTextAndMap is fast
-              const snippets = generateSnippets(chat, [], positions); // Pass empty map, function generates it
+              const snippets = generateSnippets(chat, [], positions, snippetRadius); // Pass empty map, function generates it
 
               const filteredSnippets = snippets.filter((snippet) =>
                 messageMatchesQuery(snippet.messageContent, parsedQuery),

@@ -53,6 +53,7 @@ interface WsSearchOptions {
   after?: string;
   before?: string;
   limit?: number;
+  contextChars?: number;
 }
 
 interface WsGetOptions {
@@ -400,6 +401,7 @@ async function handleSearch(
       maxChatsToScan: options.limit ?? 1000,
       resultsPerChat: 4,
       filterProvider: options.platform,
+      contextChars: options.contextChars,
       onResults: (batch) => collected.push(...batch),
       onComplete: () => resolve(collected),
       onError: reject,
