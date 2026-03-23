@@ -22,8 +22,8 @@ import { SearchIndexManager } from "./searchIndexManager";
  * Helper function to extract metadata fields from chat objects.
  * Used to reduce memory footprint by only keeping necessary fields for UI display.
  */
-function extractMetadata(chats: Chat[]): Partial<Chat>[] {
-  return chats.map((chat) => ({
+function extractMetadataItem(chat: Chat): Partial<Chat> {
+  return {
     id: chat.id,
     source: chat.source,
     title: chat.title,
@@ -32,7 +32,11 @@ function extractMetadata(chats: Chat[]): Partial<Chat>[] {
     providerLastModifiedTimestamp: chat.providerLastModifiedTimestamp,
     lastSyncAttemptMessage: chat.lastSyncAttemptMessage,
     params: chat.params, // Include params for Open WebUI origin check
-  }));
+  };
+}
+
+function extractMetadata(chats: Chat[]): Partial<Chat>[] {
+  return chats.map(extractMetadataItem);
 }
 
 /**
@@ -241,13 +245,33 @@ export namespace ChatRepository {
       const isIndexedSort = isSortFieldIndexed;
 
       if (!isIndexedSort) {
-        // We have to load all matching candidates to sort in memory
-        // Limiting here would be wrong because the sort order isn't guaranteed yet
-        const allCandidates = await query.toArray();
-        allCandidates.sort((a, b) => sortComparator(a, b, sortBy, sortDirection));
+        // For non-indexed sorts we must scan every matching chat. Loading them all
+        // via toArray() can exhaust the service worker's memory (2 000+ chats with
+        // large message dictionaries easily exceeds 100 MB). Instead we stream
+        // through them one at a time with each(), keeping only the lightweight
+        // metadata + the sort key in memory at any point.
+        //
+        // Special case: "messageCount" is not stored as a field on Chat; we derive
+        // it by counting the keys of the messages dictionary.
+        type LeanChat = Partial<Chat> & { messageCount?: number };
+        const lean: LeanChat[] = [];
 
-        const chats = allCandidates.slice(offset, offset + limit);
-        return { metadata: extractMetadata(chats), total };
+        await query.each((chat) => {
+          const item: LeanChat = extractMetadataItem(chat);
+          if (sortBy === "messageCount") {
+            item.messageCount = Object.keys(chat.messages ?? {}).length;
+          } else {
+            (item as Record<string, unknown>)[sortBy] =
+              (chat as unknown as Record<string, unknown>)[sortBy];
+          }
+          lean.push(item);
+        });
+
+        lean.sort((a, b) =>
+          sortComparator(a as unknown as Chat, b as unknown as Chat, sortBy, sortDirection),
+        );
+
+        return { metadata: lean.slice(offset, offset + limit), total: lean.length };
       }
 
       // 3. Apply pagination to the filtered query (for indexed sorts)

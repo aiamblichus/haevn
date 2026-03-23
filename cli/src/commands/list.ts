@@ -82,13 +82,20 @@ export function formatChatListText(chats: Partial<Chat>[], total: number): strin
   lines.push(pc.bold(`Chats  ${pc.dim(`(${chats.length} of ${total})`)}`));
   lines.push("");
 
+  const showMsgCount = chats.some((c) => (c as Record<string, unknown>).messageCount != null);
+
   for (const chat of chats) {
     const id = pc.dim((chat.id ?? "").padEnd(36));
     const title = truncate(chat.title ?? "(untitled)", 32).padEnd(33);
     const platform = formatPlatform(chat.source ?? "").padEnd(10);
     const time = pc.dim(formatRelativeTime(chat.lastSyncedTimestamp).padStart(9));
+    const msgCount = showMsgCount
+      ? pc.dim(
+          String((chat as Record<string, unknown>).messageCount ?? "").padStart(5) + " msgs",
+        )
+      : "";
 
-    lines.push(`  ${id}  ${title}  ${platform}  ${time}`);
+    lines.push(`  ${id}  ${title}  ${platform}  ${time}${msgCount ? `  ${msgCount}` : ""}`);
   }
 
   return lines.join("\n");
