@@ -83,19 +83,28 @@ export function formatChatListText(chats: Partial<Chat>[], total: number): strin
   lines.push("");
 
   const showMsgCount = chats.some((c) => (c as Record<string, unknown>).messageCount != null);
+  const showBranchCount = chats.some((c) => (c as Record<string, unknown>).branchCount != null);
 
   for (const chat of chats) {
     const id = pc.dim((chat.id ?? "").padEnd(36));
     const title = truncate(chat.title ?? "(untitled)", 32).padEnd(33);
     const platform = formatPlatform(chat.source ?? "").padEnd(10);
     const time = pc.dim(formatRelativeTime(chat.lastSyncedTimestamp).padStart(9));
+    const messageCountValue = Number((chat as Record<string, unknown>).messageCount ?? 0);
+    const branchCountValue = Number((chat as Record<string, unknown>).branchCount ?? 0);
     const msgCount = showMsgCount
-      ? pc.dim(
-          String((chat as Record<string, unknown>).messageCount ?? "").padStart(5) + " msgs",
-        )
+      ? pc.dim(String(messageCountValue || "").padStart(5) + " msgs")
       : "";
+    const branchCount = showBranchCount ? pc.dim(String(branchCountValue || "").padStart(4) + " br") : "";
+    const heavilyBranched =
+      messageCountValue > 0 && branchCountValue > 1 && branchCountValue / messageCountValue >= 0.25;
+    const branchBadge = heavilyBranched ? pc.yellow("branched") : "";
 
-    lines.push(`  ${id}  ${title}  ${platform}  ${time}${msgCount ? `  ${msgCount}` : ""}`);
+    lines.push(
+      `  ${id}  ${title}  ${platform}  ${time}${msgCount ? `  ${msgCount}` : ""}${
+        branchCount ? `  ${branchCount}` : ""
+      }${branchBadge ? `  ${branchBadge}` : ""}`,
+    );
   }
 
   return lines.join("\n");

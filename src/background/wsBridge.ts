@@ -170,12 +170,16 @@ const RECONNECT_ALARM_PERIOD_MINUTES = 0.5;
 
 /** How often (ms) a ping is sent while the SW is active. */
 const PING_INTERVAL_MS = 20_000;
+const RECONNECT_BASE_MS = 2_000;
+const RECONNECT_MAX_MS = 30_000;
 
 // ─── Module state ─────────────────────────────────────────────────────────────
 
 let socket: WebSocket | null = null;
 let authenticated = false;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -212,6 +216,11 @@ export function handleWsReconnectAlarm(): void {
  * Called after the port or API key changes in Settings.
  */
 export function resetWsBridge(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
   if (socket) {
     socket.onclose = null; // prevent auto-reconnect log noise
     socket.close();
@@ -248,6 +257,11 @@ async function connect(): Promise<void> {
   }
 
   socket.onopen = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectAttempts = 0;
     log.info("[WsBridge] Connected to daemon");
     sendJson({ type: "auth", apiKey: settings.apiKey });
   };
@@ -275,7 +289,19 @@ async function connect(): Promise<void> {
     if (wasAuth) {
       log.info("[WsBridge] Disconnected from daemon");
     }
+    scheduleReconnect();
   };
+}
+
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+  const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, delayMs);
+  log.debug(`[WsBridge] Scheduling reconnect in ${delayMs}ms (attempt ${reconnectAttempts})`);
 }
 
 // ─── Incoming message dispatch ────────────────────────────────────────────────
@@ -421,7 +447,28 @@ async function handleList(
     ? metadata.filter((c) => (c.lastSyncedTimestamp ?? 0) >= afterMs)
     : metadata;
 
-  return { id, success: true, data: { chats: filtered, total } };
+  const chats = await Promise.all(
+    filtered.map(async (chat) => {
+      const chatId = chat.id;
+      if (!chatId) return chat;
+
+      try {
+        const messages = await SyncService.getChatMessages(chatId);
+        const messageValues = Object.values(messages);
+        const messageCount = messageValues.length;
+        const branchCount = messageValues.filter((m) => (m.childrenIds || []).length === 0).length;
+        return {
+          ...chat,
+          messageCount,
+          branchCount,
+        };
+      } catch {
+        return chat;
+      }
+    }),
+  );
+
+  return { id, success: true, data: { chats, total } };
 }
 
 async function handleGet(
