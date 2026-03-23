@@ -83,9 +83,9 @@ export function formatChatListText(chats: Partial<Chat>[], total: number): strin
   lines.push("");
 
   for (const chat of chats) {
-    const id = pc.dim((chat.id ?? "").slice(0, 14).padEnd(14));
-    const title = truncate(chat.title ?? "(untitled)", 38).padEnd(39);
-    const platform = formatPlatform(chat.source ?? "").padEnd(12);
+    const id = pc.dim((chat.id ?? "").padEnd(36));
+    const title = truncate(chat.title ?? "(untitled)", 32).padEnd(33);
+    const platform = formatPlatform(chat.source ?? "").padEnd(10);
     const time = pc.dim(formatRelativeTime(chat.lastSyncedTimestamp).padStart(9));
 
     lines.push(`  ${id}  ${title}  ${platform}  ${time}`);

@@ -14,8 +14,21 @@ import type { CliRequestBody, CliResponse } from "../types.js";
 import { DEFAULT_DAEMON_PORT, loadConfig } from "./config.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3_000;
+
+/**
+ * Retry schedule (delays in ms between attempts).
+ *
+ * The extension's service worker can go dormant and takes up to 30 s to
+ * reconnect via its chrome.alarms keepalive.  The schedule below covers that
+ * window with a fast first retry (transient blip) then progressively longer
+ * waits, without making a hard failure take a full minute.
+ *
+ *   attempt 0 → immediate
+ *   attempt 1 → wait 2 s   (fast retry for transient disconnects)
+ *   attempt 2 → wait 10 s  (SW waking from short dormancy)
+ *   attempt 3 → wait 20 s  (SW reconnecting after full 30 s alarm cycle)
+ */
+const RETRY_DELAYS_MS = [2_000, 10_000, 20_000];
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -43,10 +56,14 @@ export async function daemonRequest<T>(
   const url = `http://localhost:${port}/api`;
   let lastError: Error | undefined;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     if (attempt > 0) {
-      process.stderr.write(`  Retrying… (attempt ${attempt}/${MAX_RETRIES})\n`);
-      await sleep(RETRY_DELAY_MS);
+      const delayMs = RETRY_DELAYS_MS[attempt - 1];
+      const delaySec = (delayMs / 1000).toFixed(0);
+      process.stderr.write(
+        `  Extension not connected — waiting ${delaySec}s for reconnect… (${attempt}/${RETRY_DELAYS_MS.length})\n`,
+      );
+      await sleep(delayMs);
     }
 
     try {
@@ -65,11 +82,18 @@ export async function daemonRequest<T>(
     }
   }
 
+  const isDisconnected =
+    lastError?.message.includes("not connected") || lastError?.message.includes("503");
+
   throw new Error(
-    `${lastError?.message ?? "Daemon not available."}\n\n` +
-      "Make sure the HAEVN daemon is running:\n" +
-      "  haevn daemon --api-key <key>\n\n" +
-      "And that Chrome is open with the HAEVN extension active.",
+    isDisconnected
+      ? "The HAEVN extension did not reconnect in time.\n\n" +
+          "Try opening the HAEVN Options page in Chrome to wake the extension,\n" +
+          "then retry your command."
+      : `${lastError?.message ?? "Daemon not available."}\n\n` +
+          "Make sure the HAEVN daemon is running:\n" +
+          "  haevn daemon --api-key <key>\n\n" +
+          "And that Chrome is open with the HAEVN extension active.",
   );
 }
 
