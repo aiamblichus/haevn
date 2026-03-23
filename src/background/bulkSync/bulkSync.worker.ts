@@ -7,9 +7,9 @@
 // requests to the service worker via postMessage. The service worker executes the
 // API calls and sends responses back.
 
-import objectHash from "object-hash";
-import type { Chat, HAEVN } from "../../model/haevn_model";
+import type { HAEVN } from "../../model/haevn_model";
 import { hasTextContent } from "../../providers/claude/transformer";
+import * as ChatPersistence from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
 import type { AllProviderRawData } from "../../types/messaging";
 import type { BulkSyncWorkerMessage } from "../../types/workerMessages";
@@ -29,94 +29,6 @@ interface WorkerState {
 }
 
 let workerState: WorkerState | null = null;
-
-// Helper functions (replicated from SyncService)
-function bufferToHex(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const hex: string[] = [];
-  for (let i = 0; i < bytes.length; i++) {
-    const h = bytes[i].toString(16).padStart(2, "0");
-    hex.push(h);
-  }
-  return hex.join("");
-}
-
-function stableStringify(value: unknown): string {
-  return stringifySorted(value);
-}
-
-function stringifySorted(obj: unknown): string {
-  if (obj === null || typeof obj !== "object") {
-    return JSON.stringify(obj);
-  }
-  if (Array.isArray(obj)) {
-    return `[${obj.map((v) => stringifySorted(v)).join(",")}]`;
-  }
-  const objRecord = obj as Record<string, unknown>;
-  const keys = Object.keys(objRecord).sort();
-  const entries = keys.map((k) => `${JSON.stringify(k)}:${stringifySorted(objRecord[k])}`);
-  return `{${entries.join(",")}}`;
-}
-
-/**
- * Generates a SHA-256 checksum for a chat's content.
- * Stable hashing via Web Crypto when available; falls back to object-hash (sha1).
- */
-async function generateChatChecksum(chat: Chat): Promise<string> {
-  const contentToHash = { title: chat.title, messages: chat.messages };
-
-  // Prefer Web Crypto API (available in Web Workers)
-  try {
-    if (globalThis.crypto && "subtle" in globalThis.crypto) {
-      const stable = stableStringify(contentToHash);
-      const data = new TextEncoder().encode(stable);
-      const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
-      return bufferToHex(digest);
-    }
-  } catch {
-    // ignore and fall back
-  }
-
-  // Fallback: object-hash (sha1)
-  try {
-    return objectHash(contentToHash, { algorithm: "sha1" });
-  } catch {
-    // Last resort: JSON string hash via a trivial passthrough
-    const result = objectHash(contentToHash, {
-      algorithm: "passthrough",
-    } as Parameters<typeof objectHash>[1]);
-    return typeof result === "string" ? result : String(result);
-  }
-}
-
-/**
- * Saves a chat to IndexedDB (replicated from SyncService.saveChat)
- */
-async function saveChatToDB(haevnChat: Chat, rawPlatformData: unknown): Promise<void> {
-  const now = Date.now();
-  haevnChat.lastSyncedTimestamp = now;
-  haevnChat.checksum = await generateChatChecksum(haevnChat);
-  haevnChat.syncStatus = "synced";
-  haevnChat.lastSyncAttemptMessage = undefined; // Clear previous errors
-  haevnChat.deleted = 0; // Mark as active (required for indexed queries)
-  haevnChat.deletedAt = undefined; // Clear soft-delete timestamp if re-syncing
-
-  // Attempt to extract providerLastModifiedTimestamp from raw data
-  if (
-    !haevnChat.providerLastModifiedTimestamp &&
-    rawPlatformData &&
-    typeof rawPlatformData === "object"
-  ) {
-    const rawData = rawPlatformData as Record<string, unknown>;
-    if (rawData.updated_at && typeof rawData.updated_at === "string") {
-      haevnChat.providerLastModifiedTimestamp = new Date(rawData.updated_at).getTime();
-    } else if (rawData.extractedAt && typeof rawData.extractedAt === "string") {
-      haevnChat.providerLastModifiedTimestamp = new Date(rawData.extractedAt).getTime();
-    }
-  }
-
-  await db.chats.put(haevnChat); // Dexie's put() handles insert or update
-}
 
 /**
  * Process a single sync task
@@ -180,7 +92,7 @@ async function processSyncTask(task: {
       const isNewChat = !existingChat;
 
       // Save the chat
-      await saveChatToDB(haevnChat, task.rawData);
+      await ChatPersistence.saveChat(haevnChat, task.rawData);
 
       savedIds.push(haevnChat.id);
 

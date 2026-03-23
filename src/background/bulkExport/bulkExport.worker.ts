@@ -8,6 +8,7 @@
 // See browserApiBridge.ts for the bridge implementation.
 
 import type { ExportOptions } from "../../formatters";
+import type { Chat, ChatMessage } from "../../model/haevn_model";
 import {
   downloadUrlAttachment,
   extractAttachmentsFromChat,
@@ -162,7 +163,7 @@ async function stageAttachment(
 }
 
 async function stageChat(
-  chat: Awaited<ReturnType<typeof db.chats.get>>,
+  chat: Chat,
   options: ExportOptions,
   state: WorkerState,
 ): Promise<void> {
@@ -227,6 +228,25 @@ async function stageChat(
       );
     }
   }
+}
+
+function toMessageDict(rows: ChatMessage[]): Record<string, ChatMessage> {
+  return Object.fromEntries(rows.map((row) => [row.id, row]));
+}
+
+async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
+  const chat = await db.chats.get(chatId);
+  if (!chat) return undefined;
+
+  const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
+  if (rows.length > 0) {
+    return {
+      ...chat,
+      messages: toMessageDict(rows),
+    };
+  }
+
+  return chat;
 }
 
 async function writeJsonlArray(
@@ -413,19 +433,17 @@ async function processBatch(
     `[BulkExportWorker] Processing batch ${batchNumber}/${totalBatches} (${batchChatIds.length} chats)...`,
   );
 
-  const chats = await db.chats.bulkGet(batchChatIds);
-
   let batchProcessedCount = 0;
   let batchSkippedCount = 0;
   const attachmentIndex = globalAttachmentIndex;
 
   // Process each chat in the batch
-  for (let i = 0; i < chats.length; i++) {
+  for (let i = 0; i < batchChatIds.length; i++) {
     if (state.status !== "running") {
       break;
     }
-    const chat = chats[i];
     const chatId = batchChatIds[i];
+    const chat = await loadChatWithMessages(chatId);
 
     if (!chat) {
       log.warn(`[BulkExportWorker] Chat ${chatId} not found, skipping`);

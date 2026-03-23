@@ -1,5 +1,5 @@
 import Dexie, { type Table } from "dexie";
-import type { Chat } from "../model/haevn_model";
+import type { Chat, ChatMessage } from "../model/haevn_model";
 import { log } from "../utils/logger";
 
 // Define a partial type for metadata used in the UI, if needed later for explicit typing
@@ -47,8 +47,15 @@ export interface MediaContent {
   size?: number; // File size in bytes (for OPFS files)
 }
 
+/**
+ * A ChatMessage as stored in the chatMessages table.
+ * chatId acts as a foreign key to chats.id and is part of the compound primary key.
+ */
+export type StoredChatMessage = ChatMessage;
+
 export class HaevnDatabase extends Dexie {
   chats!: Table<Chat, string>; // Primary key 'id' is of type string
+  chatMessages!: Table<StoredChatMessage, [string, string]>; // PK: [chatId, id]
   // Store for serialized Lunr index (single-record store)
   lunrIndex!: Table<{ id: string; index?: object; dirty?: boolean }, string>;
   openwebuiInstances!: Table<OpenWebUIInstance, string>;
@@ -439,6 +446,20 @@ export class HaevnDatabase extends Dexie {
           log.error("[DB Migration v16] Error during deleted field migration:", err);
         }
       });
+
+    // Version 17: Extract Chat.messages into dedicated chatMessages table.
+    // No upgrade() here by design; data migration runs lazily in background alarm batches.
+    this.version(17).stores({
+      chats:
+        "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
+      chatMessages: "[chatId+id], chatId, parentId, timestamp",
+      lunrIndex: "id",
+      openwebuiInstances: "id, baseUrl",
+      cache: "id",
+      thumbnails:
+        "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
+      mediaContent: "id",
+    });
     // Define future versions here with .version(n).stores({}) for schema migrations
   }
 }

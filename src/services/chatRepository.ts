@@ -12,7 +12,7 @@
  */
 
 import Dexie from "dexie";
-import type { Chat } from "../model/haevn_model";
+import type { Chat, ChatMessage } from "../model/haevn_model";
 import { log } from "../utils/logger";
 import * as ChatPersistence from "./chatPersistence";
 import { getDB } from "./db";
@@ -76,6 +76,17 @@ function sortComparator(a: Chat, b: Chat, sortBy: string, sortDirection: "asc" |
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace ChatRepository {
+  function cloneWithoutMessages(chat: Chat): Chat {
+    return {
+      ...chat,
+      messages: {},
+    };
+  }
+
+  function toMessageDict(messages: ChatMessage[]): Record<string, ChatMessage> {
+    return Object.fromEntries(messages.map((m) => [m.id, m]));
+  }
+
   /**
    * Generates a SHA-256 checksum for a chat's content.
    * Stable hashing via Web Crypto when available; falls back to object-hash (sha1) in non-web contexts.
@@ -259,13 +270,26 @@ export namespace ChatRepository {
         await query.each((chat) => {
           const item: LeanChat = extractMetadataItem(chat);
           if (sortBy === "messageCount") {
-            item.messageCount = Object.keys(chat.messages ?? {}).length;
+            item.messageCount = 0;
           } else {
             (item as Record<string, unknown>)[sortBy] =
               (chat as unknown as Record<string, unknown>)[sortBy];
           }
           lean.push(item);
         });
+
+        if (sortBy === "messageCount") {
+          const counts = await Promise.all(
+            lean.map(async (item) => ({
+              id: item.id,
+              count: item.id ? await getChatMessageCount(item.id) : 0,
+            })),
+          );
+          const countMap = new Map(counts.map((c) => [c.id, c.count]));
+          for (const item of lean) {
+            item.messageCount = countMap.get(item.id);
+          }
+        }
 
         lean.sort((a, b) =>
           sortComparator(a as unknown as Chat, b as unknown as Chat, sortBy, sortDirection),
@@ -297,7 +321,7 @@ export namespace ChatRepository {
       const chat = await getDB().chats.get(chatId);
       // Return undefined for soft-deleted chats
       if (chat?.deletedAt) return undefined;
-      return chat;
+      return chat ? cloneWithoutMessages(chat) : undefined;
     } catch (error) {
       log.error(`Failed to get chat '${chatId}'`, error);
       throw new Error(
@@ -327,7 +351,7 @@ export namespace ChatRepository {
         .first();
       // Filter out soft-deleted chats so they are treated as "missing" (e.g. for re-syncing)
       if (result?.deletedAt) return undefined;
-      return result;
+      return result ? cloneWithoutMessages(result) : undefined;
     } catch (error) {
       log.error(`Failed to get chat by sourceId '${sourceId}' from '${source}'`, error);
       throw new Error(
@@ -336,6 +360,100 @@ export namespace ChatRepository {
         }`,
       );
     }
+  }
+
+  export async function getChatMessages(chatId: string): Promise<Record<string, ChatMessage>> {
+    const db = getDB();
+    const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
+    if (rows.length > 0) {
+      return toMessageDict(rows);
+    }
+
+    // Legacy fallback while lazy migration is still in-progress.
+    const chat = await db.chats.get(chatId);
+    return (chat?.messages || {}) as Record<string, ChatMessage>;
+  }
+
+  export async function getChatWithMessages(chatId: string): Promise<Chat | undefined> {
+    const chat = await getChat(chatId);
+    if (!chat) return undefined;
+    const messages = await getChatMessages(chatId);
+    return { ...chat, messages };
+  }
+
+  export async function getBranchMessages(
+    chatId: string,
+    leafMessageId: string,
+  ): Promise<ChatMessage[]> {
+    const db = getDB();
+    const messageDict = await getChatMessages(chatId);
+    if (!messageDict[leafMessageId]) {
+      return [];
+    }
+
+    const branchIds: string[] = [];
+    let currentId: string | undefined = leafMessageId;
+    let guard = 0;
+
+    while (currentId && guard < 10_000) {
+      branchIds.unshift(currentId);
+      guard++;
+      const msg =
+        messageDict[currentId] ||
+        (await db.chatMessages.where("[chatId+id]").equals([chatId, currentId]).first());
+      currentId = msg?.parentId || undefined;
+    }
+
+    return branchIds.map((id) => messageDict[id]).filter((msg): msg is ChatMessage => !!msg);
+  }
+
+  export async function getPrimaryBranchMessages(chatId: string): Promise<ChatMessage[]> {
+    const chat = await getChat(chatId);
+    if (!chat?.currentId) return [];
+    return getBranchMessages(chatId, chat.currentId);
+  }
+
+  export async function getChatMessagePage(
+    chatId: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ messages: ChatMessage[]; total: number }> {
+    const branch = await getPrimaryBranchMessages(chatId);
+    const safeOffset = Math.max(0, offset);
+    const safeLimit = Math.max(0, limit);
+    const messages = safeLimit > 0 ? branch.slice(safeOffset, safeOffset + safeLimit) : branch;
+    return { messages, total: branch.length };
+  }
+
+  export async function getChatMessageCount(chatId: string): Promise<number> {
+    const db = getDB();
+    const migratedCount = await db.chatMessages.where("chatId").equals(chatId).count();
+    if (migratedCount > 0) {
+      return migratedCount;
+    }
+    const chat = await db.chats.get(chatId);
+    return Object.keys(chat?.messages || {}).length;
+  }
+
+  export async function saveChatMessages(
+    chatId: string,
+    messages: Record<string, ChatMessage>,
+  ): Promise<void> {
+    const db = getDB();
+    const rows = Object.values(messages || {}).map((message) => ({
+      ...message,
+      chatId,
+    }));
+    await db.transaction("rw", db.chatMessages, async () => {
+      await db.chatMessages.where("chatId").equals(chatId).delete();
+      if (rows.length > 0) {
+        await db.chatMessages.bulkPut(rows);
+      }
+    });
+  }
+
+  export async function deleteChatMessages(chatId: string): Promise<void> {
+    await getDB().chatMessages.where("chatId").equals(chatId).delete();
   }
 
   /**
@@ -448,6 +566,12 @@ export namespace ChatRepository {
       } catch (e) {
         log.warn("Failed to clean up thumbnails for deletions", e);
         // Don't throw - continue with deletion
+      }
+
+      try {
+        await db.chatMessages.where("chatId").anyOf(chatIds).delete();
+      } catch (e) {
+        log.warn("Failed to delete chatMessages for hard-deleted chats", e);
       }
 
       await db.chats.bulkDelete(chatIds);

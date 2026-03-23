@@ -43,7 +43,7 @@ export async function handleGetSyncedChatContent(
   sendResponse: (response: BackgroundResponse) => void,
 ): Promise<void> {
   try {
-    const chat = await SyncService.getChat(message.chatId);
+    const chat = await SyncService.getChatWithMessages(message.chatId);
     sendResponse({ success: true, data: chat });
   } catch (err: unknown) {
     sendResponse({

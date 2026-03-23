@@ -1,8 +1,8 @@
 // Search Worker - Segmented Architecture with Positional Metadata and Hydration
-import Dexie from "dexie";
 import lunr from "lunr";
 import type {
   Chat,
+  ChatMessage,
   ModelMessage,
   SearchResult,
   SystemPromptPart,
@@ -12,6 +12,7 @@ import type {
 } from "../model/haevn_model";
 import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { HaevnDatabase } from "./db";
 
 // --- Configuration ---
 const SEGMENT_SIZE = 200; // Chats per segment
@@ -82,24 +83,55 @@ interface LunrIndexMeta {
   [key: string]: unknown;
 }
 
-// --- Database Schema (Worker Side) ---
-class HaevnDatabase extends Dexie {
-  chats!: Dexie.Table<Chat, string>;
-  lunrIndex!: Dexie.Table<{ id: string; index?: object; meta?: LunrIndexMeta }, string>;
+const db = new HaevnDatabase();
 
-  constructor() {
-    super("HaevnDB");
-    this.version(1).stores({
-      chats: "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus",
-    });
-    this.version(2).stores({
-      lunrIndex: "id",
-    });
-    // Versions 3-16 omitted (not needed for worker logic)
-  }
+function toMessageDict(rows: ChatMessage[]): Record<string, ChatMessage> {
+  return Object.fromEntries(rows.map((row) => [row.id, row]));
 }
 
-const db = new HaevnDatabase();
+async function attachMessages(chats: Chat[]): Promise<Chat[]> {
+  const chatIds = chats.map((chat) => chat.id).filter((id): id is string => !!id);
+  if (chatIds.length === 0) return chats;
+
+  const rows = await db.chatMessages.where("chatId").anyOf(chatIds).toArray();
+  if (rows.length === 0) {
+    return chats;
+  }
+
+  const byChatId = new Map<string, ChatMessage[]>();
+  for (const row of rows) {
+    const current = byChatId.get(row.chatId);
+    if (current) {
+      current.push(row);
+    } else {
+      byChatId.set(row.chatId, [row]);
+    }
+  }
+
+  return chats.map((chat) => {
+    const migratedRows = chat.id ? byChatId.get(chat.id) : undefined;
+    if (!migratedRows || migratedRows.length === 0) {
+      return chat;
+    }
+    return {
+      ...chat,
+      messages: toMessageDict(migratedRows),
+    };
+  });
+}
+
+async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
+  const chat = await db.chats.get(chatId);
+  if (!chat) return undefined;
+  const migratedRows = await db.chatMessages.where("chatId").equals(chatId).toArray();
+  if (migratedRows.length === 0) {
+    return chat;
+  }
+  return {
+    ...chat,
+    messages: toMessageDict(migratedRows),
+  };
+}
 
 // --- Global State ---
 const segments: Map<string, Segment> = new Map();
@@ -372,7 +404,7 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
     return;
   }
 
-  const chats = await db.chats.bulkGet(ids);
+  const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
   const builder = new lunr.Builder();
   builder.ref("id");
   builder.field("title", { boost: 10 });
@@ -380,7 +412,6 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
   builder.metadataWhitelist = ["position"];
 
   for (const chat of chats) {
-    if (!chat) continue;
     const data = extractTextAndMap(chat);
     if (data) {
       builder.add(data.doc);
@@ -519,7 +550,7 @@ async function rebuildAll(emitProgress = false) {
       // Process this chunk
       for (let offset = chunkStart; offset < chunkEnd; offset += FETCH_CHUNK) {
         const limit = Math.min(FETCH_CHUNK, chunkEnd - offset);
-        const chats = await db.chats.offset(offset).limit(limit).toArray();
+        const chats = await attachMessages(await db.chats.offset(offset).limit(limit).toArray());
 
         for (const chat of chats) {
           const data = extractTextAndMap(chat);
@@ -569,12 +600,12 @@ async function rebuildAll(emitProgress = false) {
       await persistSegment(currentSeg);
       const lastIds = Array.from(currentSeg.docIds);
       if (lastIds.length > 0) {
-        const chats = await db.chats.bulkGet(lastIds);
+        const chats = await attachMessages(
+          (await db.chats.bulkGet(lastIds)).filter((c): c is Chat => !!c),
+        );
         chats.forEach((c) => {
-          if (c) {
-            const d = extractTextAndMap(c);
-            if (d) docCache.set(d.doc.id, d.doc);
-          }
+          const d = extractTextAndMap(c);
+          if (d) docCache.set(d.doc.id, d.doc);
         });
       }
     }
@@ -992,7 +1023,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
             const chatId = r.ref;
 
             // 1. Fetch Chat
-            const chat = await db.chats.get(chatId);
+            const chat = await loadChatWithMessages(chatId);
             if (chat) {
               if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
                 continue;

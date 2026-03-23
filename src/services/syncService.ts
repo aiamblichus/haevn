@@ -20,6 +20,14 @@ export namespace SyncService {
   export const saveChat = ChatRepository.saveChat;
   export const getChatsMetadata = ChatRepository.getChatsMetadata;
   export const getChat = ChatRepository.getChat;
+  export const getChatWithMessages = ChatRepository.getChatWithMessages;
+  export const getChatMessages = ChatRepository.getChatMessages;
+  export const getPrimaryBranchMessages = ChatRepository.getPrimaryBranchMessages;
+  export const getBranchMessages = ChatRepository.getBranchMessages;
+  export const getChatMessagePage = ChatRepository.getChatMessagePage;
+  export const getChatMessageCount = ChatRepository.getChatMessageCount;
+  export const saveChatMessages = ChatRepository.saveChatMessages;
+  export const deleteChatMessages = ChatRepository.deleteChatMessages;
   export const getChatBySourceId = ChatRepository.getChatBySourceId;
   export const existsChatBySourceId = ChatRepository.existsChatBySourceId;
   export const batchCheckExistingChats = ChatRepository.batchCheckExistingChats;

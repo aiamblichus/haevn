@@ -76,6 +76,10 @@ type WsResponse<T = unknown> =
   | { id: string; success: true; data: T }
   | { id: string; success: false; error: string; code?: string };
 
+function toMessageDict<T extends { id: string }>(messages: T[]): Record<string, T> {
+  return Object.fromEntries(messages.map((m) => [m.id, m]));
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Alarm name used to wake a dormant SW and attempt reconnection. */
@@ -348,14 +352,22 @@ async function handleGet(
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
-  return { id, success: true, data: chat };
+  const branchMessages = await SyncService.getPrimaryBranchMessages(req.chatId);
+  return {
+    id,
+    success: true,
+    data: {
+      ...chat,
+      messages: toMessageDict(branchMessages),
+    },
+  };
 }
 
 async function handleBranches(
   id: string,
   req: Extract<WsRequest, { action: "branches" }>,
 ): Promise<WsResponse> {
-  const chat = await SyncService.getChat(req.chatId);
+  const chat = await SyncService.getChatWithMessages(req.chatId);
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
@@ -366,7 +378,7 @@ async function handleExport(
   id: string,
   req: Extract<WsRequest, { action: "export" }>,
 ): Promise<WsResponse> {
-  const chat = await SyncService.getChat(req.chatId);
+  const chat = await SyncService.getChatWithMessages(req.chatId);
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }

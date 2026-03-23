@@ -123,8 +123,24 @@ export async function saveChatToDb(chat: Chat): Promise<void> {
   if (!chat.id) {
     throw new Error("Chat missing id - cannot save");
   }
+  const db = getDB();
+  const chatId = chat.id;
+  const messageRows = Object.values(chat.messages || {}).map((message) => ({
+    ...message,
+    chatId,
+  }));
+  const chatRow: Chat = {
+    ...chat,
+    messages: {},
+  };
 
-  await getDB().chats.put(chat);
+  await db.transaction("rw", db.chats, db.chatMessages, async () => {
+    await db.chatMessages.where("chatId").equals(chatId).delete();
+    if (messageRows.length > 0) {
+      await db.chatMessages.bulkPut(messageRows);
+    }
+    await db.chats.put(chatRow);
+  });
 }
 
 /**
