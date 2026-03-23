@@ -26,7 +26,7 @@ haevn search "api design" --after 2024-01-01 --format json
 Options:
 - `-p, --platform <name>` - Filter by platform (claude, chatgpt, gemini, etc.)
 - `-l, --limit <n>` - Max results (default: 20)
-- `-c, --context <chars>` - Context around match (default: 150)
+- `-c, --context <chars>` - Context around match (default: 120)
 - `-f, --format <fmt>` - Output format (text, json)
 - `--after <date>` - Only chats after date (YYYY-MM-DD)
 - `--before <date>` - Only chats before date
@@ -93,37 +93,28 @@ Options:
 - `-o, --output <file>` - Output file path (required)
 - `--include-media` - Embed base64 media (default: false)
 
-### `install` - Set up native messaging
+### `daemon` - Start the local daemon
 
 ```bash
-haevn install -e <chrome-extension-id>
+haevn daemon --api-key <key>
+haevn daemon --api-key <key> --port 5517
 ```
 
 Options:
-- `-e, --extension-id <id>` - Chrome extension ID (required)
-- `-b, --browser <name>` - Browser (chrome, chromium, edge)
+- `-k, --api-key <key>` - API key from HAEVN extension settings
+- `-p, --port <n>` - Port (default: 5517)
 
-## Data Sources
+## Setup
 
-### Phase 1: File-based
-
-```bash
-haevn -F ./archive.json search "query"
-```
-
-Works with exported HAEVN JSON files.
-
-### Phase 2: Native Messaging
-
-After running `haevn install`, the CLI communicates directly with the extension:
-
-```bash
-# One-time setup
-haevn install -e abcdefghijklmnopqrstuvwxyz
-
-# Then use normally (reads from extension's IndexedDB)
-haevn search "query"
-```
+1. Open HAEVN extension Settings and copy your CLI API key.
+2. In a terminal, start daemon:
+   ```bash
+   haevn daemon --api-key <your-key>
+   ```
+3. In another terminal, run CLI commands:
+   ```bash
+   haevn list -l 5
+   ```
 
 ## Output Formats
 
@@ -132,12 +123,10 @@ haevn search "query"
 Human-readable output with colors and formatting:
 
 ```
-━━━ chat_abc123 ━━━ "React Hooks Deep Dive"
-┌─ msg_m4k9x ────────────────────────────────────┐
-│ The key insight with useEffect is that it...  │
-│                    ↑ match: "useEffect"       │
-└───────────────────────────────────────────────┘
-  Claude • 2h ago • branch: root→a3→m4k9x
+━━━ 68937df7-e198-8325-973e-ed9528104e0c  "Emergence and consciousness research"
+  ┌─ [d571468ee884]
+  │ ...Emergence and consciousness research...
+  └─ user · chatgpt · Aug 6, 2025, 06:08 PM
 ```
 
 ### JSON
@@ -155,6 +144,7 @@ pnpm install
 pnpm build        # Build to dist/
 pnpm dev          # Watch mode
 pnpm start        # Run CLI
+pnpm typecheck    # Type-check CLI
 pnpm lint         # Check code
 ```
 
@@ -169,34 +159,18 @@ cli/
 │   │   ├── get.ts
 │   │   ├── list.ts
 │   │   ├── branches.ts
-│   │   └── export.ts
-│   ├── native/           # Native messaging
-│   │   ├── host.ts       # Host mode handler
-│   │   ├── install.ts    # Install command
-│   │   └── protocol.ts   # Chrome protocol
+│   │   ├── export.ts
+│   │   └── daemon.ts
+│   ├── daemon/           # Daemon client and config
+│   │   ├── client.ts
+│   │   ├── server.ts
+│   │   └── config.ts
 │   ├── formatters/       # Output formatting
 │   │   ├── markdown.ts
 │   │   └── json.ts
 │   └── utils/            # Utilities
 │       ├── tree.ts       # Branch traversal
+│       ├── messageRefs.ts
 │       └── output.ts     # Pretty printing
 └── package.json
 ```
-
-## Native Messaging Flow
-
-```
-┌─────────────────┐                      ┌─────────────────┐
-│  HAEVN          │  sendNativeMessage   │  haevn CLI      │
-│  Extension      │ ────────────────────►│  (native host)  │
-│  (IndexedDB)    │                      │                 │
-│                 │◄──────────────────── │                 │
-└─────────────────┘   JSON response      └─────────────────┘
-```
-
-1. Extension calls `chrome.runtime.sendNativeMessage('com.haevn.cli', request)`
-2. Chrome launches CLI with `--native-host` flag
-3. CLI reads request from stdin (length-prefixed JSON)
-4. CLI queries extension's IndexedDB
-5. CLI writes response to stdout
-6. Extension receives response via callback

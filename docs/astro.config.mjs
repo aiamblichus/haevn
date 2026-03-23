@@ -46,6 +46,7 @@ export default defineConfig({
               slug: "user-guide/managing-archive",
             },
             { label: "Search", slug: "user-guide/search" },
+            { label: "CLI", slug: "user-guide/cli" },
             { label: "The Viewer", slug: "user-guide/viewer" },
             { label: "Gallery", slug: "user-guide/gallery" },
             { label: "Import", slug: "user-guide/import" },

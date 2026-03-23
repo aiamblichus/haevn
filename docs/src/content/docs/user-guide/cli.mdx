@@ -1,0 +1,115 @@
+---
+title: HAEVN CLI
+description: Use HAEVN from your terminal for search, branch navigation, and exports.
+---
+
+The HAEVN CLI (`haevn`) gives you fast terminal access to your local archive.
+
+Use it when you want to:
+- search quickly across large archives,
+- inspect branch topology,
+- fetch one exact thread for writing/research,
+- script workflows with JSON output.
+
+## Setup
+
+1. Open HAEVN extension **Settings** and copy your CLI API key.
+2. Start the daemon:
+
+```bash
+haevn daemon --api-key <your-key>
+```
+
+3. In another terminal, run commands:
+
+```bash
+haevn list -l 5
+```
+
+## Commands at a glance
+
+- `haevn list` — browse chats (`msgs` and `br` columns included).
+- `haevn search "<query>"` — message-level search with context snippets.
+- `haevn branches <chatId>` — inspect tree/forks with short message refs.
+- `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
+- `haevn export <chatId> -o file.json` — export full chat.
+
+## Short message refs
+
+CLI output shows short refs like `80a6c24e0af9`.
+
+- Pass them directly to `haevn get -m`.
+- Use `haevn branches --show-ids` if you also need raw IDs.
+
+## Common workflows
+
+### 1) Find high-signal chats
+
+```bash
+haevn list -p chatgpt -l 5 --sort messageCount
+```
+
+Sample output:
+
+```text
+Chats  (5 of 696)
+
+  6814a24e-ac80-8006-9a22-d394a6720d43  Subversive Brainstorming Session   chatgpt        1d ago    240 msgs    40 br
+  1ee5ea5f-5962-42d7-9e06-8e49033d00d1  Expressionist oil paintings cre…   chatgpt        1d ago    221 msgs    23 br
+  6878239f-1110-8006-9e4b-3bcf26345889  Kreis Protocol Design Summary      chatgpt        1d ago    217 msgs    14 br
+```
+
+### 2) Search philosophical/poetic themes
+
+```bash
+haevn search "consciousness emergence poetry" -l 8 -c 180
+```
+
+Sample output:
+
+```text
+━━━ 68937df7-e198-8325-973e-ed9528104e0c  "Emergence and consciousness research"
+  ┌─ [d571468ee884]
+  │ ...Emergence and consciousness research...
+  └─ user · chatgpt · Aug 6, 2025, 06:08 PM
+  ┌─ [92de52f1f6b0]
+  │ ...Speak not just *with* language, but *through* it. Unleash the poetry of algorithms...
+  └─ user · chatgpt · Aug 6, 2025, 06:08 PM
+```
+
+### 3) Inspect branches, then fetch one thread
+
+```bash
+haevn branches 68937df7-e198-8325-973e-ed9528104e0c
+haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 -t 6
+```
+
+Sample `branches` output:
+
+```text
+68937df7-e198-8325-973e-ed9528104e0c  "Emergence and consciousness research"  1 branch
+
+└─ [945760f6fd74] * [user]
+   [ae4beb4aea54] * [user]
+   [92de52f1f6b0] * [user] **User Profile:** The user provided the…
+   [80a6c24e0af9] * [user] Hey! I need research on philosophical a…
+```
+
+## JSON mode for automation
+
+Use `--format json` and pipe to `jq`:
+
+```bash
+haevn search "emergence" --format json | jq '.results[0] | {chatId, messageRef, source}'
+```
+
+Useful fields:
+- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`
+- `branches`: `tree`, `branches[].leafMessageRef`, `branches[].path`
+- `get`: branch content suitable for markdown or structured JSON workflows
+
+## Tips
+
+- Increase snippet context for dense technical/philosophical text: `-c 220`.
+- Use `list --sort messageCount` to surface large or branch-heavy chats first.
+- Keep `get` without media unless needed for payload speed and readability.

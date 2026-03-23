@@ -179,6 +179,35 @@ pnpm run lint:fix  # Auto-fix issues
 3. Choose format (JSON, Markdown, TXT)
 4. Download begins automatically as a ZIP file
 
+### HAEVN CLI
+
+HAEVN also includes a terminal CLI for fast retrieval and scripting.
+
+```bash
+# Help
+haevn --help
+
+# List chats with message + branch counts
+haevn list -p chatgpt -l 10 --sort messageCount
+
+# Search with configurable snippet context
+haevn search "consciousness emergence poetry" -l 8 -c 180
+
+# Inspect branch structure (short refs shown by default)
+haevn branches <chatId>
+
+# Fetch a specific branch by short ref
+haevn get <chatId> -m <messageRef>
+```
+
+CLI highlights:
+- **Short message refs** (12-char hash) for readable message addressing.
+- **Branch-aware listing** (`msgs`, `br`, and branched chat indicator).
+- **Context control** in search (`--context`).
+- **Safer payloads** for `get` by default (media omitted unless explicitly requested).
+
+See [CLI README](./cli/README.md) for full setup and command reference.
+
 ---
 
 ## Architecture
