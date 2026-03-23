@@ -35,6 +35,18 @@ ChatGPT's native export is a ZIP file of your full conversation history. This is
 
 See [Import → Importing from ChatGPT](/user-guide/import/#importing-from-chatgpt) for step-by-step instructions.
 
+## Codex (import only)
+
+HAEVN can import **Codex** session files. These are JSONL files generated locally by Codex in your `~/.codex/sessions/` directory.
+
+Use the [Import](/user-guide/import/) feature in Options, or the CLI:
+
+```bash
+haevn import --format codex ~/.codex/sessions/<year>/<month>/<day>/rollout-...jsonl
+```
+
+Note: Codex is currently import-only in HAEVN (no live sync).
+
 ## Known limitations
 
 - **Archived / deleted conversations** — conversations you've deleted on ChatGPT are not recoverable via the API.

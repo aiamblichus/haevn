@@ -743,6 +743,7 @@ function generateSnippets(
       messageSnippet: snippet,
       messageRole: role,
       messageTimestamp: chat.timestamp, // Approximation
+      model: chat.messages[msgId]?.model || undefined,
       params: chat.params,
     });
   }

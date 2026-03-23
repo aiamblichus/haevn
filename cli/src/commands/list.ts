@@ -100,10 +100,17 @@ export function formatChatListText(chats: Partial<Chat>[], total: number): strin
       messageCountValue > 0 && branchCountValue > 1 && branchCountValue / messageCountValue >= 0.25;
     const branchBadge = heavilyBranched ? pc.yellow("branched") : "";
 
+    // Show first model name when it adds info beyond the platform name (e.g. openwebui, poe)
+    const models = chat.models ?? [];
+    const modelLabel =
+      models.length > 0
+        ? pc.dim(truncate(models[0], 22))
+        : "";
+
     lines.push(
       `  ${id}  ${title}  ${platform}  ${time}${msgCount ? `  ${msgCount}` : ""}${
         branchCount ? `  ${branchCount}` : ""
-      }${branchBadge ? `  ${branchBadge}` : ""}`,
+      }${branchBadge ? `  ${branchBadge}` : ""}${modelLabel ? `  ${modelLabel}` : ""}`,
     );
   }
 

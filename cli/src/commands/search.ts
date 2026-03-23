@@ -118,12 +118,13 @@ export function formatSearchResultsText(results: SearchResult[]): string {
     const snippet = renderSnippet(result.messageSnippet ?? result.messageContent.slice(0, 150));
     const time = formatRelativeTime(result.messageTimestamp);
     const platform = formatPlatform(result.source);
+    const modelSuffix = result.model ? ` · ${pc.dim(truncate(result.model, 24))}` : "";
 
     lines.push(
       `  ${pc.dim("┌─")} ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`,
     );
     lines.push(`  ${pc.dim("│")} ${snippet}`);
-    lines.push(`  ${pc.dim("└─")} ${roleLabel} · ${platform} · ${pc.dim(time)}`);
+    lines.push(`  ${pc.dim("└─")} ${roleLabel} · ${platform}${modelSuffix} · ${pc.dim(time)}`);
   }
 
   lines.push("");

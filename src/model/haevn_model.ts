@@ -284,6 +284,7 @@ export interface SearchResult {
   messageContent: string;
   messageRole: "user" | "assistant";
   messageTimestamp?: number;
+  model?: string;
   params?: Record<string, unknown>;
 }
 

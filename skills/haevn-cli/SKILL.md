@@ -99,6 +99,12 @@ haevn get <chatId> -m a1b2c3d4e5f6 -f json
 
 # Save markdown
 haevn get <chatId> -m a1b2c3d4e5f6 -o ./thread.md
+
+# Read only the first 20 messages (useful for large chats)
+haevn get <chatId> --head 20
+
+# Read only the last 20 messages
+haevn get <chatId> --tail 20
 ```
 
 By default, `get` excludes heavy binary payloads.  
@@ -137,7 +143,7 @@ haevn get <chatId> -m <refB> -f json > /tmp/b.json
 ### Build scripts around results
 
 ```bash
-haevn search "query" --format json | jq '.results[] | {chatId, messageRef, source}'
+haevn search "query" --format json | jq '.results[] | {chatId, messageRef, source, model, messageSnippet}'
 ```
 
 ---

@@ -27,6 +27,7 @@ function extractMetadataItem(chat: Chat): Partial<Chat> {
     id: chat.id,
     source: chat.source,
     title: chat.title,
+    models: chat.models,
     lastSyncedTimestamp: chat.lastSyncedTimestamp,
     syncStatus: chat.syncStatus,
     providerLastModifiedTimestamp: chat.providerLastModifiedTimestamp,

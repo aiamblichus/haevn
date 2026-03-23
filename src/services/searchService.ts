@@ -384,6 +384,7 @@ export namespace SearchService {
           messageSnippet: snippet,
           messageRole: m.role,
           messageTimestamp: m.timestampMs,
+          model: m.chatMessage.model || undefined,
         });
       }
 

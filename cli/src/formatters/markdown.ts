@@ -11,6 +11,8 @@ export interface MarkdownOptions {
   includeMedia?: boolean;
   /** Only render the last N messages of the branch (0 = all). */
   tail?: number;
+  /** Only render the first N messages of the branch (0 = all). Takes precedence over tail. */
+  head?: number;
 }
 
 /**
@@ -21,13 +23,18 @@ export function formatBranchAsMarkdown(
   branchPath: string[],
   options: MarkdownOptions = {},
 ): string {
-  const { includeMetadata = true, tail = 0 } = options;
+  const { includeMetadata = true, tail = 0, head = 0 } = options;
   let messages = getMessagesOnBranch(chat, branchPath);
 
-  // Apply tail window before filtering so the count is accurate
+  // Apply head/tail window before filtering so the count is accurate.
+  // head takes precedence over tail when both are specified.
   const totalMessages = messages.length;
-  const tailTruncated = tail > 0 && tail < totalMessages;
-  if (tailTruncated) {
+  const headTruncated = head > 0 && head < totalMessages;
+  const tailTruncated = !headTruncated && tail > 0 && tail < totalMessages;
+
+  if (headTruncated) {
+    messages = messages.slice(0, head);
+  } else if (tailTruncated) {
     messages = messages.slice(-tail);
   }
 
@@ -62,6 +69,11 @@ export function formatBranchAsMarkdown(
     lines.push(`## ${roleLabel}`);
     lines.push("");
     lines.push(text);
+    lines.push("");
+  }
+
+  if (headTruncated) {
+    lines.push(`_…${totalMessages - head} later messages omitted (use without --head to see all)_`);
     lines.push("");
   }
 
