@@ -2,6 +2,11 @@
 
 ## [v1.1.0] - 2026-03-23
 
+- Initial release
+
+
+## [v1.1.0] - 2026-03-23
+
 ### Added
 
 #### CLI Integration (Major Feature)
