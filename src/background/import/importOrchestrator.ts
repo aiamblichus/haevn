@@ -134,8 +134,12 @@ async function handlePostProcess(
       platformName = "openwebui";
     } else if (source.includes("gemini")) {
       platformName = "gemini";
+    } else if (source.includes("claudecode")) {
+      platformName = "claudecode";
     } else if (source.includes("claude")) {
       platformName = "claude";
+    } else if (source.includes("codex")) {
+      platformName = "codex";
     } else if (source.includes("poe")) {
       platformName = "poe";
     } else if (source.includes("chatgpt")) {
@@ -144,6 +148,8 @@ async function handlePostProcess(
       platformName = "qwen";
     } else if (source.includes("aistudio")) {
       platformName = "aistudio";
+    } else if (source.includes("grok")) {
+      platformName = "grok";
     }
 
     // Update sync status cache

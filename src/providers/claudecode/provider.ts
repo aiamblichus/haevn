@@ -4,8 +4,9 @@
  * This is an import-only provider - no sync/bulk sync functionality.
  */
 
-import type { Extractor, Transformer } from "../interfaces";
+import type { Extractor, Importer, Transformer } from "../interfaces";
 import type { Provider } from "../provider";
+import { parseClaudeCodeJsonl } from "./importer";
 import type { ClaudeCodeRawExtraction } from "./model";
 import { transformToHaevnChat } from "./transformer";
 
@@ -45,6 +46,17 @@ const transformer: Transformer<ClaudeCodeRawExtraction> = {
   },
 };
 
+const importer: Importer<string> = {
+  importFromBackup: async (data: string) => {
+    const extraction = await parseClaudeCodeJsonl(data);
+    return [transformToHaevnChat(extraction)];
+  },
+
+  canImport: (data: unknown) => {
+    return typeof data === "string" && data.includes('"sessionId"');
+  },
+};
+
 /**
  * Claude Code provider definition.
  *
@@ -56,6 +68,7 @@ export const claudeCodeProvider: Provider<ClaudeCodeRawExtraction> = {
 
   extractor,
   transformer,
+  importer,
 
   setup() {
     // No setup needed for import-only provider

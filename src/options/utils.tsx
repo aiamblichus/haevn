@@ -77,6 +77,7 @@ export const getPlatformIcon = (source: string): React.ReactElement => {
   else if (s.includes("aistudio")) iconPath = "icons/aistudio.png";
   else if (s.includes("deepseek")) iconPath = "icons/deepseek.png";
   else if (s.includes("grok")) iconPath = "icons/grok.png";
+  else if (s.includes("codex")) iconPath = "icons/codex.png";
 
   if (iconPath) {
     return (

@@ -45,6 +45,8 @@ import {
 import { convertClaudeTranscriptToHaevn } from "../../providers/claude/transformer";
 import { parseClaudeCodeJsonl } from "../../providers/claudecode/importer";
 import { transformToHaevnChat } from "../../providers/claudecode/transformer";
+import { parseCodexJsonl } from "../../providers/codex/importer";
+import { transformCodexToHaevnChat } from "../../providers/codex/transformer";
 import {
   countOpenWebUIConversationsInZip,
   parseOpenWebUIBackupZip,
@@ -266,6 +268,7 @@ async function countConversations(
       return manifest.total_chats ?? manifest.chats?.length ?? 0;
     }
     case "claudecode_jsonl":
+    case "codex_jsonl":
       // Single JSONL file = single conversation
       return 1;
     default:
@@ -766,6 +769,60 @@ async function processImport(
           });
         } catch (error) {
           log.error("[ImportWorker] Error processing Claude Code session:", error);
+          skipped++;
+          self.postMessage({
+            type: "skipped",
+            reason: error instanceof Error ? error.message : "Transform error",
+            requestId,
+          } as ImportWorkerResponse);
+        }
+        break;
+      }
+
+      case "codex_jsonl": {
+        let jsonlText: string;
+
+        if (fileData instanceof File) {
+          jsonlText = await fileData.text();
+        } else if (fileData instanceof ArrayBuffer) {
+          const decoder = new TextDecoder("utf-8");
+          jsonlText = decoder.decode(fileData);
+        } else {
+          throw new Error("Invalid file data type for Codex import");
+        }
+
+        try {
+          const extraction = await parseCodexJsonl(jsonlText);
+          const chat = transformCodexToHaevnChat(extraction);
+
+          processed++;
+
+          const result = await processChat(chat, extraction, overwriteExisting, requestId);
+
+          if (result.saved) {
+            saved++;
+          } else {
+            skipped++;
+            log.warn(
+              `[ImportWorker] Codex chat skipped. Chat ID: ${chat.id}, Reason: ${result.reason || "Unknown"}`,
+            );
+            self.postMessage({
+              type: "skipped",
+              chatId: chat.id,
+              reason: result.reason || "Unknown",
+              requestId,
+            } as ImportWorkerResponse);
+          }
+
+          sendProgress({
+            processed,
+            total,
+            status: `Processed Codex session (${saved} saved, ${skipped} skipped)`,
+            phase: "chats",
+            requestId,
+          });
+        } catch (error) {
+          log.error("[ImportWorker] Error processing Codex session:", error);
           skipped++;
           self.postMessage({
             type: "skipped",

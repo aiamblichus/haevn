@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { aistudioProvider } from "../providers/aistudio/provider";
 import { chatgptProvider } from "../providers/chatgpt/provider";
 import { claudeProvider } from "../providers/claude/provider";
+import { claudeCodeProvider } from "../providers/claudecode/provider";
+import { codexProvider } from "../providers/codex/provider";
 import { deepseekProvider } from "../providers/deepseek/provider";
 import { geminiProvider } from "../providers/gemini/provider";
 import { openwebuiProvider } from "../providers/openwebui/provider";
@@ -41,6 +43,8 @@ registerProvider(openwebuiProvider);
 registerProvider(qwenProvider);
 registerProvider(aistudioProvider);
 registerProvider(deepseekProvider);
+registerProvider(claudeCodeProvider);
+registerProvider(codexProvider);
 
 const App = () => {
   const [activeView, setActiveView] = useState("archive");

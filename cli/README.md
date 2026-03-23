@@ -110,6 +110,9 @@ Options:
 # Import one Claude Code session JSONL
 haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
 
+# Import one Codex session JSONL
+haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-2026-03-23T14-28-14-019d1ae1-bc2d-7d90-9834-6664505e81e8.jsonl
+
 # Import multiple files in one run
 haevn import --format claude_code ./sessions/*.jsonl
 

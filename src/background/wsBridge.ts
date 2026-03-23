@@ -28,9 +28,11 @@
  * A chrome.alarm fires every 30 s to wake a dormant SW and reconnect if needed.
  */
 
-import type { ChatMessage, SearchResult } from "../model/haevn_model";
+import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
 import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
 import { transformToHaevnChat } from "../providers/claudecode/transformer";
+import { parseCodexJsonl } from "../providers/codex/importer";
+import { transformCodexToHaevnChat } from "../providers/codex/transformer";
 import { ImportService } from "../services/importService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
@@ -573,16 +575,7 @@ async function handleImport(
     return { id, success: false, error: "At least one file is required", code: "BAD_REQUEST" };
   }
 
-  if (format === "codex") {
-    return {
-      id,
-      success: false,
-      error: "Codex import is not implemented yet. Use --format claude_code for now.",
-      code: "NOT_IMPLEMENTED",
-    };
-  }
-
-  if (format !== "claude_code") {
+  if (format !== "claude_code" && format !== "codex") {
     return {
       id,
       success: false,
@@ -611,8 +604,17 @@ async function handleImport(
     for (const file of files) {
       summary.processed++;
       try {
-        const extraction = await parseClaudeCodeJsonl(file.content);
-        const chat = transformToHaevnChat(extraction);
+        let chat: Chat;
+        let raw: unknown;
+        if (format === "codex") {
+          const extraction = await parseCodexJsonl(file.content);
+          chat = transformCodexToHaevnChat(extraction);
+          raw = extraction;
+        } else {
+          const extraction = await parseClaudeCodeJsonl(file.content);
+          chat = transformToHaevnChat(extraction);
+          raw = extraction;
+        }
 
         if (!overwrite) {
           const existing = await SyncService.getChat(chat.id);
@@ -622,7 +624,7 @@ async function handleImport(
           }
         }
 
-        await ImportService.saveImportedChat(chat, extraction, { skipIndexing: true });
+        await ImportService.saveImportedChat(chat, raw, { skipIndexing: true });
         summary.saved++;
       } catch (err) {
         summary.errors++;

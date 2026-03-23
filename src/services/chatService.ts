@@ -14,12 +14,15 @@ function extractProviderName(source: string): string | null {
   const providers = [
     "gemini",
     "claude",
+    "claudecode",
+    "codex",
     "poe",
     "chatgpt",
     "openwebui",
     "qwen",
     "aistudio",
     "deepseek",
+    "grok",
   ];
   for (const provider of providers) {
     if (sourceLower.includes(provider)) {

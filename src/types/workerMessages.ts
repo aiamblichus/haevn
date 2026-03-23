@@ -203,7 +203,8 @@ export type ImportSourceType =
   | "claude_zip"
   | "openwebui_zip"
   | "haevn_export_zip"
-  | "claudecode_jsonl";
+  | "claudecode_jsonl"
+  | "codex_jsonl";
 
 export type ImportWorkerMessage = (
   | {

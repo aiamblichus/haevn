@@ -2,6 +2,7 @@ import { aistudioProvider } from "./aistudio/provider";
 import { chatgptProvider } from "./chatgpt/provider";
 import { claudeProvider } from "./claude/provider";
 import { claudeCodeProvider } from "./claudecode/provider";
+import { codexProvider } from "./codex/provider";
 import { deepseekProvider } from "./deepseek/provider";
 import { geminiProvider } from "./gemini/provider";
 import { grokProvider } from "./grok/provider";
@@ -25,4 +26,5 @@ export function registerAllProviders(): void {
   registerProvider(deepseekProvider);
   registerProvider(grokProvider);
   registerProvider(claudeCodeProvider);
+  registerProvider(codexProvider);
 }

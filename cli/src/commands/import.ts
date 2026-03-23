@@ -12,7 +12,7 @@ import { consola, pc } from "../utils/output";
 export default defineCommand({
   meta: {
     name: "import",
-    description: "Import transcript artifacts (Claude Code now, Codex soon)",
+    description: "Import transcript artifacts (Claude Code or Codex JSONL)",
   },
   args: {
     format: {

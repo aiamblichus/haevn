@@ -19,6 +19,7 @@ import { handleImport } from "../../import/importHandlers";
 type ImportProviderType =
   | "chatgpt_zip"
   | "claude_zip"
+  | "codex_jsonl"
   | "openwebui_json"
   | "openwebui_zip"
   | "haevn_export_zip"
@@ -66,6 +67,7 @@ export const ImportModal = ({
         const validTypes: ImportProviderType[] = [
           "chatgpt_zip",
           "claude_zip",
+          "codex_jsonl",
           "openwebui_json",
           "openwebui_zip",
           "haevn_export_zip",
@@ -222,6 +224,7 @@ export const ImportModal = ({
       const workerImportTypes = [
         "chatgpt_zip",
         "claude_zip",
+        "codex_jsonl",
         "openwebui_zip",
         "haevn_export_zip",
         "claudecode_jsonl",
@@ -335,6 +338,9 @@ export const ImportModal = ({
                   <option value="claude_zip">Claude Backup (.zip)</option>
                   <option value="claudecode_jsonl">Claude Code Session (.jsonl)</option>
                 </>
+              )}
+              {(!importProviderFilter || importProviderFilter.startsWith("codex")) && (
+                <option value="codex_jsonl">Codex Session (.jsonl)</option>
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("openwebui")) && (
                 <>
@@ -455,10 +461,12 @@ export const ImportModal = ({
               )}
             </div>
           )}
-          {importProvider === "claudecode_jsonl" && (
+          {(importProvider === "claudecode_jsonl" || importProvider === "codex_jsonl") && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-foreground">
-                Claude Code Session (.jsonl):
+                {importProvider === "claudecode_jsonl"
+                  ? "Claude Code Session (.jsonl):"
+                  : "Codex Session (.jsonl):"}
               </label>
               <div
                 className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
@@ -492,7 +500,7 @@ export const ImportModal = ({
                   }
                 }}
               >
-                Drag & drop Claude Code .jsonl file here, or choose a file below.
+                Drag & drop .jsonl file here, or choose a file below.
               </div>
               <input
                 type="file"
@@ -622,8 +630,10 @@ export const ImportModal = ({
                 importProvider === "openwebui_json" ||
                 importProvider === "openwebui_zip" ||
                 importProvider === "claude_zip" ||
+                importProvider === "codex_jsonl" ||
                 importProvider === "haevn_export_zip" ||
-                importProvider === "haevn_markdown") &&
+                importProvider === "haevn_markdown" ||
+                importProvider === "claudecode_jsonl") &&
                 !importFile) ||
               importRunning ||
               !!importError

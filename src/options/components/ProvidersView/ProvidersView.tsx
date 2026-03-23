@@ -169,8 +169,12 @@ export const ProvidersView = ({
             providerName = "openwebui";
           } else if (source.includes("gemini")) {
             providerName = "gemini";
+          } else if (source.includes("claudecode")) {
+            providerName = "claudecode";
           } else if (source.includes("claude")) {
             providerName = "claude";
+          } else if (source.includes("codex")) {
+            providerName = "codex";
           } else if (source.includes("poe")) {
             providerName = "poe";
           } else if (source.includes("chatgpt")) {
@@ -217,6 +221,8 @@ export const ProvidersView = ({
       const formatMap: Record<string, string> = {
         chatgpt: "chatgpt_zip",
         claude: "claude_zip",
+        claudecode: "claudecode_jsonl",
+        codex: "codex_jsonl",
         openwebui: "openwebui_zip",
       };
       const defaultFormat = formatMap[providerName] || "chatgpt_zip";
@@ -412,10 +418,13 @@ export const ProvidersView = ({
           {providers.map((provider) => {
             const key = provider.name;
             const stats = providerStats[key] || { downloaded: 0 };
+            const canSync = !!provider.bulkSyncConfig;
 
             // Check if a sync is running for this provider
             const isSyncingThisProvider =
-              globalSyncState?.status === "running" && globalSyncState?.provider === provider.name;
+              canSync &&
+              globalSyncState?.status === "running" &&
+              globalSyncState?.provider === provider.name;
 
             const syncState: ProviderSyncState = isSyncingThisProvider
               ? {
@@ -446,11 +455,9 @@ export const ProvidersView = ({
                 baseUrl={provider.name === "openwebui" ? openwebuiBaseUrl || undefined : undefined}
                 stats={stats}
                 syncState={syncState}
-                onImport={
-                  provider.hasImporter ? () => handleProviderImport(provider.name) : undefined
-                }
+                onImport={provider.importer ? () => handleProviderImport(provider.name) : undefined}
                 onStartSync={
-                  isSyncingThisProvider
+                  !canSync || isSyncingThisProvider
                     ? undefined
                     : () =>
                         handleStartSync(

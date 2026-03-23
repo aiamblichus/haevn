@@ -1,5 +1,4 @@
 import { clearStaleImportState } from "../background/import/importOrchestrator";
-import { handleWsReconnectAlarm, initWsBridge, WS_RECONNECT_ALARM } from "./wsBridge";
 import { registerAllProviders } from "../providers/index";
 import { getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
@@ -10,6 +9,7 @@ import { resumeBulkSync } from "./bulkSync/bulkSync";
 import { bulkSyncStateManager } from "./bulkSync/stateManager";
 import { handleCheckMissingThumbnails } from "./handlers/galleryHandlers";
 import { clearStaleOperationLocks } from "./state";
+import { handleWsReconnectAlarm, initWsBridge, WS_RECONNECT_ALARM } from "./wsBridge";
 
 // Initialize storage adapter is now handled in bootstrap.ts (imported first in background.ts)
 
@@ -53,6 +53,8 @@ const PROVIDERS = [
   "aistudio",
   "deepseek",
   "grok",
+  "claudecode",
+  "codex",
 ];
 
 // Initialize SyncService (loads or builds Lunr index, etc.)
