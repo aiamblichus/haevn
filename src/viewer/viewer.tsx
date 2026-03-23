@@ -332,6 +332,7 @@ const Header = ({
     if (s.includes("aistudio")) return "icons/aistudio.png";
     if (s.includes("deepseek")) return "icons/deepseek.png";
     if (s.includes("codex")) return "icons/codex.png";
+    if (s === "pi" || s.startsWith("pi")) return "icons/pi.png";
     return null;
   };
   const iconPath = getIconPath(chat.source);

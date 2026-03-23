@@ -20,6 +20,7 @@ type ImportProviderType =
   | "chatgpt_zip"
   | "claude_zip"
   | "codex_jsonl"
+  | "pi_jsonl"
   | "openwebui_json"
   | "openwebui_zip"
   | "haevn_export_zip"
@@ -68,6 +69,7 @@ export const ImportModal = ({
           "chatgpt_zip",
           "claude_zip",
           "codex_jsonl",
+          "pi_jsonl",
           "openwebui_json",
           "openwebui_zip",
           "haevn_export_zip",
@@ -225,6 +227,7 @@ export const ImportModal = ({
         "chatgpt_zip",
         "claude_zip",
         "codex_jsonl",
+        "pi_jsonl",
         "openwebui_zip",
         "haevn_export_zip",
         "claudecode_jsonl",
@@ -341,6 +344,9 @@ export const ImportModal = ({
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("codex")) && (
                 <option value="codex_jsonl">Codex Session (.jsonl)</option>
+              )}
+              {(!importProviderFilter || importProviderFilter.startsWith("pi")) && (
+                <option value="pi_jsonl">PI Session (.jsonl)</option>
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("openwebui")) && (
                 <>
@@ -461,12 +467,16 @@ export const ImportModal = ({
               )}
             </div>
           )}
-          {(importProvider === "claudecode_jsonl" || importProvider === "codex_jsonl") && (
+          {(importProvider === "claudecode_jsonl" ||
+            importProvider === "codex_jsonl" ||
+            importProvider === "pi_jsonl") && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-foreground">
                 {importProvider === "claudecode_jsonl"
                   ? "Claude Code Session (.jsonl):"
-                  : "Codex Session (.jsonl):"}
+                  : importProvider === "codex_jsonl"
+                    ? "Codex Session (.jsonl):"
+                    : "PI Session (.jsonl):"}
               </label>
               <div
                 className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
@@ -631,6 +641,7 @@ export const ImportModal = ({
                 importProvider === "openwebui_zip" ||
                 importProvider === "claude_zip" ||
                 importProvider === "codex_jsonl" ||
+                importProvider === "pi_jsonl" ||
                 importProvider === "haevn_export_zip" ||
                 importProvider === "haevn_markdown" ||
                 importProvider === "claudecode_jsonl") &&

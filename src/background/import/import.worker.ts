@@ -52,6 +52,8 @@ import {
   parseOpenWebUIBackupZip,
 } from "../../providers/openwebui/importer";
 import { transformOpenWebUIToHaevn } from "../../providers/openwebui/transformer";
+import { parsePiJsonl } from "../../providers/pi/importer";
+import { transformPiToHaevnChat } from "../../providers/pi/transformer";
 import type {
   ExportManifestChatEntry,
   ExportManifestMediaEntry,
@@ -269,6 +271,7 @@ async function countConversations(
     }
     case "claudecode_jsonl":
     case "codex_jsonl":
+    case "pi_jsonl":
       // Single JSONL file = single conversation
       return 1;
     default:
@@ -823,6 +826,60 @@ async function processImport(
           });
         } catch (error) {
           log.error("[ImportWorker] Error processing Codex session:", error);
+          skipped++;
+          self.postMessage({
+            type: "skipped",
+            reason: error instanceof Error ? error.message : "Transform error",
+            requestId,
+          } as ImportWorkerResponse);
+        }
+        break;
+      }
+
+      case "pi_jsonl": {
+        let jsonlText: string;
+
+        if (fileData instanceof File) {
+          jsonlText = await fileData.text();
+        } else if (fileData instanceof ArrayBuffer) {
+          const decoder = new TextDecoder("utf-8");
+          jsonlText = decoder.decode(fileData);
+        } else {
+          throw new Error("Invalid file data type for PI import");
+        }
+
+        try {
+          const extraction = await parsePiJsonl(jsonlText);
+          const chat = transformPiToHaevnChat(extraction);
+
+          processed++;
+
+          const result = await processChat(chat, extraction, overwriteExisting, requestId);
+
+          if (result.saved) {
+            saved++;
+          } else {
+            skipped++;
+            log.warn(
+              `[ImportWorker] PI chat skipped. Chat ID: ${chat.id}, Reason: ${result.reason || "Unknown"}`,
+            );
+            self.postMessage({
+              type: "skipped",
+              chatId: chat.id,
+              reason: result.reason || "Unknown",
+              requestId,
+            } as ImportWorkerResponse);
+          }
+
+          sendProgress({
+            processed,
+            total,
+            status: `Processed PI session (${saved} saved, ${skipped} skipped)`,
+            phase: "chats",
+            requestId,
+          });
+        } catch (error) {
+          log.error("[ImportWorker] Error processing PI session:", error);
           skipped++;
           self.postMessage({
             type: "skipped",

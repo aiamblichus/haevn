@@ -66,6 +66,7 @@ export default defineConfig({
             { label: "DeepSeek", slug: "platforms/deepseek" },
             { label: "Google AI Studio", slug: "platforms/aistudio" },
             { label: "Grok", slug: "platforms/grok" },
+            { label: "PI (Import Only)", slug: "platforms/pi" },
           ],
         },
         {

@@ -33,7 +33,7 @@ haevn list -l 5
 - `haevn branches <chatId>` — inspect tree/forks with short message refs.
 - `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
 - `haevn export <chatId> -o file.json` — export full chat.
-- `haevn import --format <claude_code|codex> <file...>` — import local JSONL session files.
+- `haevn import --format <claude_code|codex|pi> <file...>` — import local JSONL session files.
 
 ## Short message refs
 
@@ -120,6 +120,9 @@ haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
 
 # Codex session JSONL
 haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
+
+# PI session JSONL
+haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_...jsonl
 ```
 
 Flags:

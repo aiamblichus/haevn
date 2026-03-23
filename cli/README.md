@@ -117,6 +117,9 @@ haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
 # Import one Codex session JSONL
 haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-2026-03-23T14-28-14-019d1ae1-bc2d-7d90-9834-6664505e81e8.jsonl
 
+# Import one PI session JSONL
+haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_02c5dec9-40a7-4a9c-9856-417044063a6f.jsonl
+
 # Import multiple files in one run
 haevn import --format claude_code ./sessions/*.jsonl
 
@@ -128,12 +131,12 @@ haevn import --format claude_code --skip-index ./sessions/*.jsonl
 ```
 
 Options:
-- `--format <fmt>` - Input format (`claude_code`, `codex`)
+- `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`)
 - `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
 - `--skip-index` - Skip search indexing after import (default: rebuild index at end)
 
 Notes:
-- `claude_code` and `codex` are import-only providers (no live sync).
+- `claude_code`, `codex`, and `pi` are import-only providers (no live sync).
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.
 
 ## Setup

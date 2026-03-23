@@ -16,6 +16,7 @@ function extractProviderName(source: string): string | null {
     "claude",
     "claudecode",
     "codex",
+    "pi",
     "poe",
     "chatgpt",
     "openwebui",

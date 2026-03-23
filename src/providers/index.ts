@@ -7,6 +7,7 @@ import { deepseekProvider } from "./deepseek/provider";
 import { geminiProvider } from "./gemini/provider";
 import { grokProvider } from "./grok/provider";
 import { openwebuiProvider } from "./openwebui/provider";
+import { piProvider } from "./pi/provider";
 import { poeProvider } from "./poe/provider";
 import { registerProvider } from "./provider";
 import { qwenProvider } from "./qwen/provider";
@@ -27,4 +28,5 @@ export function registerAllProviders(): void {
   registerProvider(grokProvider);
   registerProvider(claudeCodeProvider);
   registerProvider(codexProvider);
+  registerProvider(piProvider);
 }

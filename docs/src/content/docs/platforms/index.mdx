@@ -7,7 +7,8 @@ import { Aside } from "@astrojs/starlight/components";
 import { Image } from "astro:assets";
 import providersImg from "../../../assets/screenshots/options-providers.png";
 
-HAEVN supports 9 AI platforms. Each platform has its own sync method and feature set.
+HAEVN supports 9 live-sync platforms, plus import-only coding-agent providers.
+Each platform has its own sync method and feature set.
 
 <Image
   src={providersImg}
@@ -27,6 +28,12 @@ HAEVN supports 9 AI platforms. Each platform has its own sync method and feature
 | [DeepSeek](/platforms/deepseek/)         | API         | —      | ✅              | —          |
 | [Google AI Studio](/platforms/aistudio/) | Navigation  | ✅     | —               | —          |
 | [Grok](/platforms/grok/)                 | API         | ✅     | —               | ✅         |
+
+## Import-only providers
+
+| Provider            | Mode        | Notes |
+| ------------------- | ----------- | ----- |
+| [PI](/platforms/pi/) | Import only | Local `.jsonl` transcripts from `~/.pi/sessions/` |
 
 ## Sync methods explained
 

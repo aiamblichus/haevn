@@ -33,9 +33,12 @@ import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
 import { transformToHaevnChat } from "../providers/claudecode/transformer";
 import { parseCodexJsonl } from "../providers/codex/importer";
 import { transformCodexToHaevnChat } from "../providers/codex/transformer";
+import { parsePiJsonl } from "../providers/pi/importer";
+import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import { ImportService } from "../services/importService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
+import type { AllProviderRawData } from "../types/messaging";
 import { log } from "../utils/logger";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
@@ -82,7 +85,7 @@ interface WsExportOptions {
   includeMedia?: boolean;
 }
 
-type WsImportFormat = "claude_code" | "codex";
+type WsImportFormat = "claude_code" | "codex" | "pi";
 
 interface WsImportFilePayload {
   name: string;
@@ -575,7 +578,7 @@ async function handleImport(
     return { id, success: false, error: "At least one file is required", code: "BAD_REQUEST" };
   }
 
-  if (format !== "claude_code" && format !== "codex") {
+  if (format !== "claude_code" && format !== "codex" && format !== "pi") {
     return {
       id,
       success: false,
@@ -605,15 +608,23 @@ async function handleImport(
       summary.processed++;
       try {
         let chat: Chat;
-        let raw: unknown;
+        let raw: AllProviderRawData | undefined;
         if (format === "codex") {
           const extraction = await parseCodexJsonl(file.content);
           chat = transformCodexToHaevnChat(extraction);
+          raw = extraction;
+        } else if (format === "pi") {
+          const extraction = await parsePiJsonl(file.content);
+          chat = transformPiToHaevnChat(extraction);
           raw = extraction;
         } else {
           const extraction = await parseClaudeCodeJsonl(file.content);
           chat = transformToHaevnChat(extraction);
           raw = extraction;
+        }
+
+        if (!chat.id) {
+          throw new Error("Imported chat is missing id");
         }
 
         if (!overwrite) {

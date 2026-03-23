@@ -140,6 +140,8 @@ async function handlePostProcess(
       platformName = "claude";
     } else if (source.includes("codex")) {
       platformName = "codex";
+    } else if (source.includes("pi")) {
+      platformName = "pi";
     } else if (source.includes("poe")) {
       platformName = "poe";
     } else if (source.includes("chatgpt")) {

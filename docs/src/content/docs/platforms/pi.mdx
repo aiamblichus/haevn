@@ -1,0 +1,40 @@
+---
+title: PI
+description: Import PI coding-agent session files into HAEVN.
+---
+
+## Overview
+
+PI is currently supported as an **import-only** provider in HAEVN.
+
+- No live sync from browser tabs.
+- Import local `.jsonl` session transcripts.
+- Preserves user prompts, assistant messages, thinking blocks, tool calls, and tool results.
+
+## Session files
+
+PI session files are stored locally in:
+
+```text
+~/.pi/sessions/
+```
+
+Example filename:
+
+```text
+2026-03-23T14-48-43-844Z_02c5dec9-40a7-4a9c-9856-417044063a6f.jsonl
+```
+
+## Import
+
+You can import PI sessions via the Options UI or CLI.
+
+```bash
+haevn import --format pi ~/.pi/sessions/<timestamp>_<session-id>.jsonl
+```
+
+Useful flags:
+
+- `--no-overwrite` to keep existing chats with the same ID.
+- `--skip-index` to skip immediate index rebuild after import.
+

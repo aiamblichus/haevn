@@ -55,6 +55,7 @@ const PROVIDERS = [
   "grok",
   "claudecode",
   "codex",
+  "pi",
 ];
 
 // Initialize SyncService (loads or builds Lunr index, etc.)

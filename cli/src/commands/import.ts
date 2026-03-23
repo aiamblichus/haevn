@@ -12,13 +12,13 @@ import { consola, pc } from "../utils/output";
 export default defineCommand({
   meta: {
     name: "import",
-    description: "Import transcript artifacts (Claude Code or Codex JSONL)",
+    description: "Import transcript artifacts (Claude Code, Codex, or PI JSONL)",
   },
   args: {
     format: {
       type: "string",
       required: true,
-      description: "Input format (claude_code|codex)",
+      description: "Input format (claude_code|codex|pi)",
     },
     file: {
       type: "positional",
@@ -52,8 +52,8 @@ export default defineCommand({
       return true;
     });
 
-    if (format !== "claude_code" && format !== "codex") {
-      consola.error(`Unsupported format: ${format}. Expected "claude_code" or "codex".`);
+    if (format !== "claude_code" && format !== "codex" && format !== "pi") {
+      consola.error(`Unsupported format: ${format}. Expected "claude_code", "codex", or "pi".`);
       process.exit(1);
     }
 

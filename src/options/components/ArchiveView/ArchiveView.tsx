@@ -278,10 +278,13 @@ export const ArchiveView = ({
                 <SelectItem value="gemini">Gemini</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
                 <SelectItem value="claudecode">Claude Code</SelectItem>
+                <SelectItem value="codex">Codex</SelectItem>
+                <SelectItem value="pi">PI</SelectItem>
                 <SelectItem value="poe">Poe</SelectItem>
                 <SelectItem value="chatgpt">ChatGPT</SelectItem>
                 <SelectItem value="openwebui">Open WebUI</SelectItem>
                 <SelectItem value="qwen">Qwen</SelectItem>
+                <SelectItem value="aistudio">AI Studio</SelectItem>
                 <SelectItem value="deepseek">DeepSeek</SelectItem>
                 <SelectItem value="grok">Grok</SelectItem>
               </SelectContent>

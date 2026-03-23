@@ -14,10 +14,11 @@ HAEVN can import conversations from external sources — useful for seeding your
 | **ChatGPT** | ZIP file | Settings → Data controls → Export data |
 | **Claude Code** | JSONL file | Local session files in your `.claude/` directory |
 | **Codex** | JSONL file | Local session files in your `.codex/sessions/` directory |
+| **PI** | JSONL file | Local session files in your `.pi/sessions/` directory |
 | **HAEVN backup** | ZIP | From a previous HAEVN export |
 
 <Aside>
-  Claude Code and Codex are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
+  Claude Code, Codex, and PI are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
 </Aside>
 
 ## How to import
@@ -46,6 +47,9 @@ haevn import --format claude_code ~/.claude/projects/my-proj/session.jsonl
 
 # Codex
 haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
+
+# PI
+haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_...jsonl
 ```
 
 Useful flags:

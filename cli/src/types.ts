@@ -84,7 +84,7 @@ export interface ExportOptions {
   includeMedia?: boolean;
 }
 
-export type ImportFormat = "claude_code" | "codex";
+export type ImportFormat = "claude_code" | "codex" | "pi";
 
 export interface ImportFilePayload {
   name: string;

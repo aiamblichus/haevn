@@ -8,6 +8,7 @@ import { codexProvider } from "../providers/codex/provider";
 import { deepseekProvider } from "../providers/deepseek/provider";
 import { geminiProvider } from "../providers/gemini/provider";
 import { openwebuiProvider } from "../providers/openwebui/provider";
+import { piProvider } from "../providers/pi/provider";
 import { poeProvider } from "../providers/poe/provider";
 import { registerProvider } from "../providers/provider";
 import { qwenProvider } from "../providers/qwen/provider";
@@ -45,6 +46,7 @@ registerProvider(aistudioProvider);
 registerProvider(deepseekProvider);
 registerProvider(claudeCodeProvider);
 registerProvider(codexProvider);
+registerProvider(piProvider);
 
 const App = () => {
   const [activeView, setActiveView] = useState("archive");

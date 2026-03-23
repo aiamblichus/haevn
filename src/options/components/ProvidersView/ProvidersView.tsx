@@ -175,6 +175,8 @@ export const ProvidersView = ({
             providerName = "claude";
           } else if (source.includes("codex")) {
             providerName = "codex";
+          } else if (source.includes("pi")) {
+            providerName = "pi";
           } else if (source.includes("poe")) {
             providerName = "poe";
           } else if (source.includes("chatgpt")) {
@@ -223,6 +225,7 @@ export const ProvidersView = ({
         claude: "claude_zip",
         claudecode: "claudecode_jsonl",
         codex: "codex_jsonl",
+        pi: "pi_jsonl",
         openwebui: "openwebui_zip",
       };
       const defaultFormat = formatMap[providerName] || "chatgpt_zip";
