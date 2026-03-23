@@ -4,9 +4,9 @@
 
 import * as fs from "node:fs";
 import { defineCommand } from "citty";
+import { daemonRequest } from "../daemon/client.js";
 import { formatBranchAsJson, toJsonString } from "../formatters/json";
 import { formatBranchAsMarkdown } from "../formatters/markdown";
-import { daemonRequest } from "../daemon/client.js";
 import type { Chat } from "../types/chat";
 import { resolveMessageRef } from "../utils/messageRefs";
 import { consola } from "../utils/output";
@@ -49,6 +49,11 @@ export default defineCommand({
       description: "Include image descriptions/links",
       default: false,
     },
+    "include-thinking": {
+      type: "boolean",
+      description: "Include full thinking blocks instead of truncating previews",
+      default: false,
+    },
     tail: {
       type: "string",
       alias: "t",
@@ -67,6 +72,7 @@ export default defineCommand({
       output,
       "include-metadata": includeMetadata,
       "include-media": includeMedia,
+      "include-thinking": includeThinking,
       tail,
       head,
     } = args;
@@ -98,6 +104,7 @@ export default defineCommand({
       content = outputBranch(chat, resolvedMessageId, format as "markdown" | "json", {
         includeMetadata,
         includeMedia,
+        includeThinking,
         tail: tail ? Number.parseInt(tail, 10) : 0,
         head: head ? Number.parseInt(head, 10) : 0,
       });
@@ -121,7 +128,13 @@ export function outputBranch(
   chat: Chat,
   messageId?: string,
   format: "markdown" | "json" = "markdown",
-  options: { includeMetadata?: boolean; includeMedia?: boolean; tail?: number; head?: number } = {},
+  options: {
+    includeMetadata?: boolean;
+    includeMedia?: boolean;
+    includeThinking?: boolean;
+    tail?: number;
+    head?: number;
+  } = {},
 ): string {
   const branchPath = messageId
     ? getBranchContainingMessage(chat, messageId)
@@ -134,12 +147,15 @@ export function outputBranch(
   }
 
   if (format === "json") {
-    return toJsonString(formatBranchAsJson(chat, branchPath));
+    return toJsonString(
+      formatBranchAsJson(chat, branchPath, { includeThinking: options.includeThinking }),
+    );
   }
 
   return formatBranchAsMarkdown(chat, branchPath, {
     includeMetadata: options.includeMetadata ?? true,
     includeMedia: options.includeMedia ?? false,
+    includeThinking: options.includeThinking ?? false,
     tail: options.tail ?? 0,
     head: options.head ?? 0,
   });

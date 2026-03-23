@@ -10,6 +10,10 @@
 import type { BranchInfo } from "../types";
 import type { Chat, ChatMessage } from "../types/chat";
 
+export interface GetMessageTextOptions {
+  includeThinking?: boolean;
+}
+
 /**
  * Find the root message of a chat tree.
  */
@@ -120,7 +124,8 @@ export function getMessageRole(message: ChatMessage): "user" | "assistant" {
 /**
  * Get text content from a message (best effort extraction).
  */
-export function getMessageText(message: ChatMessage): string {
+export function getMessageText(message: ChatMessage, options: GetMessageTextOptions = {}): string {
+  const { includeThinking = false } = options;
   const parts: string[] = [];
 
   for (const msg of message.message) {
@@ -139,7 +144,11 @@ export function getMessageText(message: ChatMessage): string {
         if (part.part_kind === "text") {
           parts.push(part.content);
         } else if (part.part_kind === "thinking") {
-          parts.push(`[thinking: ${part.content.slice(0, 100)}...]`);
+          if (includeThinking) {
+            parts.push(part.content);
+          } else {
+            parts.push(`[thinking: ${part.content.slice(0, 100)}...]`);
+          }
         } else if (part.part_kind === "code-execution") {
           parts.push(`[code: ${part.code.slice(0, 100)}...]`);
         }

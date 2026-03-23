@@ -7,10 +7,19 @@ import type { Chat } from "../types/chat";
 import { buildMessageRefIndex, createMessageRef, getMessageRef } from "../utils/messageRefs";
 import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
 
+export interface BranchJsonOptions {
+  includeThinking?: boolean;
+}
+
 /**
  * Format a branch as JSON for structured output.
  */
-export function formatBranchAsJson(chat: Chat, branchPath: string[]): object {
+export function formatBranchAsJson(
+  chat: Chat,
+  branchPath: string[],
+  options: BranchJsonOptions = {},
+): object {
+  const { includeThinking = false } = options;
   const messages = getMessagesOnBranch(chat, branchPath);
   const refs = buildMessageRefIndex(chat);
 
@@ -25,7 +34,7 @@ export function formatBranchAsJson(chat: Chat, branchPath: string[]): object {
       messages: messages.map((msg) => ({
         ref: getMessageRef(refs, msg.id),
         role: getMessageRole(msg),
-        content: getMessageText(msg),
+        content: getMessageText(msg, { includeThinking }),
         timestamp: msg.timestamp,
       })),
     },

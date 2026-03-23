@@ -83,6 +83,7 @@ Sample output:
 ```bash
 haevn branches 68937df7-e198-8325-973e-ed9528104e0c
 haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 -t 6
+haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 --include-thinking
 ```
 
 Sample `branches` output:
@@ -130,3 +131,4 @@ Flags:
 - Increase snippet context for dense technical/philosophical text: `-c 220`.
 - Use `list --sort messageCount` to surface large or branch-heavy chats first.
 - Keep `get` without media unless needed for payload speed and readability.
+- Use `get --include-thinking` when you need full reasoning blocks instead of previews.

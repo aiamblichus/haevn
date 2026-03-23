@@ -9,6 +9,7 @@ import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tr
 export interface MarkdownOptions {
   includeMetadata?: boolean;
   includeMedia?: boolean;
+  includeThinking?: boolean;
   /** Only render the last N messages of the branch (0 = all). */
   tail?: number;
   /** Only render the first N messages of the branch (0 = all). Takes precedence over tail. */
@@ -23,7 +24,7 @@ export function formatBranchAsMarkdown(
   branchPath: string[],
   options: MarkdownOptions = {},
 ): string {
-  const { includeMetadata = true, tail = 0, head = 0 } = options;
+  const { includeMetadata = true, includeThinking = false, tail = 0, head = 0 } = options;
   let messages = getMessagesOnBranch(chat, branchPath);
 
   // Apply head/tail window before filtering so the count is accurate.
@@ -39,7 +40,7 @@ export function formatBranchAsMarkdown(
   }
 
   // Filter out messages with no text (tool calls, image-only uploads)
-  const rendered = messages.filter((m) => getMessageText(m).trim());
+  const rendered = messages.filter((m) => getMessageText(m, { includeThinking }).trim());
 
   const lines: string[] = [];
 
@@ -56,14 +57,16 @@ export function formatBranchAsMarkdown(
   }
 
   if (tailTruncated) {
-    lines.push(`_…${totalMessages - tail} earlier messages omitted (use without --tail to see all)_`);
+    lines.push(
+      `_…${totalMessages - tail} earlier messages omitted (use without --tail to see all)_`,
+    );
     lines.push("");
   }
 
   // Messages
   for (const message of rendered) {
     const role = getMessageRole(message);
-    const text = getMessageText(message);
+    const text = formatMessageForMarkdown(message, includeThinking);
     const roleLabel = role === "user" ? "User" : "Assistant";
 
     lines.push(`## ${roleLabel}`);
@@ -80,12 +83,47 @@ export function formatBranchAsMarkdown(
   // Footer: human-readable count, no raw IDs
   lines.push("---");
   lines.push("");
-  const branchCount = chat.branches ? Object.keys(chat.branches).length : 1;
+  const branchCount = Object.values(chat.messages).filter(
+    (msg) => msg.childrenIds.length === 0,
+  ).length;
   const footerParts = [`${totalMessages} messages`];
   if (branchCount > 1) footerParts.push(`${branchCount} branches`);
   lines.push(`_${footerParts.join(" · ")}_`);
 
   return lines.join("\n");
+}
+
+function formatMessageForMarkdown(message: ChatMessage, includeThinking: boolean): string {
+  if (!includeThinking || getMessageRole(message) !== "assistant") {
+    return getMessageText(message, { includeThinking });
+  }
+
+  const thinkingParts: string[] = [];
+  const otherParts: string[] = [];
+
+  for (const msg of message.message) {
+    if (msg.kind !== "response") continue;
+
+    for (const part of msg.parts) {
+      if (part.part_kind === "thinking") {
+        thinkingParts.push(part.content);
+      } else if (part.part_kind === "text") {
+        otherParts.push(part.content);
+      } else if (part.part_kind === "code-execution") {
+        otherParts.push(`[code: ${part.code.slice(0, 100)}...]`);
+      }
+    }
+  }
+
+  const blocks: string[] = [];
+  if (thinkingParts.length > 0) {
+    blocks.push(`<thinking>\n${thinkingParts.join("\n\n")}\n</thinking>`);
+  }
+  if (otherParts.length > 0) {
+    blocks.push(otherParts.join("\n\n"));
+  }
+
+  return blocks.join("\n\n");
 }
 
 /**

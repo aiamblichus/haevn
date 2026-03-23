@@ -45,6 +45,9 @@ haevn get chat_abc123 --message a1b2c3d4e5f6
 # Output as JSON
 haevn get chat_abc123 -f json
 
+# Include full thinking blocks
+haevn get chat_abc123 --include-thinking
+
 # Write to file
 haevn get chat_abc123 -o ./chat.md
 ```
@@ -55,6 +58,7 @@ Options:
 - `-o, --output <file>` - Write to file
 - `--include-metadata` - Include timestamps/model info (default: true)
 - `--include-media` - Include image descriptions/links (default: false)
+- `--include-thinking` - Include full thinking blocks (default: false, otherwise truncated preview)
 
 ### `list` - Browse chats
 
