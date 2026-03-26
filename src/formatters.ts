@@ -1,3 +1,4 @@
+import { stringify as stringifyYaml } from "yaml";
 import type {
   AudioResponsePart,
   AudioUrl,
@@ -21,8 +22,6 @@ export interface ExportOptions {
   format: "json" | "markdown";
   messageIds?: string[]; // Optional: limit export to specific messages in order
 }
-
-import { formatLocalTime } from "./utils/time_utils";
 
 /**
  * Generate a filename for exporting a chat.
@@ -284,26 +283,36 @@ function generateMarkdownContent(
   options: ExportOptions,
   attachmentMap?: Map<string, string>,
 ): string {
-  let content = `# ${chat.title}\n\n`;
+  const frontmatter: Record<string, unknown> = {
+    title: chat.title,
+    source: chat.source,
+  };
+
+  if (chat.id) {
+    frontmatter.conversation_id = chat.id;
+  }
+
+  frontmatter.created_at = new Date(chat.timestamp).toISOString();
+
+  if (chat.providerLastModifiedTimestamp) {
+    frontmatter.modified_at = new Date(chat.providerLastModifiedTimestamp).toISOString();
+  }
+
+  if (chat.system) {
+    frontmatter.system = chat.system;
+  }
+
+  if (chat.models.length > 0) {
+    frontmatter.models_used = chat.models;
+  }
 
   if (options.includeMetadata) {
-    content += `**Source:** ${chat.source}  \n`;
-    if (chat.id) {
-      content += `**Conversation ID:** ${chat.id}  \n`;
-    }
-    if (chat.system) {
-      content += `**System:** ${chat.system}  \n`;
-    }
-    content += `**Models Used:** ${chat.models.join(", ")}  \n`;
-    content += `**Last Synced:** ${formatLocalTime(chat.lastSyncedTimestamp)}  \n`;
-    if (chat.providerLastModifiedTimestamp) {
-      content += `**Provider Last Modified:** ${formatLocalTime(
-        chat.providerLastModifiedTimestamp,
-      )}  \n`;
-    }
-    content += `**Total Messages:** ${Object.keys(chat.messages).length}  \n`;
+    frontmatter.last_synced_timestamp = new Date(chat.lastSyncedTimestamp).toISOString();
+    frontmatter.total_messages = Object.keys(chat.messages).length;
   }
-  content += `---\n\n`;
+
+  const frontmatterYaml = stringifyYaml(frontmatter).trimEnd();
+  let content = `---\n${frontmatterYaml}\n---\n\n`;
 
   const messageIds = options.messageIds || sortMessageIdsByResponseTimestamp(chat);
   const sortedMessageIds = messageIds.filter((id) => chat.messages[id]);
@@ -447,7 +456,7 @@ function generateMarkdownContent(
       content += `${blocks.join("\n\n")}\n\n`;
     }
 
-    content += `---\n\n`;
+    content += `\n`;
   }
 
   return content;

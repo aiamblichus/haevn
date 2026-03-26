@@ -75,15 +75,19 @@ describe("formatters", () => {
     expect(parsed.id).toBe("c1");
   });
 
-  it("generates Markdown export with metadata and timestamps", async () => {
+  it("generates Markdown export with YAML frontmatter", async () => {
     const chat = makeChat();
     const content = await generateExportContent(chat, {
       format: "markdown",
       includeMetadata: true,
       includeTimestamps: true,
     });
-    expect(content).toContain(`# ${chat.title.replace(/</g, "<")}`);
-    expect(content).toContain("**Source:**");
+    expect(content).toMatch(/^---\n[\s\S]+\n---\n\n/);
+    expect(content).toMatch(/title:\s+/);
+    expect(content).toContain(`source: ${chat.source}`);
+    expect(content).toContain(`conversation_id: ${chat.id}`);
+    expect(content).toContain("created_at:");
+    expect(content).toContain("modified_at:");
     expect(content).toContain('<!-- HAEVN: role="user" -->');
     expect(content).toContain('<!-- HAEVN: role="assistant" -->');
   });

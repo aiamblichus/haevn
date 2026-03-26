@@ -28,7 +28,7 @@ HAEVN can export any conversation — or your entire archive — in two formats:
   <TabItem label="Markdown">
     **Best for:** Reading in note-taking apps (Obsidian, Notion, Bear), sharing with others, or archiving as plain text.
 
-    The Markdown export produces a clean, human-readable document with the conversation title, metadata header, and all messages formatted as sections. Code blocks are preserved with language hints. Images are included as inline links or alt-text descriptions.
+    The Markdown export produces a clean, human-readable document with YAML frontmatter metadata (`title`, `source`, `conversation_id`, etc.) and role-delimited message sections. Code blocks are preserved with language hints. Images are included as inline links or alt-text descriptions.
 
     Works seamlessly with Obsidian's note linking, Notion's Markdown import, and any text editor.
   </TabItem>
@@ -64,8 +64,8 @@ Click **Export All** in the Archive toolbar to download your complete archive as
 | Content | JSON | Markdown |
 |---|---|---|
 | All messages | ✅ | ✅ |
-| Timestamps | ✅ | ✅ (header) |
-| Platform metadata | ✅ | ✅ (header) |
+| Timestamps | ✅ | ✅ (frontmatter) |
+| Platform metadata | ✅ | ✅ (frontmatter) |
 | Images (binary) | ✅ (base64) | ✅ (inline reference) |
 | Thinking blocks | ✅ | ✅ (as section) |
 | Tool calls | ✅ | ✅ (as section) |

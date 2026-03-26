@@ -73,6 +73,9 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 - **HAEVN Archives**: Import previously exported HAEVN ZIP files
 - **Platform Backups**: Import from ChatGPT, Claude, and other platform exports
 - **Duplicate Detection**: Smart handling of existing conversations
+- **HAEVN Markdown**: Supports YAML-frontmatter markdown format for transcript import
+
+See the docs site for the exact spec: `Reference → Data Formats → HAEVN Markdown import format`.
 
 ### 🏷️ AI Metadata
 

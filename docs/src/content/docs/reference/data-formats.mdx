@@ -76,3 +76,51 @@ export.zip
 <Aside>
   The `attachments/` directory is only present in JSON exports. Markdown exports include attachment references as inline links but do not embed binary files.
 </Aside>
+
+## HAEVN Markdown import format
+
+HAEVN Markdown imports use **YAML frontmatter** followed by role-delimited message sections.
+
+```md
+---
+title: Example Chat
+source: Gemini
+conversation_id: optional-stable-id
+created_at: 2026-03-26T16:05:00.000Z
+modified_at: 2026-03-26T16:10:00.000Z
+system: optional-system-message
+models_used:
+  - gemini-2.5-pro
+---
+
+<!-- HAEVN: role="user" -->
+User message text
+
+<!-- HAEVN: role="assistant" -->
+Assistant message text
+```
+
+### Frontmatter fields
+
+- `title` (required): chat title
+- `source` (recommended): provider name
+- `conversation_id` (optional): stable source identifier; when omitted, HAEVN computes an ID from file content
+- `created_at` (optional): chat creation timestamp (ISO 8601 string, milliseconds, or numeric string)
+- `modified_at` (optional): source/provider last-modified timestamp (same accepted formats as `created_at`)
+- `system` (optional): system prompt/context
+- `models_used` (optional): list of model names; defaults to `unknown` when omitted
+
+### Message section rules
+
+- Each section starts with exactly one role marker:
+  - `<!-- HAEVN: role="user" -->`
+  - `<!-- HAEVN: role="assistant" -->`
+  - `<!-- HAEVN: role="system" -->` (optional, captured as system context)
+- A new section starts at each role marker (`<!-- HAEVN: role="..." -->`)
+- Role marker must be the first non-whitespace line of that message block
+- `---` separators between messages are optional (legacy style still tolerated)
+- Keep body content as valid Markdown
+
+<Aside type="caution">
+  Legacy bold-key markdown headers (for example `**Source:** ...`) are no longer supported by the markdown importer.
+</Aside>

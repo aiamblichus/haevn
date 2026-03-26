@@ -16,6 +16,7 @@ HAEVN can import conversations from external sources — useful for seeding your
 | **Codex** | JSONL file | Local session files in your `.codex/sessions/` directory |
 | **PI** | JSONL file | Local session files in your `.pi/sessions/` directory |
 | **HAEVN backup** | ZIP | From a previous HAEVN export |
+| **HAEVN Markdown** | `.md` | YAML-frontmatter markdown transcript |
 
 <Aside>
   Claude Code, Codex, and PI are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
@@ -50,6 +51,9 @@ haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
 
 # PI
 haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_...jsonl
+
+# HAEVN Markdown
+haevn import --format markdown ./conversation.md
 ```
 
 Useful flags: `--no-overwrite` to skip existing chat IDs, and `--skip-index` to skip index rebuild after import.
@@ -76,6 +80,8 @@ ChatGPT's native export format is a ZIP file containing your full conversation h
 <Aside type="tip">
   Importing a ChatGPT ZIP file is a great way to get your full history into HAEVN immediately, before you start using the extension's sync feature for ongoing conversations.
 </Aside>
+
+For the exact HAEVN Markdown schema (YAML frontmatter + role delimiters), see [Reference → Data Formats](/reference/data-formats/#haevn-markdown-import-format).
 
 ## What happens during import
 
