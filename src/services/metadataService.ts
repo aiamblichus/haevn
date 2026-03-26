@@ -8,8 +8,9 @@ import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
 import { getMetadataAIConfig } from "./settingsService";
 
-const METADATA_QUEUE_ALARM = "metadataQueueAlarm";
-const MAX_RETRIES = 3;
+export const METADATA_PROCESS_ALARM = "metadataQueueProcessAlarm";
+export const METADATA_REFRESH_ALARM = "metadataQueueRefreshAlarm";
+const METADATA_QUEUE_PERIOD_MINUTES = 5;
 
 // ─── Title Resolution ──────────────────────────────────────────────────────────
 
@@ -30,18 +31,63 @@ export function getDisplayTitle(
 
 // ─── Queue Management ─────────────────────────────────────────────────────────
 
+function hasMeaningfulMetadata(metadata: ChatMetadataRecord | null | undefined): boolean {
+  return !!metadata && metadata.source !== "unset";
+}
+
+async function scheduleProcessTick(): Promise<void> {
+  chrome.alarms.create(METADATA_PROCESS_ALARM, { delayInMinutes: 0.1 });
+}
+
+export async function syncMetadataQueueAlarms(): Promise<void> {
+  const config = await getMetadataAIConfig();
+  const shouldRun = config.enabled;
+
+  if (!shouldRun) {
+    await Promise.all([
+      chrome.alarms.clear(METADATA_PROCESS_ALARM),
+      chrome.alarms.clear(METADATA_REFRESH_ALARM),
+    ]);
+    return;
+  }
+
+  if (config.indexMissing) {
+    chrome.alarms.create(METADATA_REFRESH_ALARM, {
+      delayInMinutes: 0.1,
+      periodInMinutes: METADATA_QUEUE_PERIOD_MINUTES,
+    });
+  } else {
+    await chrome.alarms.clear(METADATA_REFRESH_ALARM);
+  }
+
+  const pendingCount = await getDB().metadataQueue.where("status").equals("pending").count();
+  if (pendingCount > 0) {
+    await scheduleProcessTick();
+  }
+}
+
 /**
  * Enqueue a chat for AI metadata generation.
  * Idempotent — re-queuing a chatId resets it to pending.
  */
 export async function queueGeneration(chatId: string): Promise<void> {
+  const existing = await MetadataRepository.get(chatId);
+  if (hasMeaningfulMetadata(existing)) {
+    await dequeueGeneration(chatId);
+    return;
+  }
+
   await getDB().metadataQueue.put({
     chatId,
     status: "pending",
     retries: 0,
     addedAt: Date.now(),
   });
-  chrome.alarms.create(METADATA_QUEUE_ALARM, { delayInMinutes: 0.1 });
+  await scheduleProcessTick();
+}
+
+export async function dequeueGeneration(chatId: string): Promise<void> {
+  await getDB().metadataQueue.delete(chatId);
 }
 
 /**
@@ -49,18 +95,39 @@ export async function queueGeneration(chatId: string): Promise<void> {
  * Reschedules the alarm if more items remain.
  */
 export async function processQueueTick(): Promise<void> {
-  const item = await getDB().metadataQueue.where("status").equals("pending").first();
+  const db = getDB();
+  const config = await getMetadataAIConfig();
 
-  if (!item) return;
+  if (!config.enabled) {
+    await syncMetadataQueueAlarms();
+    return;
+  }
 
-  await getDB().metadataQueue.update(item.chatId, {
+  const item = (await db.metadataQueue.where("status").equals("pending").sortBy("addedAt"))[0];
+
+  if (!item) {
+    await chrome.alarms.clear(METADATA_PROCESS_ALARM);
+    return;
+  }
+
+  const metadata = await MetadataRepository.get(item.chatId);
+  if (hasMeaningfulMetadata(metadata)) {
+    await dequeueGeneration(item.chatId);
+    const remaining = await db.metadataQueue.where("status").equals("pending").count();
+    if (remaining > 0) {
+      await scheduleProcessTick();
+    }
+    return;
+  }
+
+  await db.metadataQueue.update(item.chatId, {
     status: "processing",
     lastAttemptAt: Date.now(),
   });
 
   try {
     const record = await generateForChat(item.chatId);
-    await getDB().metadataQueue.delete(item.chatId);
+    await dequeueGeneration(item.chatId);
     log.info(`[MetadataService] Generated metadata for chat ${item.chatId}`);
     safeSendMessage({ action: "metadataGenerated", chatId: item.chatId, title: record.title });
   } catch (err) {
@@ -68,33 +135,38 @@ export async function processQueueTick(): Promise<void> {
     const errMsg = err instanceof Error ? err.message : String(err);
     log.warn(`[MetadataService] Generation failed for ${item.chatId} (attempt ${retries})`, err);
 
-    if (retries >= MAX_RETRIES) {
-      await getDB().metadataQueue.update(item.chatId, {
-        status: "failed",
-        retries,
-        error: errMsg,
-      });
-      safeSendMessage({ action: "metadataGenerationFailed", chatId: item.chatId, error: errMsg });
-    } else {
-      await getDB().metadataQueue.update(item.chatId, {
-        status: "pending",
-        retries,
-        error: errMsg,
-      });
-    }
+    await getDB().metadataQueue.update(item.chatId, {
+      status: "pending",
+      retries,
+      error: errMsg,
+      addedAt: Date.now(),
+    });
+    safeSendMessage({ action: "metadataGenerationFailed", chatId: item.chatId, error: errMsg });
   }
 
-  // Reschedule if more items remain
-  const remaining = await getDB().metadataQueue.where("status").equals("pending").count();
+  const remaining = await db.metadataQueue.where("status").equals("pending").count();
   if (remaining > 0) {
-    chrome.alarms.create(METADATA_QUEUE_ALARM, { delayInMinutes: 0.1 });
+    await scheduleProcessTick();
+  } else {
+    await chrome.alarms.clear(METADATA_PROCESS_ALARM);
+  }
+}
+
+export async function refreshQueueTick(): Promise<void> {
+  const config = await getMetadataAIConfig();
+  if (!config.enabled || !config.indexMissing) {
+    return;
+  }
+  const added = await enqueueAllMissing();
+  if (added > 0) {
+    await scheduleProcessTick();
   }
 }
 
 /**
  * Enqueue all chats that have no meaningful metadata (source === "unset" or no record)
- * and reset any previously-failed queue items back to "pending".
- * Returns the total number of items added or reset.
+ * and are not already in flight.
+ * Returns the total number of items added.
  */
 export async function enqueueAllMissing(): Promise<number> {
   const db = getDB();
@@ -104,95 +176,87 @@ export async function enqueueAllMissing(): Promise<number> {
 
   // Chat IDs that already have real metadata (source !== "unset")
   const allMetadata = await db.chatMetadata.toArray();
-  const indexedSet = new Set(allMetadata.filter((m) => m.source !== "unset").map((m) => m.chatId));
+  const indexedSet = new Set(
+    allMetadata.filter((m) => hasMeaningfulMetadata(m)).map((m) => m.chatId),
+  );
 
-  // Chat IDs already pending or processing — skip those
-  const inFlightIds = (await db.metadataQueue
-    .where("status")
-    .anyOf(["pending", "processing"])
-    .primaryKeys()) as string[];
-  const inFlightSet = new Set(inFlightIds);
+  const queueItems = await db.metadataQueue.toArray();
+  const staleQueuedIds = queueItems
+    .filter((item) => indexedSet.has(item.chatId))
+    .map((item) => item.chatId);
+  if (staleQueuedIds.length > 0) {
+    await db.metadataQueue.bulkDelete(staleQueuedIds);
+  }
 
-  const toAdd = allChatIds.filter((id) => !indexedSet.has(id) && !inFlightSet.has(id));
+  const queuedIds = new Set(
+    queueItems.filter((item) => !indexedSet.has(item.chatId)).map((item) => item.chatId),
+  );
 
-  // Reset failed items back to pending
-  const failedIds = (await db.metadataQueue
-    .where("status")
-    .equals("failed")
-    .primaryKeys()) as string[];
+  const toAdd = allChatIds.filter((id) => !indexedSet.has(id) && !queuedIds.has(id));
 
-  const total = toAdd.length + failedIds.length;
+  const total = toAdd.length;
   if (total === 0) return 0;
 
   const now = Date.now();
-  if (toAdd.length > 0) {
-    await db.metadataQueue.bulkPut(
-      toAdd.map((chatId) => ({ chatId, status: "pending" as const, retries: 0, addedAt: now })),
-    );
-  }
-  if (failedIds.length > 0) {
-    await db.metadataQueue.bulkPut(
-      failedIds.map((chatId) => ({
-        chatId,
-        status: "pending" as const,
-        retries: 0,
-        addedAt: now,
-      })),
-    );
-  }
-
-  chrome.alarms.create(METADATA_QUEUE_ALARM, { delayInMinutes: 0.1 });
-  log.info(`[MetadataService] Enqueued ${toAdd.length} missing + reset ${failedIds.length} failed`);
+  await db.metadataQueue.bulkPut(
+    toAdd.map((chatId) => ({ chatId, status: "pending" as const, retries: 0, addedAt: now })),
+  );
+  log.info(`[MetadataService] Enqueued ${toAdd.length} missing chats`);
   return total;
 }
 
 export interface MetadataQueueStatus {
   pending: number;
   processing: number;
-  failed: number;
-  /** Chats with no/unset metadata not currently in the queue. */
-  missing: number;
 }
 
 /**
- * Returns current queue counts plus the number of chats that have no metadata
- * and are not already queued.
+ * Returns current queue counts.
  */
 export async function getQueueStatus(): Promise<MetadataQueueStatus> {
   const db = getDB();
 
-  const [pending, processing, failed, allChatIds, allMetadata, inFlightIds] = await Promise.all([
+  const [pending, processing] = await Promise.all([
     db.metadataQueue.where("status").equals("pending").count(),
     db.metadataQueue.where("status").equals("processing").count(),
-    db.metadataQueue.where("status").equals("failed").count(),
-    db.chats.where("deleted").equals(0).primaryKeys() as Promise<string[]>,
-    db.chatMetadata.toArray(),
-    db.metadataQueue.where("status").anyOf(["pending", "processing"]).primaryKeys() as Promise<
-      string[]
-    >,
   ]);
 
-  const indexedSet = new Set(allMetadata.filter((m) => m.source !== "unset").map((m) => m.chatId));
-  const inFlightSet = new Set(inFlightIds);
-  const missing = allChatIds.filter((id) => !indexedSet.has(id) && !inFlightSet.has(id)).length;
-
-  return { pending, processing, failed, missing };
+  return { pending, processing };
 }
 
 /**
- * On service worker startup, reset any items stuck in 'processing'
- * back to 'pending' (they were interrupted by SW termination).
+ * On service worker startup, reset any items stuck in 'processing' or 'failed'
+ * back to 'pending' and synchronize the periodic alarm.
  */
 export async function resetStuckQueueItems(): Promise<void> {
-  const stuck = await getDB().metadataQueue.where("status").equals("processing").toArray();
-  if (stuck.length === 0) return;
-
-  for (const item of stuck) {
-    await getDB().metadataQueue.update(item.chatId, { status: "pending" });
+  const db = getDB();
+  const [processingItems, failedItems] = await Promise.all([
+    db.metadataQueue.where("status").equals("processing").toArray(),
+    db.metadataQueue.where("status").equals("failed").toArray(),
+  ]);
+  const stuck = [...processingItems, ...failedItems];
+  if (stuck.length > 0) {
+    const now = Date.now();
+    for (const item of stuck) {
+      await db.metadataQueue.update(item.chatId, {
+        status: "pending",
+        addedAt: now,
+      });
+    }
+    log.info(`[MetadataService] Reset ${stuck.length} stuck metadata queue items to pending`);
   }
-  log.info(`[MetadataService] Reset ${stuck.length} stuck queue items to pending`);
 
-  chrome.alarms.create(METADATA_QUEUE_ALARM, { delayInMinutes: 0.1 });
+  await syncMetadataQueueAlarms();
+
+  const config = await getMetadataAIConfig();
+  if (config.enabled && config.indexMissing) {
+    const added = await enqueueAllMissing();
+    if (added > 0 || stuck.length > 0) {
+      await scheduleProcessTick();
+    }
+  } else if (stuck.length > 0) {
+    await scheduleProcessTick();
+  }
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────

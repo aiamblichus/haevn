@@ -291,18 +291,11 @@ const CliSettingsCard = () => {
   );
 };
 
-function formatQueueStatus(s: {
-  missing: number;
-  pending: number;
-  processing: number;
-  failed: number;
-}): string {
+function formatQueueStatus(s: { pending: number; processing: number }): string {
   const parts: string[] = [];
-  if (s.missing > 0) parts.push(`${s.missing} unindexed`);
-  if (s.pending > 0) parts.push(`${s.pending} pending`);
+  if (s.pending > 0) parts.push(`${s.pending} queued`);
   if (s.processing > 0) parts.push(`${s.processing} processing`);
-  if (s.failed > 0) parts.push(`${s.failed} failed`);
-  return parts.length > 0 ? parts.join(" · ") : "All chats indexed";
+  return parts.length > 0 ? parts.join(" · ") : "Idle · queue refresh runs every 5 minutes";
 }
 
 // ─── AI Metadata Settings Card ────────────────────────────────────────────────
@@ -321,8 +314,6 @@ const DEFAULT_CONFIG: MetadataAIConfig = {
 interface QueueStatus {
   pending: number;
   processing: number;
-  failed: number;
-  missing: number;
 }
 
 const AIMetadataSettingsCard = () => {
@@ -473,7 +464,9 @@ const AIMetadataSettingsCard = () => {
             <p>
               We strongly recommend using a <strong>local LLM</strong> such as{" "}
               <strong>Ollama</strong> or <strong>LM Studio</strong> to keep your conversations
-              private. External APIs (OpenAI, etc.) will receive and may log your chat content.
+              private. External APIs (OpenAI, etc.) will receive and may log your chat content. In
+              addition, if you use a non-local endpoint, this operation will consume tokens and cost
+              money.
             </p>
             <p className="text-muted-foreground">
               Only enable this if you understand and accept that your chat content will be sent to
@@ -587,7 +580,7 @@ const AIMetadataSettingsCard = () => {
                   }}
                 />
                 <Label htmlFor="metaIndexMissing" className="cursor-pointer">
-                  Index existing chats without metadata
+                  Queue existing chats without metadata
                 </Label>
               </div>
 

@@ -1,7 +1,13 @@
 import { ChatRepository } from "../../services/chatRepository";
 import { getDB } from "../../services/db";
 import * as MetadataRepository from "../../services/metadataRepository";
-import { enqueueAllMissing, generateForChat, getQueueStatus } from "../../services/metadataService";
+import {
+  dequeueGeneration,
+  enqueueAllMissing,
+  generateForChat,
+  getQueueStatus,
+  syncMetadataQueueAlarms,
+} from "../../services/metadataService";
 import { getMetadataAIConfig, setMetadataAIConfig } from "../../services/settingsService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
@@ -42,6 +48,7 @@ export async function handleSetChatMetadata(
       source: "manual",
       updatedAt: Date.now(),
     });
+    await dequeueGeneration(message.chatId);
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setChatMetadata failed", err);
@@ -55,6 +62,7 @@ export async function handleGenerateChatMetadata(
 ): Promise<void> {
   try {
     const record = await generateForChat(message.chatId);
+    await dequeueGeneration(message.chatId);
     sendResponse({ success: true, data: record });
   } catch (err) {
     log.error("[MetadataHandlers] generateChatMetadata failed", err);
@@ -81,6 +89,11 @@ export async function handleSetMetadataAIConfig(
 ): Promise<void> {
   try {
     await setMetadataAIConfig(message.config);
+    await syncMetadataQueueAlarms();
+    const nextConfig = await getMetadataAIConfig();
+    if (nextConfig.enabled && nextConfig.indexMissing) {
+      await enqueueAllMissing();
+    }
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setMetadataAIConfig failed", err);
