@@ -181,6 +181,11 @@ Users will need to re-export their data.
 pnpm run version:patch  # Bump patch version (1.0.0 → 1.0.1)
 pnpm run version:minor  # Bump minor version (1.0.0 → 1.1.0)
 pnpm run version:major  # Bump major version (1.0.0 → 2.0.0)
+
+# Bump extension package.json + src/manifest.json + cli/package.json together
+pnpm run version:all:patch
+pnpm run version:all:minor
+pnpm run version:all:major
 ```
 
 ### Release
