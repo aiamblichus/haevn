@@ -38,13 +38,15 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 | [Claude](https://claude.ai)              | ✅          | ✅        | API         |
 | [ChatGPT](https://chatgpt.com)           | ✅          | ✅        | API         |
 | [Gemini](https://gemini.google.com)      | ✅          | ✅        | DOM         |
-| [Poe](https://poe.com)                   | ✅          | ✅        | API         |
+| [Poe](https://poe.com)                   | ✅          | ✅        | DOM         |
 | [DeepSeek](https://chat.deepseek.com)    | ✅          | ✅        | API         |
 | [Qwen](https://chat.qwen.ai)             | ✅          | ✅        | API         |
 | [AI Studio](https://aistudio.google.com) | ✅          | ✅        | DOM         |
 | [Grok](https://grok.com)                 | ✅          | ✅        | API         |
 | [Open WebUI](http://localhost:8080)      | ✅          | ✅        | API         |
 | Claude Code                              | ❌          | ❌        | Import only |
+| Codex                                    | ❌          | ❌        | Import only |
+| Pi                                       | ❌          | ❌        | Import only |
 
 ---
 
