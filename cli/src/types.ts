@@ -64,6 +64,7 @@ export type CliRequest =
 
 export interface SearchOptions {
   platform?: string;
+  category?: string;
   after?: string; // ISO date
   before?: string; // ISO date
   limit?: number;

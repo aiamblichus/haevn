@@ -25,6 +25,10 @@ export default defineCommand({
       alias: "p",
       description: "Filter by platform",
     },
+    category: {
+      type: "string",
+      description: 'Filter by metadata category (use "_unset" for unindexed chats)',
+    },
     limit: {
       type: "string",
       alias: "l",
@@ -51,7 +55,7 @@ export default defineCommand({
     },
   },
   async run({ args }) {
-    const { query, platform, format, after, before, context } = args;
+    const { query, platform, category, format, after, before, context } = args;
     const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
     const contextChars = context ? Number.parseInt(context, 10) : 120;
 
@@ -60,7 +64,7 @@ export default defineCommand({
       results = await daemonRequest<SearchResult[]>({
         action: "search",
         query,
-        options: { platform, limit, after, before, contextChars },
+        options: { platform, category, limit, after, before, contextChars },
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));

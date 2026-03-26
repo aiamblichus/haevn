@@ -14,6 +14,7 @@ export async function handleGetSyncedChatsMetadata(
     const offset = message.offset ?? 0;
     const limit = message.limit ?? 50;
     const filterProvider = message.filterProvider ?? "all";
+    const filterCategory = message.filterCategory ?? "all";
     const sortBy = message.sortBy ?? "lastSyncedTimestamp";
     const sortDirection = message.sortDirection ?? "desc";
 
@@ -23,6 +24,7 @@ export async function handleGetSyncedChatsMetadata(
       filterProvider,
       sortBy,
       sortDirection,
+      filterCategory,
     );
 
     sendResponse({

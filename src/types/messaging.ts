@@ -175,6 +175,7 @@ export type BackgroundRequest =
       offset?: number;
       limit?: number;
       filterProvider?: string;
+      filterCategory?: string;
       sortBy?: string;
       sortDirection?: "asc" | "desc";
     }

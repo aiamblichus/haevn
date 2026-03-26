@@ -67,6 +67,7 @@ type WsRequest =
 
 interface WsSearchOptions {
   platform?: string;
+  category?: string;
   after?: string;
   before?: string;
   limit?: number;
@@ -482,7 +483,18 @@ async function handleSearch(
     return meta?.title ? { ...r, metaTitle: meta.title } : r;
   });
 
-  return { id, success: true, data: enriched };
+  // Apply category filter if requested
+  const category = options.category;
+  const categoryFiltered =
+    category && category !== "all"
+      ? enriched.filter((r) => {
+          const meta = metaMap.get(r.chatId);
+          if (category === "_unset") return !meta || meta.source === "unset";
+          return Array.isArray(meta?.categories) && meta.categories.includes(category);
+        })
+      : enriched;
+
+  return { id, success: true, data: categoryFiltered };
 }
 
 async function handleList(

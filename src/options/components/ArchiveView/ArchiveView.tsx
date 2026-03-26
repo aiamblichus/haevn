@@ -29,6 +29,9 @@ interface ArchiveViewProps {
   selectedIds: Set<string>;
   filterProvider: string;
   setFilterProvider: (provider: string) => void;
+  filterCategory: string;
+  setFilterCategory: (category: string) => void;
+  availableCategories: string[];
   sortBy: SortKey;
   setSortBy: (key: SortKey) => void;
   sortDirection: SortDirection;
@@ -69,6 +72,9 @@ export const ArchiveView = ({
   selectedIds,
   filterProvider,
   setFilterProvider,
+  filterCategory,
+  setFilterCategory,
+  availableCategories,
   sortBy,
   setSortBy,
   sortDirection,
@@ -290,6 +296,28 @@ export const ArchiveView = ({
               </SelectContent>
             </Select>
           </div>
+          {availableCategories.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="filterCategory" className="text-sm font-medium text-foreground">
+                Category:
+              </label>
+              <Select value={filterCategory} onValueChange={setFilterCategory}>
+                <SelectTrigger id="filterCategory" className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  {availableCategories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="Other">Other</SelectItem>
+                  <SelectItem value="_unset">Not indexed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <label htmlFor="sortBy" className="text-sm font-medium text-foreground">
               Sort by:

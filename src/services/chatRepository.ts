@@ -199,10 +199,31 @@ export namespace ChatRepository {
     filterProvider: string = "all",
     sortBy: string = "lastSyncedTimestamp",
     sortDirection: "asc" | "desc" = "desc",
+    filterCategory: string = "all",
   ): Promise<{ metadata: Partial<Chat>[]; total: number }> {
     try {
       const db = getDB();
       let query: Dexie.Collection<Chat, string>;
+
+      // Pre-compute category filter set (may require a full chatMetadata scan)
+      let categoryFilterIds: Set<string> | null = null;
+      let categoryFilterInverse = false; // true = exclude the set (for "_unset")
+      if (filterCategory !== "all") {
+        const allMeta = await db.chatMetadata.toArray();
+        if (filterCategory === "_unset") {
+          // Exclude chats that have real metadata (source !== "unset")
+          categoryFilterIds = new Set(
+            allMeta.filter((m) => m.source !== "unset").map((m) => m.chatId),
+          );
+          categoryFilterInverse = true;
+        } else {
+          categoryFilterIds = new Set(
+            allMeta
+              .filter((m) => Array.isArray(m.categories) && m.categories.includes(filterCategory))
+              .map((m) => m.chatId),
+          );
+        }
+      }
 
       // Check if sortBy is an indexed field we can use in compound indexes
       const isSortFieldIndexed =
@@ -248,6 +269,13 @@ export namespace ChatRepository {
         // FALLBACK: All providers + non-indexed sort field
         // Filter by deleted=0, then sort in memory
         query = db.chats.where("deleted").equals(0);
+      }
+
+      // Apply category filter if requested (post-index, in-memory filter)
+      if (categoryFilterIds !== null) {
+        const ids = categoryFilterIds;
+        const inverse = categoryFilterInverse;
+        query = query.filter((c) => (inverse ? !ids.has(c.id) : ids.has(c.id)));
       }
 
       // 1. Get accurate total count (now efficient via index)

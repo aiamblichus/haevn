@@ -58,6 +58,8 @@ const App = () => {
   const [selectedIds, setSelectedIds] = useState(new Set<string>());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterProvider, setFilterProvider] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<SortKey>("lastSyncedTimestamp");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const exportOptions: ExportOptions = {
@@ -99,6 +101,19 @@ const App = () => {
 
   const { syncChatById, openChatInProvider, openChatInViewer, exportChatById } = useApi();
 
+  // Load configured categories for the category filter
+  useEffect(() => {
+    chrome.runtime
+      .sendMessage({ action: "getMetadataAIConfig" } as BackgroundRequest)
+      .then((resp) => {
+        if (resp?.success && resp.data?.categories) {
+          const cats = (resp.data.categories as Array<{ name: string }>) || [];
+          setAvailableCategories(cats.map((c) => c.name));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const loadChats = useCallback(async () => {
     setStatus("Loading chats...", "work");
     try {
@@ -108,6 +123,7 @@ const App = () => {
         offset,
         limit: chatPageSize,
         filterProvider: filterProvider !== "all" ? filterProvider : undefined,
+        filterCategory: filterCategory !== "all" ? filterCategory : undefined,
         sortBy,
         sortDirection,
       };
@@ -148,7 +164,7 @@ const App = () => {
       const msg = e instanceof Error ? e.message : String(e);
       setStatus(`Failed to load chats: ${msg}`, "error");
     }
-  }, [setStatus, chatPage, chatPageSize, filterProvider, sortBy, sortDirection]);
+  }, [setStatus, chatPage, chatPageSize, filterProvider, filterCategory, sortBy, sortDirection]);
 
   // Determine provider-open visibility for Open WebUI by peeking at chat params
   useEffect(() => {
@@ -451,11 +467,12 @@ const App = () => {
   useEffect(() => {
     log.debug("[Options] Filters changed, resetting pagination", {
       filterProvider,
+      filterCategory,
       sortBy,
       sortDirection,
     });
     setChatPage(1);
-  }, [filterProvider, sortBy, sortDirection]);
+  }, [filterProvider, filterCategory, sortBy, sortDirection]);
 
   // Reset search pagination when search query changes
   useEffect(() => {
@@ -658,6 +675,7 @@ const App = () => {
           offset: 0,
           limit: 10000, // Large limit to get all chats
           filterProvider: filterProvider !== "all" ? filterProvider : undefined,
+          filterCategory: filterCategory !== "all" ? filterCategory : undefined,
           sortBy,
           sortDirection,
         };
@@ -675,7 +693,15 @@ const App = () => {
 
     if (ids.length === 0) return;
     await openExportModal(ids);
-  }, [displayedChats, filterProvider, searchResults, sortBy, sortDirection, openExportModal]);
+  }, [
+    displayedChats,
+    filterProvider,
+    filterCategory,
+    searchResults,
+    sortBy,
+    sortDirection,
+    openExportModal,
+  ]);
 
   const handleDeleteSelected = useCallback(async () => {
     const ids = Array.from(selectedIds);
@@ -728,6 +754,9 @@ const App = () => {
                 selectedIds={selectedIds}
                 filterProvider={filterProvider}
                 setFilterProvider={setFilterProvider}
+                filterCategory={filterCategory}
+                setFilterCategory={setFilterCategory}
+                availableCategories={availableCategories}
                 sortBy={sortBy}
                 setSortBy={setSortBy}
                 sortDirection={sortDirection}
