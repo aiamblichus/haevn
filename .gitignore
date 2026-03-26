@@ -84,3 +84,5 @@ devdocs/example_data/
 /transcripts
 
 .claude/settings.local.json
+gemini-md
+.pi/prompts/convert-gemini-md-to-haevn.md
