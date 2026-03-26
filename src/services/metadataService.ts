@@ -89,6 +89,94 @@ export async function processQueueTick(): Promise<void> {
 }
 
 /**
+ * Enqueue all chats that have no meaningful metadata (source === "unset" or no record)
+ * and reset any previously-failed queue items back to "pending".
+ * Returns the total number of items added or reset.
+ */
+export async function enqueueAllMissing(): Promise<number> {
+  const db = getDB();
+
+  // All non-deleted chat IDs
+  const allChatIds = (await db.chats.where("deleted").equals(0).primaryKeys()) as string[];
+
+  // Chat IDs that already have real metadata (source !== "unset")
+  const allMetadata = await db.chatMetadata.toArray();
+  const indexedSet = new Set(allMetadata.filter((m) => m.source !== "unset").map((m) => m.chatId));
+
+  // Chat IDs already pending or processing — skip those
+  const inFlightIds = (await db.metadataQueue
+    .where("status")
+    .anyOf(["pending", "processing"])
+    .primaryKeys()) as string[];
+  const inFlightSet = new Set(inFlightIds);
+
+  const toAdd = allChatIds.filter((id) => !indexedSet.has(id) && !inFlightSet.has(id));
+
+  // Reset failed items back to pending
+  const failedIds = (await db.metadataQueue
+    .where("status")
+    .equals("failed")
+    .primaryKeys()) as string[];
+
+  const total = toAdd.length + failedIds.length;
+  if (total === 0) return 0;
+
+  const now = Date.now();
+  if (toAdd.length > 0) {
+    await db.metadataQueue.bulkPut(
+      toAdd.map((chatId) => ({ chatId, status: "pending" as const, retries: 0, addedAt: now })),
+    );
+  }
+  if (failedIds.length > 0) {
+    await db.metadataQueue.bulkPut(
+      failedIds.map((chatId) => ({
+        chatId,
+        status: "pending" as const,
+        retries: 0,
+        addedAt: now,
+      })),
+    );
+  }
+
+  chrome.alarms.create(METADATA_QUEUE_ALARM, { delayInMinutes: 0.1 });
+  log.info(`[MetadataService] Enqueued ${toAdd.length} missing + reset ${failedIds.length} failed`);
+  return total;
+}
+
+export interface MetadataQueueStatus {
+  pending: number;
+  processing: number;
+  failed: number;
+  /** Chats with no/unset metadata not currently in the queue. */
+  missing: number;
+}
+
+/**
+ * Returns current queue counts plus the number of chats that have no metadata
+ * and are not already queued.
+ */
+export async function getQueueStatus(): Promise<MetadataQueueStatus> {
+  const db = getDB();
+
+  const [pending, processing, failed, allChatIds, allMetadata, inFlightIds] = await Promise.all([
+    db.metadataQueue.where("status").equals("pending").count(),
+    db.metadataQueue.where("status").equals("processing").count(),
+    db.metadataQueue.where("status").equals("failed").count(),
+    db.chats.where("deleted").equals(0).primaryKeys() as Promise<string[]>,
+    db.chatMetadata.toArray(),
+    db.metadataQueue.where("status").anyOf(["pending", "processing"]).primaryKeys() as Promise<
+      string[]
+    >,
+  ]);
+
+  const indexedSet = new Set(allMetadata.filter((m) => m.source !== "unset").map((m) => m.chatId));
+  const inFlightSet = new Set(inFlightIds);
+  const missing = allChatIds.filter((id) => !indexedSet.has(id) && !inFlightSet.has(id)).length;
+
+  return { pending, processing, failed, missing };
+}
+
+/**
  * On service worker startup, reset any items stuck in 'processing'
  * back to 'pending' (they were interrupted by SW termination).
  */

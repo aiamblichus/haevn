@@ -291,6 +291,20 @@ const CliSettingsCard = () => {
   );
 };
 
+function formatQueueStatus(s: {
+  missing: number;
+  pending: number;
+  processing: number;
+  failed: number;
+}): string {
+  const parts: string[] = [];
+  if (s.missing > 0) parts.push(`${s.missing} unindexed`);
+  if (s.pending > 0) parts.push(`${s.pending} pending`);
+  if (s.processing > 0) parts.push(`${s.processing} processing`);
+  if (s.failed > 0) parts.push(`${s.failed} failed`);
+  return parts.length > 0 ? parts.join(" · ") : "All chats indexed";
+}
+
 // ─── AI Metadata Settings Card ────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: MetadataAIConfig = {
@@ -300,8 +314,16 @@ const DEFAULT_CONFIG: MetadataAIConfig = {
   apiKey: "",
   model: "",
   autoGenerate: false,
+  indexMissing: false,
   categories: [],
 };
+
+interface QueueStatus {
+  pending: number;
+  processing: number;
+  failed: number;
+  missing: number;
+}
 
 const AIMetadataSettingsCard = () => {
   const [config, setConfig] = useState<MetadataAIConfig>(DEFAULT_CONFIG);
@@ -311,6 +333,8 @@ const AIMetadataSettingsCard = () => {
   const [showWarning, setShowWarning] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDesc, setNewCategoryDesc] = useState("");
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [queuing, setQueuing] = useState(false);
   const pendingEnableRef = useRef(false);
 
   useEffect(() => {
@@ -357,6 +381,37 @@ const AIMetadataSettingsCard = () => {
   const handleWarningCancel = () => {
     setShowWarning(false);
     pendingEnableRef.current = false;
+  };
+
+  const loadQueueStatus = useCallback(async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "getMetadataQueueStatus" });
+      if (res.success) setQueueStatus(res.data as QueueStatus);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Load queue status when AI is enabled; poll while items are in flight
+  useEffect(() => {
+    if (!config.enabled) return;
+    loadQueueStatus();
+    const interval = setInterval(() => {
+      loadQueueStatus();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [config.enabled, loadQueueStatus]);
+
+  const handleQueueMissing = async () => {
+    setQueuing(true);
+    try {
+      await chrome.runtime.sendMessage({ action: "queueMissingMetadata" });
+      await loadQueueStatus();
+    } catch {
+      // ignore
+    } finally {
+      setQueuing(false);
+    }
   };
 
   const handleAddCategory = () => {
@@ -486,6 +541,43 @@ const AIMetadataSettingsCard = () => {
                 <Label htmlFor="metaAutoGenerate" className="cursor-pointer">
                   Auto-generate metadata for newly synced / imported chats
                 </Label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="metaIndexMissing"
+                  checked={config.indexMissing}
+                  onCheckedChange={(v) => save({ indexMissing: !!v })}
+                />
+                <Label htmlFor="metaIndexMissing" className="cursor-pointer">
+                  Auto-index existing chats without metadata on startup
+                </Label>
+              </div>
+
+              {/* Queue status + manual trigger */}
+              <div className="rounded-md border px-3 py-2.5 space-y-2 bg-muted/30">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground">
+                    {queueStatus === null ? "Loading…" : formatQueueStatus(queueStatus)}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleQueueMissing}
+                    disabled={
+                      queuing ||
+                      (queueStatus !== null &&
+                        queueStatus.missing === 0 &&
+                        queueStatus.failed === 0)
+                    }
+                  >
+                    {queuing
+                      ? "Queuing…"
+                      : queueStatus !== null && queueStatus.missing + queueStatus.failed > 0
+                        ? `Queue ${queueStatus.missing + queueStatus.failed} chats`
+                        : "Nothing to queue"}
+                  </Button>
+                </div>
               </div>
             </>
           )}

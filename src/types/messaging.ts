@@ -304,7 +304,9 @@ export type BackgroundRequest =
     }
   | { action: "generateChatMetadata"; chatId: string }
   | { action: "getMetadataAIConfig" }
-  | { action: "setMetadataAIConfig"; config: Partial<MetadataAIConfig> };
+  | { action: "setMetadataAIConfig"; config: Partial<MetadataAIConfig> }
+  | { action: "queueMissingMetadata" }
+  | { action: "getMetadataQueueStatus" };
 
 // ======================
 // Background Response Messages

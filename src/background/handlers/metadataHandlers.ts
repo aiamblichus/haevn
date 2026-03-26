@@ -1,5 +1,5 @@
 import * as MetadataRepository from "../../services/metadataRepository";
-import { generateForChat } from "../../services/metadataService";
+import { enqueueAllMissing, generateForChat, getQueueStatus } from "../../services/metadataService";
 import { getMetadataAIConfig, setMetadataAIConfig } from "../../services/settingsService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
@@ -82,6 +82,32 @@ export async function handleSetMetadataAIConfig(
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setMetadataAIConfig failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleQueueMissingMetadata(
+  _message: Extract<BackgroundRequest, { action: "queueMissingMetadata" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const queued = await enqueueAllMissing();
+    sendResponse({ success: true, data: { queued } });
+  } catch (err) {
+    log.error("[MetadataHandlers] queueMissingMetadata failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetMetadataQueueStatus(
+  _message: Extract<BackgroundRequest, { action: "getMetadataQueueStatus" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const status = await getQueueStatus();
+    sendResponse({ success: true, data: status });
+  } catch (err) {
+    log.error("[MetadataHandlers] getMetadataQueueStatus failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

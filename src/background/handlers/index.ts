@@ -85,6 +85,8 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   generateChatMetadata: metadataHandlers.handleGenerateChatMetadata as HandlerFunction,
   getMetadataAIConfig: metadataHandlers.handleGetMetadataAIConfig as HandlerFunction,
   setMetadataAIConfig: metadataHandlers.handleSetMetadataAIConfig as HandlerFunction,
+  queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
+  getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
 };
 
 export function handleMessage(

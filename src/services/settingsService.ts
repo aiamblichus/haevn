@@ -176,6 +176,8 @@ export interface MetadataAIConfig {
   apiKey: string;
   model: string;
   autoGenerate: boolean;
+  /** Queue all chats without metadata on service worker startup. */
+  indexMissing: boolean;
   categories: CategoryConfig[];
 }
 
@@ -186,6 +188,7 @@ const METADATA_AI_DEFAULTS: MetadataAIConfig = {
   apiKey: "",
   model: "",
   autoGenerate: false,
+  indexMissing: false,
   categories: [],
 };
 
