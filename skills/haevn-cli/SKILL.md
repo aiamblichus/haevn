@@ -67,6 +67,40 @@ Useful flags:
 haevn search "ai consciousness" --format json | jq '.results[0]'
 ```
 
+### Search syntax
+
+HAEVN uses **Lunr.js** with support for advanced operators:
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| (none) | `term1 term2` | All terms must match (AND) |
+| `"..."` | `"exact phrase"` | Phrase must appear consecutively |
+| `-` | `-exclude` | Term must NOT be present |
+| `*` | `react*` | Prefix/wildcard match |
+| `~` | `roam~2` | Fuzzy match (edit distance 2) |
+| `^` | `api^10` | Boost term relevance |
+
+**Examples:**
+
+```bash
+# Exact phrase
+haevn search '"machine learning"'
+
+# Exclude terms
+haevn search "react hooks -class"
+
+# Fuzzy (catches typos)
+haevn search "kubernates~2"
+
+# Prefix matching
+haevn search "async*"
+
+# Boost relevance
+haevn search "api^5 design"
+```
+
+If strict AND returns nothing, HAEVN auto-retries with relaxed prefix matching (OR).
+
 ---
 
 ## Happy path 3 — Navigate branches
