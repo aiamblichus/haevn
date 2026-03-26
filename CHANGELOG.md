@@ -1,9 +1,30 @@
 # Changelog
 
-## [v1.1.0] - 2026-03-23
+## [v1.2.0] - 2026-03-26
 
-- Initial release
+### Added
 
+- AI-powered chat metadata generation and management
+- Descriptive metadata categories and category-aware archive filtering
+- Metadata queue controls, including a rebuild-all action
+- Chat hover preview popover in Options/archive views
+- CLI `info` command with chat metadata management
+- CLI bridge toggle and support for importing media formats
+- Automated CLI npm publishing/release workflow support
+- YAML frontmatter transcript output for markdown exports
+
+### Changed
+
+- Improved metadata conversation sampling and titles in search results
+- Refined metadata queue controls and archive hover preview behavior
+- Improved CLI `get` output with system prompt labeling and `--skip-system`
+- Added staged lint/build git hooks to tighten pre-commit quality gates
+
+### Fixed
+
+- Metadata queue alarm synchronization in background scheduling
+- Metadata modal category handling in settings/options flows
+- Documentation fixes for search/import guidance and MDX rendering issues
 
 ## [v1.1.0] - 2026-03-23
 
@@ -91,11 +112,6 @@
 - CLI user guide and developer documentation
 - Import format documentation
 - Track 05 spec for messages table extraction
-
-## [v1.0.1] - 2026-03-22
-
-- Initial release
-
 
 All notable changes to HAEVN will be documented in this file.
 

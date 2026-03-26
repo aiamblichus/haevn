@@ -1,6 +1,6 @@
 {
   "name": "@haevn/cli",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "CLI tool for searching and accessing HAEVN chat archives",
   "type": "module",
   "license": "MIT",
