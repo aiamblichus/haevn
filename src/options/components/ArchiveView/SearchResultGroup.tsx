@@ -1,6 +1,7 @@
 import { parseEntities } from "parse-entities";
 import type { SearchResult } from "../../types";
 import { escapeHtml, getPlatformIcon, ICONS, Icon } from "../../utils";
+import { ChatPreviewPopover } from "./ChatPreviewPopover";
 import { SearchResultItem } from "./SearchResultItem";
 
 interface SearchResultGroupProps {
@@ -32,6 +33,12 @@ export const SearchResultGroup = ({
   const decodedTitle = parseEntities(group.chatTitle || "");
   const truncatedTitle =
     decodedTitle.length > 80 ? `${decodedTitle.substring(0, 80)}…` : decodedTitle;
+  const previewChat = {
+    id: group.chatId,
+    source: group.source,
+    title: group.chatTitle,
+    metaTitle: group.chatTitle,
+  };
 
   // Show first 3 items by default, all if expanded
   const SHOW_MORE_THRESHOLD = 3;
@@ -46,13 +53,15 @@ export const SearchResultGroup = ({
             {getPlatformIcon(group.source)}
           </div>
           <div className="min-w-0 flex-1 overflow-hidden">
-            <div
-              className="font-semibold text-haevn-teal-light cursor-pointer hover:text-haevn-teal-bright hover:underline transition-colors"
-              title={truncatedTitle}
-              onClick={() => onOpenViewer(group.chatId)}
-            >
-              {truncatedTitle || "(Untitled)"}
-            </div>
+            <ChatPreviewPopover chat={previewChat}>
+              <div
+                className="font-semibold text-haevn-teal-light cursor-pointer hover:text-haevn-teal-bright hover:underline transition-colors"
+                title={truncatedTitle}
+                onClick={() => onOpenViewer(group.chatId)}
+              >
+                {truncatedTitle || "(Untitled)"}
+              </div>
+            </ChatPreviewPopover>
             <div className="text-xs text-haevn-purple-light/70 truncate w-full">
               {escapeHtml(group.source)}
             </div>

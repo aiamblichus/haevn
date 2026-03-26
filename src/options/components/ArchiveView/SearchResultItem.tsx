@@ -2,6 +2,7 @@ import { parseEntities } from "parse-entities";
 import { useMemo } from "react";
 import type { SearchResult } from "../../types";
 import { escapeHtml, formatTime, getPlatformIcon, ICONS, Icon } from "../../utils";
+import { ChatPreviewPopover } from "./ChatPreviewPopover";
 
 interface SearchResultItemProps {
   result: SearchResult;
@@ -10,6 +11,16 @@ interface SearchResultItemProps {
 }
 
 export const SearchResultItem = ({ result, onAction, compact = false }: SearchResultItemProps) => {
+  const previewChat = useMemo(
+    () => ({
+      id: result.chatId,
+      source: result.source,
+      title: result.chatTitle,
+      metaTitle: result.metaTitle || result.chatTitle,
+    }),
+    [result.chatId, result.source, result.chatTitle, result.metaTitle],
+  );
+
   const highlightedSnippet = useMemo(
     () =>
       (result.messageSnippet || "")
@@ -35,12 +46,14 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
         <div className="flex-1 min-w-0">
           {!compact && (
             <div className="flex items-center justify-between">
-              <div
-                className="font-semibold text-haevn-teal-light truncate"
-                title={parseEntities(result.chatTitle || "")}
-              >
-                {parseEntities(result.chatTitle || "(Untitled)")}
-              </div>
+              <ChatPreviewPopover chat={previewChat}>
+                <div
+                  className="font-semibold text-haevn-teal-light truncate cursor-pointer hover:underline"
+                  title={parseEntities(result.chatTitle || "")}
+                >
+                  {parseEntities(result.metaTitle || result.chatTitle || "(Untitled)")}
+                </div>
+              </ChatPreviewPopover>
               <div className="flex items-center gap-2 text-xs text-haevn-teal-light/60 flex-shrink-0 ml-2">
                 <span>{escapeHtml(result.source)}</span>
                 <span>•</span>
