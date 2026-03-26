@@ -12,7 +12,7 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import type { MetadataAIConfig } from "../services/settingsService";
+import type { CategoryConfig, MetadataAIConfig } from "../services/settingsService";
 import { DEFAULT_CLI_PORT } from "../services/settingsService";
 import { log } from "../utils/logger";
 
@@ -309,7 +309,8 @@ const AIMetadataSettingsCard = () => {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showWarning, setShowWarning] = useState(false);
-  const [newCategory, setNewCategory] = useState("");
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryDesc, setNewCategoryDesc] = useState("");
   const pendingEnableRef = useRef(false);
 
   useEffect(() => {
@@ -359,15 +360,16 @@ const AIMetadataSettingsCard = () => {
   };
 
   const handleAddCategory = () => {
-    const trimmed = newCategory.trim();
-    if (!trimmed || config.categories.includes(trimmed)) return;
-    const updated = [...config.categories, trimmed];
-    save({ categories: updated });
-    setNewCategory("");
+    const name = newCategoryName.trim();
+    if (!name || config.categories.some((c) => c.name === name)) return;
+    const entry: CategoryConfig = { name, description: newCategoryDesc.trim() };
+    save({ categories: [...config.categories, entry] });
+    setNewCategoryName("");
+    setNewCategoryDesc("");
   };
 
-  const handleRemoveCategory = (cat: string) => {
-    save({ categories: config.categories.filter((c) => c !== cat) });
+  const handleRemoveCategory = (name: string) => {
+    save({ categories: config.categories.filter((c) => c.name !== name) });
   };
 
   if (loading) return null;
@@ -497,43 +499,58 @@ const AIMetadataSettingsCard = () => {
         <CardHeader>
           <CardTitle>Metadata Categories</CardTitle>
           <CardDescription>
-            Define the categories the AI (and you) can assign to chats. The AI will only use
-            categories from this list.
+            Define the categories the AI (and you) can assign to chats. The AI will only pick from
+            this list, plus a built-in <strong>Other</strong> fallback.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {config.categories.length === 0 && (
-              <p className="text-sm text-muted-foreground">No categories configured yet.</p>
-            )}
-            {config.categories.map((cat) => (
-              <span
-                key={cat}
-                className="inline-flex items-center gap-1 bg-muted text-sm px-2 py-1 rounded-full"
-              >
-                {cat}
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-destructive ml-1 leading-none"
-                  onClick={() => handleRemoveCategory(cat)}
-                  aria-label={`Remove category ${cat}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <Input
-              type="text"
-              placeholder="New category..."
-              value={newCategory}
-              onChange={(e) => setNewCategory((e.target as HTMLInputElement).value)}
-              onKeyDown={(e) => e.key === "Enter" && handleAddCategory()}
-            />
-            <Button variant="outline" onClick={handleAddCategory}>
-              Add
-            </Button>
+          {config.categories.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No categories configured yet.</p>
+          ) : (
+            <div className="divide-y divide-border rounded-md border">
+              {config.categories.map((cat) => (
+                <div key={cat.name} className="flex items-start gap-3 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium leading-snug">{cat.name}</p>
+                    {cat.description && (
+                      <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
+                        {cat.description}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-destructive mt-0.5 shrink-0 text-sm leading-none"
+                    onClick={() => handleRemoveCategory(cat.name)}
+                    aria-label={`Remove category ${cat.name}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                placeholder="Name (e.g. Coding)"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddCategory()}
+                className="w-44 shrink-0"
+              />
+              <Input
+                type="text"
+                placeholder="Description (optional)"
+                value={newCategoryDesc}
+                onChange={(e) => setNewCategoryDesc((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddCategory()}
+              />
+              <Button variant="outline" onClick={handleAddCategory} className="shrink-0">
+                Add
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

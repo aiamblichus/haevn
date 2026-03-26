@@ -164,6 +164,11 @@ export async function regenerateCliApiKey(): Promise<string> {
 
 const METADATA_AI_KEY = "haevn.metadata.ai";
 
+export interface CategoryConfig {
+  name: string;
+  description: string;
+}
+
 export interface MetadataAIConfig {
   enabled: boolean;
   warningAcknowledged: boolean;
@@ -171,7 +176,7 @@ export interface MetadataAIConfig {
   apiKey: string;
   model: string;
   autoGenerate: boolean;
-  categories: string[];
+  categories: CategoryConfig[];
 }
 
 const METADATA_AI_DEFAULTS: MetadataAIConfig = {
@@ -186,7 +191,19 @@ const METADATA_AI_DEFAULTS: MetadataAIConfig = {
 
 export async function getMetadataAIConfig(): Promise<MetadataAIConfig> {
   const stored = await getStorageAdapter().get<Partial<MetadataAIConfig>>(METADATA_AI_KEY);
-  return { ...METADATA_AI_DEFAULTS, ...(stored ?? {}) };
+  const merged = { ...METADATA_AI_DEFAULTS, ...(stored ?? {}) };
+  // Migrate from old string[] format
+  if (
+    Array.isArray(merged.categories) &&
+    merged.categories.length > 0 &&
+    typeof merged.categories[0] === "string"
+  ) {
+    merged.categories = (merged.categories as unknown as string[]).map((name) => ({
+      name,
+      description: "",
+    }));
+  }
+  return merged;
 }
 
 export async function setMetadataAIConfig(config: Partial<MetadataAIConfig>): Promise<void> {

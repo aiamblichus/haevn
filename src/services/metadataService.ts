@@ -4,6 +4,7 @@ import { log } from "../utils/logger";
 import type { ChatMetadataRecord } from "./db";
 import { getDB } from "./db";
 import * as MetadataRepository from "./metadataRepository";
+import type { CategoryConfig } from "./settingsService";
 import { getMetadataAIConfig } from "./settingsService";
 
 const METADATA_QUEUE_ALARM = "metadataQueueAlarm";
@@ -165,13 +166,28 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildMetadataSchema(categories: string[]) {
-  const categoriesSchema =
+const OTHER_CATEGORY = "Other";
+
+function buildMetadataSchema(categories: CategoryConfig[]) {
+  // Build the union of all configured category names plus the always-present "Other"
+  const allNames = [...categories.map((c) => c.name), OTHER_CATEGORY];
+
+  const categoryListText =
     categories.length > 0
-      ? Type.Array(Type.Union(categories.map((c) => Type.Literal(c))), {
-          description: `Select relevant categories from this list: ${categories.join(", ")}`,
-        })
-      : Type.Array(Type.String(), { description: "Relevant categories or topics" });
+      ? [
+          ...categories.map((c) =>
+            c.description ? `- ${c.name}: ${c.description}` : `- ${c.name}`,
+          ),
+          `- ${OTHER_CATEGORY}: Use when the conversation doesn't fit any of the above categories.`,
+        ].join("\n")
+      : "";
+
+  const categoriesSchema = Type.Array(Type.Union(allNames.map((n) => Type.Literal(n))), {
+    description:
+      categories.length > 0
+        ? `Select the most relevant categories. Use "${OTHER_CATEGORY}" only if none of the defined categories fit.\n\nAvailable categories:\n${categoryListText}`
+        : `Select relevant categories, or use "${OTHER_CATEGORY}" if none fit.`,
+  });
 
   return Type.Object({
     title: Type.String({
