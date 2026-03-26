@@ -273,8 +273,9 @@ export namespace ChatRepository {
           if (sortBy === "messageCount") {
             item.messageCount = 0;
           } else {
-            (item as Record<string, unknown>)[sortBy] =
-              (chat as unknown as Record<string, unknown>)[sortBy];
+            (item as Record<string, unknown>)[sortBy] = (
+              chat as unknown as Record<string, unknown>
+            )[sortBy];
           }
           lean.push(item);
         });

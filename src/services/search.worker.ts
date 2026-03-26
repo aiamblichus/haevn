@@ -3,14 +3,13 @@ import lunr from "lunr";
 import type {
   Chat,
   ChatMessage,
-  ModelMessage,
   SearchResult,
   SystemPromptPart,
   TextPart,
   ThinkingPart,
   UserPromptPart,
 } from "../model/haevn_model";
-import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
+import type { SearchWorkerMessage } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
 
@@ -75,12 +74,6 @@ interface Segment {
   docIds: Set<string>; // Fast lookup for deletions
   dirty: boolean;
   timestamp: number;
-}
-
-// Type for index metadata stored in DB
-interface LunrIndexMeta {
-  docCount?: number;
-  [key: string]: unknown;
 }
 
 const db = new HaevnDatabase();

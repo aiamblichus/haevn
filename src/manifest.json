@@ -53,9 +53,7 @@
         "http://localhost/*",
         "http://127.0.0.1/*"
       ],
-      "js": [
-        "content.js"
-      ],
+      "js": ["content.js"],
       "run_at": "document_end"
     }
   ],
@@ -92,9 +90,7 @@
         "bulkSync.worker.js",
         "*.js.map"
       ],
-      "matches": [
-        "<all_urls>"
-      ]
+      "matches": ["<all_urls>"]
     }
   ]
 }

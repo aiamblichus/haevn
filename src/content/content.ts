@@ -2,9 +2,9 @@
 // Provides: ping, platform detection, and data extraction for supported platforms.
 
 import type { ExportOptions } from "../formatters";
+import { captureAndStoreChatGPTToken } from "../providers/chatgpt/listeners";
 import { registerAllProviders } from "../providers/index";
 import { getProvider } from "../providers/provider";
-import { captureAndStoreChatGPTToken } from "../providers/chatgpt/listeners";
 import type { ContentScriptResponse } from "../types/messaging";
 import { isContentScriptRequest } from "../types/messaging";
 import { log } from "../utils/logger";
@@ -163,7 +163,9 @@ chrome.runtime.onMessage.addListener(
           return true;
 
         case "captureChatGPTToken":
-          captureAndStoreChatGPTToken().then(() => sendResponse({ success: true })).catch(() => sendResponse({ success: false }));
+          captureAndStoreChatGPTToken()
+            .then(() => sendResponse({ success: true }))
+            .catch(() => sendResponse({ success: false }));
           return true;
 
         default:

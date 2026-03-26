@@ -8,12 +8,12 @@
 // See browserApiBridge.ts for the bridge implementation.
 
 import type { ExportOptions } from "../../formatters";
-import type { Chat, ChatMessage } from "../../model/haevn_model";
 import {
   downloadUrlAttachment,
   extractAttachmentsFromChat,
   generateAttachmentFilename,
 } from "../../formatters";
+import type { Chat, ChatMessage } from "../../model/haevn_model";
 import { HaevnDatabase } from "../../services/db";
 import { ExportManifestWriter } from "../../services/exportManifest";
 import {
@@ -162,11 +162,7 @@ async function stageAttachment(
   return { bytes, mediaType: downloaded.media_type };
 }
 
-async function stageChat(
-  chat: Chat,
-  options: ExportOptions,
-  state: WorkerState,
-): Promise<void> {
+async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState): Promise<void> {
   if (!chat) {
     return;
   }

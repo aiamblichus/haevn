@@ -389,92 +389,67 @@ export async function handleBulkSyncTick(): Promise<void> {
   _tickRunning = true;
 
   try {
-  let state = await getBulkSyncState();
-  // Check for termination conditions: no state, or not in 'running' state
-  if (!state || state.status !== "running") {
-    await cleanupBulkSync(state);
-    return;
-  }
-
-  if (state.currentIndex >= state.total) {
-    await cleanupBulkSync(state);
-    return;
-  }
-
-  // Keep storage flag in sync for cross-session stale-state detection
-  await setBulkSyncState({ ...state, isProcessing: true });
-
-  // Re-fetch state
-  const processingState = await getBulkSyncState();
-  if (!processingState || processingState.status !== "running") {
-    return;
-  }
-  state = processingState;
-
-  // Ensure offscreen document is ready (it manages the worker)
-  await ensureSyncWorkerReady();
-
-  const startTime = Date.now();
-  const endIdx = Math.min(state.currentIndex + FETCH_BATCH_SIZE, state.chatIds.length);
-
-  // Pre-fetch provider module for the whole batch
-  const providerModule = getProvider(state.provider);
-  if (!providerModule) {
-    log.error(`[Bulk Sync] Unknown provider: ${state.provider}`);
-    state.status = "error";
-    await cleanupBulkSync(state);
-    return;
-  }
-
-  // OPTIMIZATION: Pipeline fetch and worker processing
-  // Track politeness delay promise to overlap with worker processing
-  let delayPromise: Promise<void> | null = null;
-
-  // Fetch data for batch and send to worker
-  for (let i = state.currentIndex; i < endIdx; i++) {
-    // Re-check cancellation and state
-    let currentState = await getBulkSyncState();
-    if (!currentState || currentState.status !== "running") {
-      await cleanupBulkSync(currentState);
+    let state = await getBulkSyncState();
+    // Check for termination conditions: no state, or not in 'running' state
+    if (!state || state.status !== "running") {
+      await cleanupBulkSync(state);
       return;
     }
-    state = currentState;
 
-    // PIPELINING: Wait for previous iteration's delay before fetching
-    // This ensures we respect rate limits while allowing worker to process in parallel
-    if (delayPromise) {
-      await delayPromise;
-      delayPromise = null;
+    if (state.currentIndex >= state.total) {
+      await cleanupBulkSync(state);
+      return;
     }
 
-    // Check if extraction tab is still valid
-    if (state.extractionTabId === null) {
-      log.warn("[Bulk Sync] extraction tab ID missing. Attempting recovery.");
-      const recoveredState = await recoverextractionTab(state);
-      if (!recoveredState) {
-        await setBulkSyncState({
-          ...state,
-          status: "error",
-          failedSyncs: [
-            ...state.failedSyncs,
-            {
-              chatId: state.chatIds[i],
-              error: "extraction tab unavailable and could not be recreated",
-            },
-          ],
-        });
-        await cleanupBulkSync(await getBulkSyncState());
+    // Keep storage flag in sync for cross-session stale-state detection
+    await setBulkSyncState({ ...state, isProcessing: true });
+
+    // Re-fetch state
+    const processingState = await getBulkSyncState();
+    if (!processingState || processingState.status !== "running") {
+      return;
+    }
+    state = processingState;
+
+    // Ensure offscreen document is ready (it manages the worker)
+    await ensureSyncWorkerReady();
+
+    const startTime = Date.now();
+    const endIdx = Math.min(state.currentIndex + FETCH_BATCH_SIZE, state.chatIds.length);
+
+    // Pre-fetch provider module for the whole batch
+    const providerModule = getProvider(state.provider);
+    if (!providerModule) {
+      log.error(`[Bulk Sync] Unknown provider: ${state.provider}`);
+      state.status = "error";
+      await cleanupBulkSync(state);
+      return;
+    }
+
+    // OPTIMIZATION: Pipeline fetch and worker processing
+    // Track politeness delay promise to overlap with worker processing
+    let delayPromise: Promise<void> | null = null;
+
+    // Fetch data for batch and send to worker
+    for (let i = state.currentIndex; i < endIdx; i++) {
+      // Re-check cancellation and state
+      let currentState = await getBulkSyncState();
+      if (!currentState || currentState.status !== "running") {
+        await cleanupBulkSync(currentState);
         return;
       }
-      state = recoveredState;
-    } else {
-      try {
-        await chrome.tabs.get(state.extractionTabId);
-      } catch (err) {
-        log.warn(
-          `[Bulk Sync] extraction tab ${state.extractionTabId} is no longer valid, recovering...`,
-          err,
-        );
+      state = currentState;
+
+      // PIPELINING: Wait for previous iteration's delay before fetching
+      // This ensures we respect rate limits while allowing worker to process in parallel
+      if (delayPromise) {
+        await delayPromise;
+        delayPromise = null;
+      }
+
+      // Check if extraction tab is still valid
+      if (state.extractionTabId === null) {
+        log.warn("[Bulk Sync] extraction tab ID missing. Attempting recovery.");
         const recoveredState = await recoverextractionTab(state);
         if (!recoveredState) {
           await setBulkSyncState({
@@ -484,7 +459,7 @@ export async function handleBulkSyncTick(): Promise<void> {
               ...state.failedSyncs,
               {
                 chatId: state.chatIds[i],
-                error: "extraction tab was closed or became invalid",
+                error: "extraction tab unavailable and could not be recreated",
               },
             ],
           });
@@ -492,93 +467,138 @@ export async function handleBulkSyncTick(): Promise<void> {
           return;
         }
         state = recoveredState;
-      }
-    }
-
-    const chatId = state.chatIds[i];
-    log.info(`[Bulk Sync] Fetching data for chat ${i + 1}/${state.total}: ${chatId}`);
-
-    try {
-      // Build chat URL
-      const url = providerModule.buildChatUrl(chatId, state.baseUrl);
-
-      // Update progress
-      const progress = ((i + 1) / state.total) * 100;
-      currentState = await getBulkSyncState();
-      if (!currentState) break;
-      state = currentState;
-
-      // Build status message with counts in format: "1/20, 50 skipped, 3 failed"
-      const parts: string[] = [];
-      parts.push(`${i + 1}/${state.total}`);
-      if (state.skippedCount > 0) {
-        parts.push(`${state.skippedCount} skipped`);
-      }
-      if (currentState.failedSyncs.length > 0) {
-        parts.push(`${currentState.failedSyncs.length} failed`);
-      }
-      const status = `Syncing ${parts.join(", ")}...`;
-
-      safeSendMessage({
-        action: "bulkSyncProgress",
-        provider: state.provider,
-        baseUrl: state.baseUrl,
-        progress,
-        status,
-        failedCount: currentState.failedSyncs.length,
-        skippedCount: currentState.skippedCount,
-      });
-
-      // Fetch data using the centralized dispatcher
-      // The dispatcher decides which strategy to use (API vs navigation)
-      const dataResponse = await fetchConversationData(state, chatId, url);
-
-      if (dataResponse?.success) {
-        log.info(
-          `[Bulk Sync] Successfully extracted data for chat ID ${chatId}, sending to worker`,
-        );
-        const rawPlatformData = dataResponse.data;
-
-        // Derive hostname from provider's list URL
-        let currentHostname = "";
-        try {
-          const listUrl = providerModule.getListUrl(state.baseUrl);
-          currentHostname = new URL(listUrl).hostname;
-        } catch (err: unknown) {
-          log.warn(`[BulkSync] Failed to parse hostname from list URL:`, err);
-        }
-
-        // Send to worker for processing (non-blocking)
-        const origin = state.platformName === "openwebui" ? state.baseUrl : undefined;
-        await sendWorkerRequest(
-          "bulkSync",
-          {
-            type: "sync",
-            data: {
-              chatId,
-              platformName: state.platformName,
-              hostname: currentHostname,
-              rawData: rawPlatformData,
-              origin,
-              tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
-            },
-          },
-          { expectResponse: false },
-        );
-
-        // Track successful processing (Spec 03.02)
-        currentState = await getBulkSyncState();
-        if (currentState) {
-          state = currentState;
-          await setBulkSyncState({
-            ...currentState,
-            processedChatIds: [...currentState.processedChatIds, chatId],
-            lastProgressAt: Date.now(),
-          });
-        }
       } else {
-        const errorMessage = dataResponse?.error || "Unknown error during extraction";
-        log.warn(`[Bulk Sync] Could not extract data for chat ID ${chatId}: ${errorMessage}`);
+        try {
+          await chrome.tabs.get(state.extractionTabId);
+        } catch (err) {
+          log.warn(
+            `[Bulk Sync] extraction tab ${state.extractionTabId} is no longer valid, recovering...`,
+            err,
+          );
+          const recoveredState = await recoverextractionTab(state);
+          if (!recoveredState) {
+            await setBulkSyncState({
+              ...state,
+              status: "error",
+              failedSyncs: [
+                ...state.failedSyncs,
+                {
+                  chatId: state.chatIds[i],
+                  error: "extraction tab was closed or became invalid",
+                },
+              ],
+            });
+            await cleanupBulkSync(await getBulkSyncState());
+            return;
+          }
+          state = recoveredState;
+        }
+      }
+
+      const chatId = state.chatIds[i];
+      log.info(`[Bulk Sync] Fetching data for chat ${i + 1}/${state.total}: ${chatId}`);
+
+      try {
+        // Build chat URL
+        const url = providerModule.buildChatUrl(chatId, state.baseUrl);
+
+        // Update progress
+        const progress = ((i + 1) / state.total) * 100;
+        currentState = await getBulkSyncState();
+        if (!currentState) break;
+        state = currentState;
+
+        // Build status message with counts in format: "1/20, 50 skipped, 3 failed"
+        const parts: string[] = [];
+        parts.push(`${i + 1}/${state.total}`);
+        if (state.skippedCount > 0) {
+          parts.push(`${state.skippedCount} skipped`);
+        }
+        if (currentState.failedSyncs.length > 0) {
+          parts.push(`${currentState.failedSyncs.length} failed`);
+        }
+        const status = `Syncing ${parts.join(", ")}...`;
+
+        safeSendMessage({
+          action: "bulkSyncProgress",
+          provider: state.provider,
+          baseUrl: state.baseUrl,
+          progress,
+          status,
+          failedCount: currentState.failedSyncs.length,
+          skippedCount: currentState.skippedCount,
+        });
+
+        // Fetch data using the centralized dispatcher
+        // The dispatcher decides which strategy to use (API vs navigation)
+        const dataResponse = await fetchConversationData(state, chatId, url);
+
+        if (dataResponse?.success) {
+          log.info(
+            `[Bulk Sync] Successfully extracted data for chat ID ${chatId}, sending to worker`,
+          );
+          const rawPlatformData = dataResponse.data;
+
+          // Derive hostname from provider's list URL
+          let currentHostname = "";
+          try {
+            const listUrl = providerModule.getListUrl(state.baseUrl);
+            currentHostname = new URL(listUrl).hostname;
+          } catch (err: unknown) {
+            log.warn(`[BulkSync] Failed to parse hostname from list URL:`, err);
+          }
+
+          // Send to worker for processing (non-blocking)
+          const origin = state.platformName === "openwebui" ? state.baseUrl : undefined;
+          await sendWorkerRequest(
+            "bulkSync",
+            {
+              type: "sync",
+              data: {
+                chatId,
+                platformName: state.platformName,
+                hostname: currentHostname,
+                rawData: rawPlatformData,
+                origin,
+                tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
+              },
+            },
+            { expectResponse: false },
+          );
+
+          // Track successful processing (Spec 03.02)
+          currentState = await getBulkSyncState();
+          if (currentState) {
+            state = currentState;
+            await setBulkSyncState({
+              ...currentState,
+              processedChatIds: [...currentState.processedChatIds, chatId],
+              lastProgressAt: Date.now(),
+            });
+          }
+        } else {
+          const errorMessage = dataResponse?.error || "Unknown error during extraction";
+          log.warn(`[Bulk Sync] Could not extract data for chat ID ${chatId}: ${errorMessage}`);
+          currentState = await getBulkSyncState();
+          if (currentState) {
+            state = currentState;
+            await setBulkSyncState({
+              ...currentState,
+              failedSyncs: [...currentState.failedSyncs, { chatId, error: errorMessage }],
+              processedChatIds: [...currentState.processedChatIds, chatId],
+              lastProgressAt: Date.now(),
+            });
+          }
+        }
+      } catch (error: unknown) {
+        // Catch any unexpected errors during fetch and continue with next chat
+        const errorMessage =
+          error instanceof Error ? error.message : String(error) || "Unknown error during fetch";
+        log.error(
+          `[Bulk Sync] Unexpected error fetching chat ID ${chatId} (${i + 1}/${state.total}):`,
+          error,
+        );
+        log.error(`[Bulk Sync] Error stack:`, error instanceof Error ? error.stack : undefined);
         currentState = await getBulkSyncState();
         if (currentState) {
           state = currentState;
@@ -590,86 +610,66 @@ export async function handleBulkSyncTick(): Promise<void> {
           });
         }
       }
-    } catch (error: unknown) {
-      // Catch any unexpected errors during fetch and continue with next chat
-      const errorMessage =
-        error instanceof Error ? error.message : String(error) || "Unknown error during fetch";
-      log.error(
-        `[Bulk Sync] Unexpected error fetching chat ID ${chatId} (${i + 1}/${state.total}):`,
-        error,
-      );
-      log.error(`[Bulk Sync] Error stack:`, error instanceof Error ? error.stack : undefined);
-      currentState = await getBulkSyncState();
-      if (currentState) {
-        state = currentState;
+
+      // Update currentIndex for each chat processed (Theory: Race condition fix)
+      // We update i+1 immediately so if another tick starts, it sees the new index
+      const stateAtEndOfLoop = await getBulkSyncState();
+      if (stateAtEndOfLoop) {
         await setBulkSyncState({
-          ...currentState,
-          failedSyncs: [...currentState.failedSyncs, { chatId, error: errorMessage }],
-          processedChatIds: [...currentState.processedChatIds, chatId],
-          lastProgressAt: Date.now(),
+          ...stateAtEndOfLoop,
+          currentIndex: i + 1,
         });
+      }
+
+      // PIPELINING: Start politeness delay but don't await yet
+      // This allows the worker to process current chat while we wait for the delay
+      // Next iteration will await this delay before fetching, respecting rate limits
+      // Use provider's configured rate limit delay, or default based on sync mode
+      const syncConfig = providerModule.bulkSyncConfig;
+      const usesNavigation = (syncConfig?.mode ?? "navigation") === "navigation";
+      const defaultDelay = usesNavigation ? 1000 : 200;
+      const delayBetweenChats = syncConfig?.rateLimitDelayMs ?? defaultDelay;
+
+      // Start delay promise for next iteration (don't block this iteration)
+      delayPromise = new Promise((resolve) => setTimeout(resolve, delayBetweenChats));
+
+      // Check time limit
+      if (Date.now() - startTime >= MAX_TICK_TIME_MS) {
+        break;
       }
     }
 
-    // Update currentIndex for each chat processed (Theory: Race condition fix)
-    // We update i+1 immediately so if another tick starts, it sees the new index
-    const stateAtEndOfLoop = await getBulkSyncState();
-    if (stateAtEndOfLoop) {
+    // Clear processing flag
+    const finalStateForUpdate = await getBulkSyncState();
+    if (finalStateForUpdate) {
       await setBulkSyncState({
-        ...stateAtEndOfLoop,
-        currentIndex: i + 1,
+        ...finalStateForUpdate,
+        isProcessing: false,
       });
     }
 
-    // PIPELINING: Start politeness delay but don't await yet
-    // This allows the worker to process current chat while we wait for the delay
-    // Next iteration will await this delay before fetching, respecting rate limits
-    // Use provider's configured rate limit delay, or default based on sync mode
-    const syncConfig = providerModule.bulkSyncConfig;
-    const usesNavigation = (syncConfig?.mode ?? "navigation") === "navigation";
-    const defaultDelay = usesNavigation ? 1000 : 200;
-    const delayBetweenChats = syncConfig?.rateLimitDelayMs ?? defaultDelay;
-
-    // Start delay promise for next iteration (don't block this iteration)
-    delayPromise = new Promise((resolve) => setTimeout(resolve, delayBetweenChats));
-
-    // Check time limit
-    if (Date.now() - startTime >= MAX_TICK_TIME_MS) {
-      break;
+    // Check if we're done
+    const finalState = await getBulkSyncState();
+    if (!finalState || finalState.status !== "running") {
+      await cleanupBulkSync(finalState);
+      return;
     }
-  }
 
-  // Clear processing flag
-  const finalStateForUpdate = await getBulkSyncState();
-  if (finalStateForUpdate) {
-    await setBulkSyncState({
-      ...finalStateForUpdate,
-      isProcessing: false,
-    });
-  }
-
-  // Check if we're done
-  const finalState = await getBulkSyncState();
-  if (!finalState || finalState.status !== "running") {
-    await cleanupBulkSync(finalState);
-    return;
-  }
-
-  if (finalState.currentIndex >= finalState.total) {
-    // Wait a bit for worker to finish processing remaining tasks
-    // Then cleanup
-    setTimeout(async () => {
-      const checkState = await getBulkSyncState();
-      if (checkState && checkState.currentIndex >= checkState.total) {
-        await cleanupBulkSync(checkState);
-      }
-    }, 2000);
-  } else {
-    // Schedule next tick
-    chrome.alarms.create(BULK_SYNC_ALARM_NAME, {
-      when: Date.now() + 100, // 100ms delay
-    });
-  }
+    if (finalState.currentIndex >= finalState.total) {
+      // Wait a bit for worker to finish processing remaining tasks
+      // Then cleanup
+      setTimeout(async () => {
+        const checkState = await getBulkSyncState();
+        if (checkState && checkState.currentIndex >= checkState.total) {
+          await cleanupBulkSync(checkState);
+        }
+      }, 2000);
+    } else {
+      // Schedule next tick
+      chrome.alarms.create(BULK_SYNC_ALARM_NAME, {
+        when: Date.now() + 100, // 100ms delay
+      });
+    }
   } finally {
     _tickRunning = false;
   }

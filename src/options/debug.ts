@@ -105,8 +105,7 @@ export const haevnDebug = {
     const chat = await db.chats.get(chatId);
     if (chat) {
       const storedRows = await db.chatMessages.where("chatId").equals(chatId).toArray();
-      const messages =
-        storedRows.length > 0 ? storedRows : Object.values(chat.messages || {});
+      const messages = storedRows.length > 0 ? storedRows : Object.values(chat.messages || {});
       console.log("Chat found:", chat);
       console.log(`  Title: ${chat.title}`);
       console.log(`  Source: ${chat.source}`);
@@ -150,7 +149,10 @@ export const haevnDebug = {
         if (inlineMessages.length === 0) continue;
 
         await db.transaction("rw", db.chats, db.chatMessages, async () => {
-          await db.chatMessages.where("chatId").equals(chat.id as string).delete();
+          await db.chatMessages
+            .where("chatId")
+            .equals(chat.id as string)
+            .delete();
           await db.chatMessages.bulkPut(inlineMessages);
           await db.chats.update(chat.id as string, { messages: {} });
         });
@@ -160,7 +162,9 @@ export const haevnDebug = {
       }
 
       offset += chats.length;
-      console.log(`[MessagesMigration] Progress: ${Math.min(offset, total)}/${total} chats scanned`);
+      console.log(
+        `[MessagesMigration] Progress: ${Math.min(offset, total)}/${total} chats scanned`,
+      );
     }
 
     console.log(

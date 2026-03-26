@@ -218,8 +218,8 @@ const CliSettingsCard = () => {
         <CardTitle>CLI Integration</CardTitle>
         <CardDescription>
           Configure the local daemon that bridges the{" "}
-          <code className="text-xs bg-muted px-1 py-0.5 rounded">haevn</code> CLI to this
-          extension. Start the daemon with{" "}
+          <code className="text-xs bg-muted px-1 py-0.5 rounded">haevn</code> CLI to this extension.
+          Start the daemon with{" "}
           <code className="text-xs bg-muted px-1 py-0.5 rounded">haevn daemon</code>.
         </CardDescription>
       </CardHeader>
@@ -241,9 +241,7 @@ const CliSettingsCard = () => {
               Save
             </Button>
           </div>
-          {portError && (
-            <p className="text-xs text-red-600">{portError}</p>
-          )}
+          {portError && <p className="text-xs text-red-600">{portError}</p>}
           {portSaved && (
             <p className="text-xs text-green-600">Port saved — restart the daemon to apply</p>
           )}
@@ -267,10 +265,7 @@ const CliSettingsCard = () => {
             <Button variant="outline" onClick={handleCopyKey}>
               {keyCopied ? "Copied!" : "Copy"}
             </Button>
-            <Button
-              variant={keyRegenConfirm ? "destructive" : "outline"}
-              onClick={handleRegenKey}
-            >
+            <Button variant={keyRegenConfirm ? "destructive" : "outline"} onClick={handleRegenKey}>
               {keyRegenConfirm ? "Confirm regen" : "Regenerate"}
             </Button>
           </div>
