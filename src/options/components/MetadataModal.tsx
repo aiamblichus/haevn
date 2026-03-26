@@ -132,7 +132,8 @@ export const MetadataModal = ({
   };
 
   const allCategories = aiConfig?.categories ?? [];
-  const staleCategories = (metadata?.categories ?? []).filter((c) => !allCategories.includes(c));
+  const allCategoryNames = allCategories.map((category) => category.name);
+  const staleCategories = (metadata?.categories ?? []).filter((c) => !allCategoryNames.includes(c));
   const displayDate = metadata?.generatedAt
     ? new Date(metadata.generatedAt).toLocaleDateString()
     : null;
@@ -140,10 +141,13 @@ export const MetadataModal = ({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="pr-6">
+        <DialogHeader className="min-w-0 pr-8">
+          <DialogTitle className="min-w-0">
             Chat Metadata
-            <span className="block text-sm font-normal text-muted-foreground mt-0.5 truncate">
+            <span
+              className="mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-sm font-normal text-muted-foreground"
+              title={chatTitle}
+            >
               {chatTitle}
             </span>
           </DialogTitle>
@@ -165,7 +169,7 @@ export const MetadataModal = ({
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {(metadata?.categories ?? []).map((cat) => {
-                    const isStale = !allCategories.includes(cat);
+                    const isStale = !allCategoryNames.includes(cat);
                     return (
                       <Badge
                         key={cat}
@@ -244,14 +248,14 @@ export const MetadataModal = ({
                 <Label>Categories</Label>
                 <div className="flex flex-wrap gap-3">
                   {allCategories.map((cat) => (
-                    <div key={cat} className="flex items-center gap-1.5">
+                    <div key={cat.name} className="flex items-center gap-1.5">
                       <Checkbox
-                        id={`cat-${cat}`}
-                        checked={editCategories.includes(cat)}
-                        onCheckedChange={(v) => toggleCategory(cat, !!v)}
+                        id={`cat-${cat.name}`}
+                        checked={editCategories.includes(cat.name)}
+                        onCheckedChange={(v) => toggleCategory(cat.name, !!v)}
                       />
-                      <label htmlFor={`cat-${cat}`} className="cursor-pointer text-sm">
-                        {cat}
+                      <label htmlFor={`cat-${cat.name}`} className="cursor-pointer text-sm">
+                        {cat.name}
                       </label>
                     </div>
                   ))}
@@ -335,9 +339,9 @@ const Field = ({
     <p className="font-medium text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
     {value ? (
       multiline ? (
-        <p className="whitespace-pre-wrap text-foreground">{value}</p>
+        <p className="whitespace-pre-wrap break-words text-foreground">{value}</p>
       ) : (
-        <p className="text-foreground">{value}</p>
+        <p className="break-words text-foreground">{value}</p>
       )
     ) : (
       <p className="text-muted-foreground italic">{placeholder}</p>
