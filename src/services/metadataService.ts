@@ -1,5 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { createPromptWithSchema, parseResponse } from "structalign";
+import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
 import type { ChatMetadataRecord } from "./db";
 import { getDB } from "./db";
@@ -58,9 +59,10 @@ export async function processQueueTick(): Promise<void> {
   });
 
   try {
-    await generateForChat(item.chatId);
+    const record = await generateForChat(item.chatId);
     await getDB().metadataQueue.delete(item.chatId);
     log.info(`[MetadataService] Generated metadata for chat ${item.chatId}`);
+    safeSendMessage({ action: "metadataGenerated", chatId: item.chatId, title: record.title });
   } catch (err) {
     const retries = item.retries + 1;
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -72,6 +74,7 @@ export async function processQueueTick(): Promise<void> {
         retries,
         error: errMsg,
       });
+      safeSendMessage({ action: "metadataGenerationFailed", chatId: item.chatId, error: errMsg });
     } else {
       await getDB().metadataQueue.update(item.chatId, {
         status: "pending",

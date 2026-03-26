@@ -547,10 +547,13 @@ const AIMetadataSettingsCard = () => {
                 <Checkbox
                   id="metaIndexMissing"
                   checked={config.indexMissing}
-                  onCheckedChange={(v) => save({ indexMissing: !!v })}
+                  onCheckedChange={(v) => {
+                    save({ indexMissing: !!v });
+                    if (v) handleQueueMissing();
+                  }}
                 />
                 <Label htmlFor="metaIndexMissing" className="cursor-pointer">
-                  Auto-index existing chats without metadata on startup
+                  Index existing chats without metadata
                 </Label>
               </div>
 

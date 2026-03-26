@@ -775,4 +775,15 @@ export type BackgroundEvent =
       action: "providerStatsUpdated";
       providerName: string;
       count: number;
+    }
+  | {
+      action: "metadataGenerated";
+      chatId: string;
+      /** The resolved display title after generation. */
+      title: string;
+    }
+  | {
+      action: "metadataGenerationFailed";
+      chatId: string;
+      error: string;
     };

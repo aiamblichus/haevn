@@ -168,7 +168,7 @@ export const ArchiveView = ({
       if (!g) {
         g = {
           chatId: r.chatId,
-          chatTitle: r.chatTitle,
+          chatTitle: r.metaTitle || r.chatTitle,
           source: r.source,
           params: r.params,
           items: [],

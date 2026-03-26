@@ -286,6 +286,8 @@ export interface Chat {
 export interface SearchResult {
   chatId: string;
   chatTitle: string;
+  /** Metadata title override, populated by search handler when a metadata record exists. */
+  metaTitle?: string;
   source: string;
   messageId: string;
   messageSnippet: string;

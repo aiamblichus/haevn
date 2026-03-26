@@ -353,6 +353,17 @@ const App = () => {
               });
             }
             break;
+          case "metadataGenerated":
+            setDisplayedChats((prev) =>
+              prev.map((c) =>
+                c.id === event.chatId ? { ...c, metaTitle: event.title || undefined } : c,
+              ),
+            );
+            setStatus(`Metadata ready: "${event.title}"`, "ok");
+            break;
+          case "metadataGenerationFailed":
+            setStatus(`Metadata generation failed for a chat`, "error");
+            break;
         }
       }
       return undefined;

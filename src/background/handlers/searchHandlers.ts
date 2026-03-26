@@ -1,6 +1,7 @@
 // Search message handlers
 
 import type { SearchResult } from "../../model/haevn_model";
+import * as MetadataRepository from "../../services/metadataRepository";
 import { SyncService } from "../../services/syncService";
 import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
@@ -140,13 +141,29 @@ export async function handleSearchChatsStreaming(
             role: r.messageRole,
           })),
         });
-        // Broadcast results batch
-        broadcastEvent({
-          action: "searchStreamingResults",
-          query,
-          filterProvider,
-          results: batch,
-        });
+        // Enrich with metadata titles, then broadcast
+        const uniqueChatIds = [...new Set(batch.map((r) => r.chatId))];
+        MetadataRepository.getMany(uniqueChatIds)
+          .then((metaMap) => {
+            const enriched = batch.map((r) => {
+              const meta = metaMap.get(r.chatId);
+              return meta?.title ? { ...r, metaTitle: meta.title } : r;
+            });
+            broadcastEvent({
+              action: "searchStreamingResults",
+              query,
+              filterProvider,
+              results: enriched,
+            });
+          })
+          .catch(() => {
+            broadcastEvent({
+              action: "searchStreamingResults",
+              query,
+              filterProvider,
+              results: batch,
+            });
+          });
       },
       onComplete: (stats) => {
         log.info(`[SearchHandler] onComplete callback called:`, {

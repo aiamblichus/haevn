@@ -6,8 +6,7 @@ import { log } from "../utils/logger";
 log.debug("HAEVN Background script loaded");
 
 import { loggerService } from "../services/loggerService";
-import { enqueueAllMissing, resetStuckQueueItems } from "../services/metadataService";
-import { getMetadataAIConfig } from "../services/settingsService";
+import { resetStuckQueueItems } from "../services/metadataService";
 import { isLogMessage } from "../types/messaging";
 // Set up message handler
 import { handleMessage } from "./handlers";
@@ -25,17 +24,6 @@ setupAlarmListener();
 resetStuckQueueItems().catch((err) => {
   log.warn("[Background] Failed to reset stuck metadata queue items:", err);
 });
-
-// If indexMissing is enabled, queue all chats without metadata on startup
-getMetadataAIConfig()
-  .then((config) => {
-    if (config.enabled && config.indexMissing) {
-      return enqueueAllMissing();
-    }
-  })
-  .catch((err) => {
-    log.warn("[Background] Failed to enqueue missing metadata on startup:", err);
-  });
 
 // Handle messages from content scripts or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
