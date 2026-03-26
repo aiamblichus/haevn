@@ -36,6 +36,8 @@ import { transformCodexToHaevnChat } from "../providers/codex/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import { ImportService } from "../services/importService";
+import * as MetadataRepository from "../services/metadataRepository";
+import { generateForChat } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
@@ -58,7 +60,10 @@ type WsRequest =
       format: WsImportFormat;
       files: WsImportFilePayload[];
       options?: WsImportOptions;
-    };
+    }
+  | { id: string; action: "getMetadata"; chatId: string }
+  | { id: string; action: "setMetadata"; chatId: string; metadata: WsMetadataUpdate }
+  | { id: string; action: "generateMetadata"; chatId: string };
 
 interface WsSearchOptions {
   platform?: string;
@@ -95,6 +100,14 @@ interface WsImportFilePayload {
 interface WsImportOptions {
   overwrite?: boolean;
   skipIndex?: boolean;
+}
+
+interface WsMetadataUpdate {
+  title?: string;
+  description?: string;
+  synopsis?: string;
+  categories?: string[];
+  keywords?: string[];
 }
 
 interface WsImportResult {
@@ -406,6 +419,12 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleExport(id, req);
       case "import":
         return await handleImport(id, req);
+      case "getMetadata":
+        return await handleGetMetadata(id, req);
+      case "setMetadata":
+        return await handleSetMetadata(id, req);
+      case "generateMetadata":
+        return await handleGenerateMetadata(id, req);
       default: {
         const _exhaustive: never = req;
         return { id, success: false, error: `Unknown action`, code: "UNKNOWN_ACTION" };
@@ -455,7 +474,15 @@ async function handleSearch(
     return true;
   });
 
-  return { id, success: true, data: filtered };
+  const uniqueChatIds = [...new Set(filtered.map((r) => r.chatId))];
+  const metaMap =
+    uniqueChatIds.length > 0 ? await MetadataRepository.getMany(uniqueChatIds) : new Map();
+  const enriched = filtered.map((r) => {
+    const meta = metaMap.get(r.chatId);
+    return meta?.title ? { ...r, metaTitle: meta.title } : r;
+  });
+
+  return { id, success: true, data: enriched };
 }
 
 async function handleList(
@@ -508,7 +535,15 @@ async function handleList(
     }),
   );
 
-  return { id, success: true, data: { chats, total } };
+  const chatIds = chats.map((c) => c.id).filter(Boolean) as string[];
+  const metaMap = chatIds.length > 0 ? await MetadataRepository.getMany(chatIds) : new Map();
+  const enrichedChats = chats.map((chat) => {
+    if (!chat.id) return chat;
+    const meta = metaMap.get(chat.id);
+    return meta?.title ? { ...chat, metaTitle: meta.title } : chat;
+  });
+
+  return { id, success: true, data: { chats: enrichedChats, total } };
 }
 
 async function handleGet(
@@ -564,6 +599,35 @@ async function handleExport(
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
   return { id, success: true, data: chat };
+}
+
+async function handleGetMetadata(
+  id: string,
+  req: Extract<WsRequest, { action: "getMetadata" }>,
+): Promise<WsResponse> {
+  const record = await MetadataRepository.get(req.chatId);
+  return { id, success: true, data: record };
+}
+
+async function handleSetMetadata(
+  id: string,
+  req: Extract<WsRequest, { action: "setMetadata" }>,
+): Promise<WsResponse> {
+  await MetadataRepository.set(req.chatId, {
+    ...req.metadata,
+    source: "manual",
+    updatedAt: Date.now(),
+  });
+  const record = await MetadataRepository.get(req.chatId);
+  return { id, success: true, data: record };
+}
+
+async function handleGenerateMetadata(
+  id: string,
+  req: Extract<WsRequest, { action: "generateMetadata" }>,
+): Promise<WsResponse> {
+  const record = await generateForChat(req.chatId);
+  return { id, success: true, data: record };
 }
 
 async function handleImport(

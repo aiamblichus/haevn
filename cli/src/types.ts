@@ -57,7 +57,10 @@ export type CliRequest =
       format: ImportFormat;
       files: ImportFilePayload[];
       options?: ImportOptions;
-    };
+    }
+  | { id: string; action: "getMetadata"; chatId: string }
+  | { id: string; action: "setMetadata"; chatId: string; metadata: MetadataUpdate }
+  | { id: string; action: "generateMetadata"; chatId: string };
 
 export interface SearchOptions {
   platform?: string;
@@ -94,6 +97,26 @@ export interface ImportFilePayload {
 export interface ImportOptions {
   overwrite?: boolean;
   skipIndex?: boolean;
+}
+
+export interface MetadataUpdate {
+  title?: string;
+  description?: string;
+  synopsis?: string;
+  categories?: string[];
+  keywords?: string[];
+}
+
+export interface ChatMetadataRecord {
+  chatId: string;
+  title: string;
+  description: string;
+  synopsis: string;
+  categories: string[];
+  keywords: string[];
+  source: "manual" | "ai" | "unset";
+  generatedAt?: number;
+  updatedAt: number;
 }
 
 export interface ImportResult {

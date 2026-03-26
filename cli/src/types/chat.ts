@@ -264,6 +264,8 @@ export interface Chat {
 export interface SearchResult {
   chatId: string;
   chatTitle: string;
+  /** Populated by the extension when a metadata title exists for this chat. */
+  metaTitle?: string;
   source: string;
   messageId: string;
   messageSnippet: string;

@@ -109,8 +109,9 @@ export function formatSearchResultsText(results: SearchResult[]): string {
     // Print a chat header each time we enter a new chat.
     if (result.chatId !== lastChatId) {
       lastChatId = result.chatId;
+      const displayTitle = result.metaTitle || result.chatTitle;
       lines.push("");
-      lines.push(header(`${result.chatId}  "${truncate(result.chatTitle, 45)}"`));
+      lines.push(header(`${result.chatId}  "${truncate(displayTitle, 45)}"`));
     }
 
     const roleLabel = result.messageRole === "user" ? pc.cyan("user") : pc.magenta("asst");
