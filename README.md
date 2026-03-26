@@ -236,7 +236,7 @@ See [CLI README](./cli/README.md) for full setup and command reference.
 
 ## Architecture
 
-HAEVN uses a sophisticated three-tier architecture to work within Chrome MV3 constraints:
+HAEVN uses a three-tier architecture to work within Chrome MV3 constraints:
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -401,16 +401,6 @@ pnpm run release:major  # Breaking changes (1.0.0 → 2.0.0)
 ```
 
 See [docs/RELEASE.md](docs/RELEASE.md) for detailed release documentation.
-
----
-
-## Roadmap
-
-- [ ] Firefox support (MV3 compatibility)
-- [ ] Cloud sync (optional, end-to-end encrypted)
-- [ ] AI-powered search and summarization
-- [ ] Conversation analytics dashboard
-- [ ] More platform support (Perplexity, etc.)
 
 ---
 
