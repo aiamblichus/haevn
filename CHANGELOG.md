@@ -2,6 +2,11 @@
 
 ## [v1.2.0] - 2026-03-26
 
+- Initial release
+
+
+## [v1.2.0] - 2026-03-26
+
 ### Added
 
 - AI-powered chat metadata generation and management
