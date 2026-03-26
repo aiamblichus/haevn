@@ -25,19 +25,70 @@ Each result shows:
   Click **Open in Viewer** directly from a search result — the viewer will scroll to the matching message and highlight the search term in context.
 </Aside>
 
-## Search tips
+## Search syntax
 
-**Exact phrases:** Wrap your query in quotes to match a specific phrase.
-```
-"Ingeborg Bachmann"
-```
+HAEVN uses **Lunr.js** for full-text search with support for advanced query operators.
 
-**Multiple terms:** Separate words with spaces to find conversations containing all of them.
+### Basic queries
+
+**Multiple terms (AND):** By default, all terms must match (AND logic).
 ```
 python async function
 ```
+This finds messages containing all three terms: `python` AND `async` AND `function`.
 
-**Titles only:** The search covers both titles and full message content, so short queries often match more than you'd expect. If you're looking for a specific conversation title, try a distinctive phrase from the title.
+**Exact phrases:** Wrap your query in double quotes to match a specific phrase in order.
+```
+"Ingeborg Bachmann"
+```
+The words must appear consecutively and in that exact order.
+
+### Advanced operators
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `+` | `+required` | Term **must** be present (AND). Default behavior. |
+| `-` | `-exclude` | Term must **not** be present (NOT). |
+| `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, `reactor`, etc. |
+| `~` | `roam~2` | Fuzzy match with edit distance 2 — catches typos like `room`, `foam`. |
+| `^` | `important^10` | Boost term relevance (higher = more important). |
+| `"` | `"exact phrase"` | Phrase search — terms must appear consecutively. |
+
+### Examples
+
+**Exclude unwanted results:**
+```
+react hooks -class
+```
+Finds messages about React hooks but excludes any mentioning "class".
+
+**Fuzzy matching for typos:**
+```
+kubernates~2
+```
+Matches "kubernetes" even with the typo.
+
+**Boost important terms:**
+```
+api^5 design documentation
+```
+Ranks messages with "api" higher than those with just "design" or "documentation".
+
+**Prefix search:**
+```
+async* await*
+```
+Matches "async", "asynchronous", "await", "awaiting", etc.
+
+### Automatic fallback
+
+If your strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics). This helps when exact terms don't match but similar terms exist.
+
+### Tips
+
+- **Titles are boosted:** Conversation titles have 10x relevance weight, so short queries often surface the right conversation first.
+- **Case-insensitive:** Search ignores case.
+- **Stop words filtered:** Common words like "the", "a", "is" are excluded from the index.
 
 ## How search works
 
@@ -45,9 +96,8 @@ HAEVN uses **Lunr.js** to build a full-text index of your conversations. The ind
 
 Key characteristics:
 - The index runs entirely **in your browser** — no search queries leave your machine
-- Search is **case-insensitive**
-- Common stop words ("the", "a", "is") are excluded from the index
 - The index is stored locally and persists across browser sessions
+- Search runs in a Web Worker to avoid blocking the UI
 
 <Aside>
   If search shows no results when you expect some, the index may need to be rebuilt. Open the browser console on the Options page and run `haevnDebug.rebuildIndex()`. See [Troubleshooting](/reference/troubleshooting/) for more.
