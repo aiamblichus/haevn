@@ -1,15 +1,8 @@
----
-description: Reviews the changes being committed
-agent: code-reviewer
----
-
 ## Your Task
 
 Review the changes being committed. Not to find problems because you think you should, but to catch things that will cause pain. **If the code is good, say so.** False positives waste everyone's time.
 
 ## Context
-
-- Issue that was implemented: $1
 
 **Before starting your review, run these git commands to gather context:**
 
@@ -44,6 +37,7 @@ Read the actual changes. Understand what they're trying to accomplish. Then eval
 **Does this fit with the rest of the system?**
 
 **HAEVN Architecture Rules — flag violations:**
+
 - **Persistence boundary:** Dexie must never be used directly from handlers. All persistence flows through `SyncService` (facade → `chatRepository.ts`)
 - **Indexing boundary:** Search index updates go through the search worker via `SearchIndexManager`. Never update Lunr directly or inline
 - **Worker boundary:** CPU-intensive work (ZIP, stats, indexing) belongs in workers. Blocking the service worker causes extension degradation
@@ -54,6 +48,7 @@ Read the actual changes. Understand what they're trying to accomplish. Then eval
 - **Message size:** Large payloads through `chrome.sendMessage` must go through `ensureSafeMessage()` (64MB limit)
 
 **MV3 Constraints — things that will silently fail or crash:**
+
 - Service workers can be terminated at any time — state must be persisted to `chrome.storage.local`, not held in memory
 - Long-running operations must use `chrome.alarms` for tick-based orchestration (survives restarts)
 - Service workers cannot spawn Web Workers directly — must go through the offscreen document
@@ -61,12 +56,14 @@ Read the actual changes. Understand what they're trying to accomplish. Then eval
 - Missing host permission or manifest entry for new APIs
 
 **Data model integrity:**
+
 - Changes to `HAEVN.Chat` fields need to be backward-compatible or include a Dexie migration
 - New IndexedDB schema changes require a new schema version and migration in `db.ts`
 - Soft-delete semantics: `deleted=1` flag, not physical deletion — Janitor handles cleanup
 - OPFS media storage must stay in sync with DB metadata references
 
 **Provider abstraction:**
+
 - New platforms must implement `Extractor<TRaw>` and `Transformer<TRaw>` interfaces
 - Platform-specific logic must stay inside `providers/{platform}/` — no platform detection leaking into core
 - Adding a platform should not require changes to the orchestration or persistence layers
@@ -106,9 +103,11 @@ Read the actual changes. Understand what they're trying to accomplish. Then eval
 Use these markers. **Be honest about severity.**
 
 ### 🚨 MUST FIX
+
 **Ship-blocking. This will break something or create data loss.**
 
 Examples:
+
 - Unhandled promise rejection in critical path
 - Type assertion that will fail at runtime
 - Race condition that corrupts state
@@ -118,9 +117,11 @@ Examples:
 - Service worker state held in memory (lost on termination)
 
 ### ⚠️ SHOULD FIX
+
 **Not immediately broken, but will cause problems.**
 
 Examples:
+
 - Error swallowing that hides real issues
 - Missing validation that allows bad states
 - Unclear code in complex logic
@@ -129,9 +130,11 @@ Examples:
 - `fireAndForget()` skipped in favor of silent `.catch()`
 
 ### 💡 OPTIONAL
+
 **Would be better, but not urgent.**
 
 Examples:
+
 - Code could be more idiomatic
 - Minor duplication that doesn't hurt yet
 - Missing types where inference works
@@ -139,6 +142,7 @@ Examples:
 - Comments could be clearer
 
 ### ✅ LOOKS GOOD
+
 **No issues found. Code accomplishes its goals cleanly.**
 
 ---
@@ -160,6 +164,7 @@ Examples:
 ### Specific Issues
 
 For each issue you find:
+
 ```
 [SEVERITY] Location: file.ts:line or function name
 
@@ -173,6 +178,7 @@ Fix: [Concrete suggestion - show code if helpful]
 ```
 
 **If no issues:** Simply state:
+
 ```
 ✅ No issues found. Code is clean and accomplishes its goals.
 ```
@@ -184,10 +190,12 @@ Fix: [Concrete suggestion - show code if helpful]
 **Are there new behaviors that need tests?** [Yes/No]
 
 **If yes, what should be tested?**
+
 - [Specific scenario 1]
 - [Specific scenario 2]
 
 **Testing notes for HAEVN:**
+
 - Pure functions (extractors, transformers, utilities) → unit tests with Vitest
 - Service workflows (sync, search, import/export) → integration tests with `fake-indexeddb`
 - Worker logic → test the worker module directly, not through the offscreen bridge
@@ -200,14 +208,16 @@ Fix: [Concrete suggestion - show code if helpful]
 ## Critical Guidelines
 
 ### DO:
+
 - ✅ Focus on real problems with real consequences
-- ✅ Explain *why* something matters, not just that it's "wrong"
+- ✅ Explain _why_ something matters, not just that it's "wrong"
 - ✅ Consider the HAEVN architecture (MV3 constraints, worker tiers, provider abstraction)
 - ✅ Distinguish between bugs and style preferences
 - ✅ Say "this is fine" when it actually is fine
 - ✅ Provide concrete fixes, not vague suggestions
 
 ### DON'T:
+
 - ❌ Nitpick formatting (Biome handles that)
 - ❌ Suggest patterns that fight against the established architecture
 - ❌ Flag things as MUST FIX that are actually preferences
@@ -234,6 +244,7 @@ Fix: [Concrete suggestion - show code if helpful]
 ## Examples
 
 ### Good Review (Issue Found)
+
 ```
 🚨 MUST FIX - syncService.ts:145
 
@@ -251,6 +262,7 @@ Fix:
 ```
 
 ### Good Review (False Positive Avoided)
+
 ```
 High-Level Assessment:
 Adds retry logic to API-based sync operations. Clear improvement.
@@ -270,6 +282,7 @@ existing error handling tests.
 ```
 
 ### Bad Review (Nitpicking)
+
 ```
 ❌ DON'T DO THIS:
 
@@ -289,6 +302,7 @@ Fix: Consider 'transformedChat' for clarity.
 Your job is to prevent pain, not enforce purity.
 
 The code doesn't need to be perfect. It needs to:
+
 - Work correctly
 - Fail visibly
 - Fit the system
