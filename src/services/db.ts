@@ -53,6 +53,27 @@ export interface MediaContent {
  */
 export type StoredChatMessage = ChatMessage;
 
+export interface ChatMetadataRecord {
+  chatId: string; // Primary key — matches chats.id
+  title: string;
+  description: string;
+  synopsis: string;
+  categories: string[];
+  keywords: string[];
+  source: "manual" | "ai" | "unset";
+  generatedAt?: number;
+  updatedAt: number;
+}
+
+export interface MetadataQueueRecord {
+  chatId: string; // Primary key
+  status: "pending" | "processing" | "failed";
+  retries: number;
+  addedAt: number;
+  lastAttemptAt?: number;
+  error?: string;
+}
+
 export class HaevnDatabase extends Dexie {
   chats!: Table<Chat, string>; // Primary key 'id' is of type string
   chatMessages!: Table<StoredChatMessage, [string, string]>; // PK: [chatId, id]
@@ -63,6 +84,8 @@ export class HaevnDatabase extends Dexie {
   cache!: Table<CacheEntry, string>;
   thumbnails!: Table<Thumbnail, number>; // Primary key is auto-incremented number
   mediaContent!: Table<MediaContent, number>; // New table for heavy content
+  chatMetadata!: Table<ChatMetadataRecord, string>; // Primary key 'chatId'
+  metadataQueue!: Table<MetadataQueueRecord, string>; // Primary key 'chatId'
 
   constructor() {
     super("HaevnDB"); // Database name
@@ -459,6 +482,20 @@ export class HaevnDatabase extends Dexie {
       thumbnails:
         "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
       mediaContent: "id",
+    });
+    // Version 18: Add chatMetadata and metadataQueue tables for the parallel metadata system
+    this.version(18).stores({
+      chats:
+        "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
+      chatMessages: "[chatId+id], chatId, parentId, timestamp",
+      lunrIndex: "id",
+      openwebuiInstances: "id, baseUrl",
+      cache: "id",
+      thumbnails:
+        "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
+      mediaContent: "id",
+      chatMetadata: "chatId",
+      metadataQueue: "chatId, status, addedAt",
     });
     // Define future versions here with .version(n).stores({}) for schema migrations
   }

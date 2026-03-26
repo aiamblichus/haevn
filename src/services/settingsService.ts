@@ -159,3 +159,38 @@ export async function regenerateCliApiKey(): Promise<string> {
   log.info("[SettingsService] CLI API key regenerated");
   return apiKey;
 }
+
+// ─── AI Metadata Settings ──────────────────────────────────────────────────────
+
+const METADATA_AI_KEY = "haevn.metadata.ai";
+
+export interface MetadataAIConfig {
+  enabled: boolean;
+  warningAcknowledged: boolean;
+  url: string;
+  apiKey: string;
+  model: string;
+  autoGenerate: boolean;
+  categories: string[];
+}
+
+const METADATA_AI_DEFAULTS: MetadataAIConfig = {
+  enabled: false,
+  warningAcknowledged: false,
+  url: "",
+  apiKey: "",
+  model: "",
+  autoGenerate: false,
+  categories: [],
+};
+
+export async function getMetadataAIConfig(): Promise<MetadataAIConfig> {
+  const stored = await getStorageAdapter().get<Partial<MetadataAIConfig>>(METADATA_AI_KEY);
+  return { ...METADATA_AI_DEFAULTS, ...(stored ?? {}) };
+}
+
+export async function setMetadataAIConfig(config: Partial<MetadataAIConfig>): Promise<void> {
+  const current = await getMetadataAIConfig();
+  await getStorageAdapter().set(METADATA_AI_KEY, { ...current, ...config });
+  log.info("[SettingsService] Metadata AI config updated");
+}

@@ -32,6 +32,8 @@ export interface ChatMeta {
   lastSyncAttemptMessage?: string;
   sourceId?: string;
   params?: Record<string, unknown>;
+  /** Resolved display title from chatMetadata table (overrides title when set) */
+  metaTitle?: string;
 }
 
 export interface ProviderStats {

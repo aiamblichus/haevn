@@ -49,10 +49,10 @@ export const ChatTableRow = ({
       <div className="flex-1 min-w-0 py-1 px-2 flex items-center">
         <div
           className="font-semibold truncate cursor-pointer hover:underline w-full"
-          title={parseEntities(chat.title || "")}
+          title={parseEntities(chat.metaTitle || chat.title || "")}
           onClick={(e) => handleAction(e, "open_viewer")}
         >
-          {parseEntities(chat.title || "(Untitled)")}
+          {parseEntities(chat.metaTitle || chat.title || "(Untitled)")}
         </div>
       </div>
 
@@ -97,6 +97,14 @@ export const ChatTableRow = ({
             onClick={(e) => handleAction(e, "export")}
           >
             <Icon icon={ICONS.export} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            title="Edit Metadata"
+            onClick={(e) => handleAction(e, "metadata")}
+          >
+            <Icon icon={ICONS.tag} />
           </Button>
           <Button
             variant="ghost"

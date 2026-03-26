@@ -265,6 +265,14 @@ export interface Chat {
   // Indexed deletion flag: 0 = active, 1 = deleted
   // Unlike deletedAt (which may be undefined), this is always defined for efficient indexing
   deleted: 0 | 1;
+  // Optional HAEVN-managed metadata — present in exports, used on import to seed chatMetadata table
+  haevnMetadata?: {
+    title?: string;
+    description?: string;
+    synopsis?: string;
+    categories?: string[];
+    keywords?: string[];
+  };
 }
 
 // ======================

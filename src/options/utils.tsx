@@ -137,6 +137,7 @@ export const ICONS = {
     '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />',
   chevron_up:
     '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />',
+  tag: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3H5a2 2 0 00-2 2v2l9.293 9.293a1 1 0 001.414 0l4-4a1 1 0 000-1.414L8.707 3.707A2 2 0 007 3z" />',
 };
 
 export const Icon: React.FC<{

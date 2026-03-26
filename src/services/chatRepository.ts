@@ -576,6 +576,13 @@ export namespace ChatRepository {
         log.warn("Failed to delete chatMessages for hard-deleted chats", e);
       }
 
+      try {
+        const { removeMany } = await import("./metadataRepository");
+        await removeMany(chatIds);
+      } catch (e) {
+        log.warn("Failed to delete metadata records for hard-deleted chats", e);
+      }
+
       await db.chats.bulkDelete(chatIds);
       log.info(`Hard-deleted chats: ${chatIds.join(", ")}`);
 

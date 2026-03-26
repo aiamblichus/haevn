@@ -35,6 +35,9 @@ importers:
       '@radix-ui/react-tabs':
         specifier: ^1.1.13
         version: 1.1.13(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@sinclair/typebox':
+        specifier: ^0.34.48
+        version: 0.34.48
       '@zip.js/zip.js':
         specifier: ^2.8.15
         version: 2.8.15
@@ -71,6 +74,9 @@ importers:
       react-window:
         specifier: ^1.8.11
         version: 1.8.11(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      structalign:
+        specifier: ^0.1.2
+        version: 0.1.2(@sinclair/typebox@0.34.48)
       tailwind-merge:
         specifier: ^2.6.0
         version: 2.6.0
@@ -1177,6 +1183,9 @@ packages:
     resolution: {integrity: sha512-SPEpaL6DX4rmcXtnhdrQYgzQ5W2uW3SCJch88lB2zImhJRhIIK44fkUrgIV/Q8yUNfw5oyZ5vkeQsZLhCb06lw==}
     cpu: [x64]
     os: [win32]
+
+  '@sinclair/typebox@0.34.48':
+    resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -2487,6 +2496,12 @@ packages:
   strip-literal@3.1.0:
     resolution: {integrity: sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==}
 
+  structalign@0.1.2:
+    resolution: {integrity: sha512-8jLN0KOO22vij84DjeDAyrpK2UvjCd7BICWyQKeSdfAPRqD7GI774WtlqWokSNVAM29tG39uJdX0AbiwPGmQ7g==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@sinclair/typebox': ^0.32.0 || ^0.33.0 || ^0.34.0
+
   sucrase@3.35.1:
     resolution: {integrity: sha512-DhuTmvZWux4H1UOnWMB3sk0sbaCVOoQZjv8u1rDoTV0HTdGem9hkAZtl4JZy8P2z4Bg0nT+YMeOFyVr4zcG5Tw==}
     engines: {node: '>=16 || 14 >=14.17'}
@@ -3506,6 +3521,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.55.1':
     optional: true
+
+  '@sinclair/typebox@0.34.48': {}
 
   '@types/chai@5.2.3':
     dependencies:
@@ -5008,6 +5025,10 @@ snapshots:
   strip-literal@3.1.0:
     dependencies:
       js-tokens: 9.0.1
+
+  structalign@0.1.2(@sinclair/typebox@0.34.48):
+    dependencies:
+      '@sinclair/typebox': 0.34.48
 
   sucrase@3.35.1:
     dependencies:

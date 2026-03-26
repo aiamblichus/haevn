@@ -10,6 +10,7 @@ import * as galleryHandlers from "./galleryHandlers";
 import * as importHandlers from "./importHandlers";
 import * as loggerHandlers from "./loggerHandlers";
 import * as mediaHandlers from "./mediaHandlers";
+import * as metadataHandlers from "./metadataHandlers";
 import * as miscHandlers from "./miscHandlers";
 import * as searchHandlers from "./searchHandlers";
 import * as settingsHandlers from "./settingsHandlers";
@@ -78,6 +79,12 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   clearLogs: loggerHandlers.handleClearLogs as HandlerFunction,
   closeTab: miscHandlers.handleCloseTab as HandlerFunction,
   reload: miscHandlers.handleReload as HandlerFunction,
+  getChatMetadata: metadataHandlers.handleGetChatMetadata as HandlerFunction,
+  getMetadataForChats: metadataHandlers.handleGetMetadataForChats as HandlerFunction,
+  setChatMetadata: metadataHandlers.handleSetChatMetadata as HandlerFunction,
+  generateChatMetadata: metadataHandlers.handleGenerateChatMetadata as HandlerFunction,
+  getMetadataAIConfig: metadataHandlers.handleGetMetadataAIConfig as HandlerFunction,
+  setMetadataAIConfig: metadataHandlers.handleSetMetadataAIConfig as HandlerFunction,
 };
 
 export function handleMessage(

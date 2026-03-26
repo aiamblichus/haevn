@@ -6,8 +6,8 @@ import { log } from "../utils/logger";
 log.debug("HAEVN Background script loaded");
 
 import { loggerService } from "../services/loggerService";
+import { resetStuckQueueItems } from "../services/metadataService";
 import { isLogMessage } from "../types/messaging";
-
 // Set up message handler
 import { handleMessage } from "./handlers";
 import { setupAlarmListener } from "./listeners/alarmListener";
@@ -19,6 +19,11 @@ import { setupLifecycleListeners } from "./listeners/lifecycleListeners";
 setupInstallationListener();
 setupLifecycleListeners();
 setupAlarmListener();
+
+// Reset any metadata queue items stuck in 'processing' from a previous SW termination
+resetStuckQueueItems().catch((err) => {
+  log.warn("[Background] Failed to reset stuck metadata queue items:", err);
+});
 
 // Handle messages from content scripts or popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

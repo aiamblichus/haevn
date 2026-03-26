@@ -7,6 +7,8 @@
 
 import { CacheService } from "../../services/cacheService";
 import type { SaveChatResult } from "../../services/chatPersistence";
+import { queueGeneration } from "../../services/metadataService";
+import { getMetadataAIConfig } from "../../services/settingsService";
 import { SyncService } from "../../services/syncService";
 import { getStorageAdapter } from "../../storage";
 import type { ImportSourceType, ImportWorkerResponse } from "../../types/workerMessages";
@@ -179,6 +181,17 @@ async function handlePostProcess(
     handleGenerateThumbnails(chatId).catch((err) => {
       log.warn(`[ImportOrchestrator] Failed to generate thumbnails for ${chatId}:`, err);
     });
+
+    // Queue AI metadata generation if enabled and autoGenerate is on
+    getMetadataAIConfig()
+      .then((config) => {
+        if (config.enabled && config.autoGenerate) {
+          return queueGeneration(chatId);
+        }
+      })
+      .catch((err) => {
+        log.warn(`[ImportOrchestrator] Failed to queue metadata generation for ${chatId}:`, err);
+      });
 
     // Broadcast chat synced event
     safeSendMessage({

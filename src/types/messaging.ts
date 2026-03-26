@@ -21,7 +21,12 @@ import type { BulkSyncOptions, BulkSyncState } from "../background/bulkSync/type
 import type { ExportOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
+import type { ChatMetadataRecord } from "../services/db";
+import type { MetadataAIConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
+
+export type { ChatMetadataRecord, MetadataAIConfig };
+
 import type {
   BulkExportWorkerMessage,
   BulkExportWorkerResponse,
@@ -288,7 +293,18 @@ export type BackgroundRequest =
   | { action: "closeTab"; tabId: number }
   // Gemini image download operations
   | { action: "prepareImageDownload" }
-  | { action: "reload" };
+  | { action: "reload" }
+  // Metadata operations
+  | { action: "getChatMetadata"; chatId: string }
+  | { action: "getMetadataForChats"; chatIds: string[] }
+  | {
+      action: "setChatMetadata";
+      chatId: string;
+      metadata: Partial<Omit<ChatMetadataRecord, "chatId">>;
+    }
+  | { action: "generateChatMetadata"; chatId: string }
+  | { action: "getMetadataAIConfig" }
+  | { action: "setMetadataAIConfig"; config: Partial<MetadataAIConfig> };
 
 // ======================
 // Background Response Messages

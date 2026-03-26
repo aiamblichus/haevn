@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import type { MetadataAIConfig } from "../services/settingsService";
 import { DEFAULT_CLI_PORT } from "../services/settingsService";
 import { log } from "../utils/logger";
 
@@ -128,6 +138,7 @@ export const SettingsView = () => {
       </Card>
 
       <CliSettingsCard />
+      <AIMetadataSettingsCard />
     </div>
   );
 };
@@ -277,5 +288,255 @@ const CliSettingsCard = () => {
         </div>
       </CardContent>
     </Card>
+  );
+};
+
+// ─── AI Metadata Settings Card ────────────────────────────────────────────────
+
+const DEFAULT_CONFIG: MetadataAIConfig = {
+  enabled: false,
+  warningAcknowledged: false,
+  url: "",
+  apiKey: "",
+  model: "",
+  autoGenerate: false,
+  categories: [],
+};
+
+const AIMetadataSettingsCard = () => {
+  const [config, setConfig] = useState<MetadataAIConfig>(DEFAULT_CONFIG);
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showWarning, setShowWarning] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
+  const pendingEnableRef = useRef(false);
+
+  useEffect(() => {
+    chrome.runtime
+      .sendMessage({ action: "getMetadataAIConfig" })
+      .then((res) => {
+        if (res.success) setConfig(res.data as MetadataAIConfig);
+      })
+      .catch((err) => log.error("[Settings] Failed to load metadata AI config:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async (patch: Partial<MetadataAIConfig>) => {
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: "setMetadataAIConfig",
+        config: patch,
+      });
+      if (!res.success) throw new Error(res.error ?? "Save failed");
+      setConfig((prev) => ({ ...prev, ...patch }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
+  const handleEnableToggle = (checked: boolean) => {
+    if (checked && !config.warningAcknowledged) {
+      pendingEnableRef.current = true;
+      setShowWarning(true);
+    } else {
+      save({ enabled: checked });
+    }
+  };
+
+  const handleWarningConfirm = () => {
+    setShowWarning(false);
+    save({ enabled: true, warningAcknowledged: true });
+  };
+
+  const handleWarningCancel = () => {
+    setShowWarning(false);
+    pendingEnableRef.current = false;
+  };
+
+  const handleAddCategory = () => {
+    const trimmed = newCategory.trim();
+    if (!trimmed || config.categories.includes(trimmed)) return;
+    const updated = [...config.categories, trimmed];
+    save({ categories: updated });
+    setNewCategory("");
+  };
+
+  const handleRemoveCategory = (cat: string) => {
+    save({ categories: config.categories.filter((c) => c !== cat) });
+  };
+
+  if (loading) return null;
+
+  return (
+    <>
+      <Dialog open={showWarning} onOpenChange={(open) => !open && handleWarningCancel()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Privacy Warning</DialogTitle>
+            <DialogDescription>
+              When AI metadata generation is enabled, the full content of your chats will be sent to
+              the configured API URL for analysis. This data leaves your device.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm space-y-2">
+            <p>
+              We strongly recommend using a <strong>local LLM</strong> such as{" "}
+              <strong>Ollama</strong> or <strong>LM Studio</strong> to keep your conversations
+              private. External APIs (OpenAI, etc.) will receive and may log your chat content.
+            </p>
+            <p className="text-muted-foreground">
+              Only enable this if you understand and accept that your chat content will be sent to
+              the configured URL.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={handleWarningCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleWarningConfirm}>I understand, enable AI</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>AI Metadata Generation</CardTitle>
+          <CardDescription>
+            Automatically generate titles, descriptions, synopses, categories, and keywords for your
+            chats using an OpenAI-compatible LLM. Recommended: use a local model via{" "}
+            <strong>Ollama</strong> or <strong>LM Studio</strong> for privacy.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Enable toggle */}
+          <div className="flex items-center gap-3">
+            <Checkbox
+              id="metaEnabled"
+              checked={config.enabled}
+              onCheckedChange={(v) => handleEnableToggle(!!v)}
+            />
+            <Label htmlFor="metaEnabled" className="cursor-pointer">
+              Enable AI metadata generation
+            </Label>
+          </div>
+
+          {config.enabled && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="metaUrl">OpenAI-compatible API URL</Label>
+                <Input
+                  id="metaUrl"
+                  type="url"
+                  placeholder="http://localhost:11434/v1"
+                  value={config.url}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, url: (e.target as HTMLInputElement).value }))
+                  }
+                  onBlur={() => save({ url: config.url })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  For Ollama:{" "}
+                  <code className="bg-muted px-1 rounded">http://localhost:11434/v1</code>
+                  {" | "}For LM Studio:{" "}
+                  <code className="bg-muted px-1 rounded">http://localhost:1234/v1</code>
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="metaApiKey">API Key</Label>
+                <Input
+                  id="metaApiKey"
+                  type="password"
+                  placeholder="sk-... (leave empty for local models)"
+                  value={config.apiKey}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, apiKey: (e.target as HTMLInputElement).value }))
+                  }
+                  onBlur={() => save({ apiKey: config.apiKey })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="metaModel">Model</Label>
+                <Input
+                  id="metaModel"
+                  type="text"
+                  placeholder="e.g. llama3.2, gpt-4o-mini, mistral"
+                  value={config.model}
+                  onChange={(e) =>
+                    setConfig((prev) => ({ ...prev, model: (e.target as HTMLInputElement).value }))
+                  }
+                  onBlur={() => save({ model: config.model })}
+                />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="metaAutoGenerate"
+                  checked={config.autoGenerate}
+                  onCheckedChange={(v) => save({ autoGenerate: !!v })}
+                />
+                <Label htmlFor="metaAutoGenerate" className="cursor-pointer">
+                  Auto-generate metadata for newly synced / imported chats
+                </Label>
+              </div>
+            </>
+          )}
+
+          {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
+          {saved && <div className="text-sm text-green-600 bg-green-50 p-2 rounded">Saved</div>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Metadata Categories</CardTitle>
+          <CardDescription>
+            Define the categories the AI (and you) can assign to chats. The AI will only use
+            categories from this list.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {config.categories.length === 0 && (
+              <p className="text-sm text-muted-foreground">No categories configured yet.</p>
+            )}
+            {config.categories.map((cat) => (
+              <span
+                key={cat}
+                className="inline-flex items-center gap-1 bg-muted text-sm px-2 py-1 rounded-full"
+              >
+                {cat}
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-destructive ml-1 leading-none"
+                  onClick={() => handleRemoveCategory(cat)}
+                  aria-label={`Remove category ${cat}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="text"
+              placeholder="New category..."
+              value={newCategory}
+              onChange={(e) => setNewCategory((e.target as HTMLInputElement).value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAddCategory()}
+            />
+            <Button variant="outline" onClick={handleAddCategory}>
+              Add
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 };

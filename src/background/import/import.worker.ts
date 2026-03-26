@@ -20,6 +20,7 @@ interface ImportContentWithMedia {
 
 import * as ChatPersistence from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
+import * as MetadataRepository from "../../services/metadataRepository";
 import type {
   ImportSourceType,
   ImportWorkerMessage,
@@ -318,6 +319,25 @@ async function processChat(
     const result = await ChatPersistence.saveChat(chat, raw);
 
     log.info(`[ImportWorker] Saved chat: ${result.chatId}`);
+
+    // Seed chatMetadata from haevnMetadata field if present — never overwrite existing
+    if (chat.haevnMetadata && chat.id && isNewChat) {
+      const existing = await MetadataRepository.get(chat.id);
+      if (!existing) {
+        const m = chat.haevnMetadata;
+        await MetadataRepository.set(chat.id, {
+          title: m.title ?? "",
+          description: m.description ?? "",
+          synopsis: m.synopsis ?? "",
+          categories: m.categories ?? [],
+          keywords: m.keywords ?? [],
+          source: "manual",
+          updatedAt: Date.now(),
+        }).catch((err) => {
+          log.warn(`[ImportWorker] Failed to seed metadata for ${chat.id}:`, err);
+        });
+      }
+    }
 
     // Send saved notification
     self.postMessage({

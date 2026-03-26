@@ -21,6 +21,7 @@ import { GalleryView } from "./components/GalleryView/GalleryView";
 import { Header } from "./components/Layout/Header";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { ManifestoView } from "./components/ManifestoView/ManifestoView";
+import { MetadataModal } from "./components/MetadataModal";
 import { ImportModal } from "./components/Modals/ImportModal";
 import { ProvidersView } from "./components/ProvidersView/ProvidersView";
 import { StatusContext } from "./context/StatusContext";
@@ -75,6 +76,7 @@ const App = () => {
   const [searchPageSize, setSearchPageSize] = useState(10);
   const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
   const [loadingExpandedChats, setLoadingExpandedChats] = useState<Set<string>>(new Set());
+  const [metadataModalChatId, setMetadataModalChatId] = useState<string | null>(null);
 
   // Optimize search result deduplication
   const searchResultIds = React.useRef<Set<string>>(new Set());
@@ -114,8 +116,31 @@ const App = () => {
         throw new Error("error" in resp ? resp.error : "Failed");
       }
       if ("data" in resp && "total" in resp) {
-        setDisplayedChats((resp.data || []) as ChatMeta[]);
+        const chats = (resp.data || []) as ChatMeta[];
         setTotalChats(resp.total || 0);
+
+        // Fetch metadata titles in parallel, merge into ChatMeta
+        const chatIds = chats.map((c) => c.id);
+        if (chatIds.length > 0) {
+          chrome.runtime
+            .sendMessage({ action: "getMetadataForChats", chatIds })
+            .then((metaResp) => {
+              if (metaResp?.success && metaResp.data) {
+                const metaMap = metaResp.data as Record<string, { title?: string }>;
+                setDisplayedChats(
+                  chats.map((c) => ({
+                    ...c,
+                    metaTitle: metaMap[c.id]?.title || undefined,
+                  })),
+                );
+              } else {
+                setDisplayedChats(chats);
+              }
+            })
+            .catch(() => setDisplayedChats(chats));
+        } else {
+          setDisplayedChats(chats);
+        }
       }
       setSelectedIds(new Set());
       setStatus("Loaded.", "ok");
@@ -488,6 +513,9 @@ const App = () => {
             loadChats();
           }
           break;
+        case "metadata":
+          setMetadataModalChatId(id);
+          break;
       }
     },
     [syncChatById, openChatInProvider, openChatInViewer, openExportModal, loadChats],
@@ -742,6 +770,19 @@ const App = () => {
         importProviderFilter={importProviderFilter}
         onLoadChats={loadChats}
       />
+      {metadataModalChatId && (
+        <MetadataModal
+          chatId={metadataModalChatId}
+          chatTitle={displayedChats.find((c) => c.id === metadataModalChatId)?.title ?? ""}
+          open={!!metadataModalChatId}
+          onClose={() => setMetadataModalChatId(null)}
+          onMetadataSaved={(chatId, metaTitle) => {
+            setDisplayedChats((prev) =>
+              prev.map((c) => (c.id === chatId ? { ...c, metaTitle: metaTitle || undefined } : c)),
+            );
+          }}
+        />
+      )}
     </StatusContext.Provider>
   );
 };

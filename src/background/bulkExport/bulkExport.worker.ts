@@ -235,14 +235,23 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
   if (!chat) return undefined;
 
   const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
-  if (rows.length > 0) {
-    return {
-      ...chat,
-      messages: toMessageDict(rows),
-    };
-  }
+  const metadataRecord = await db.chatMetadata.get(chatId);
 
-  return chat;
+  const haevnMetadata = metadataRecord
+    ? {
+        title: metadataRecord.title || undefined,
+        description: metadataRecord.description || undefined,
+        synopsis: metadataRecord.synopsis || undefined,
+        categories: metadataRecord.categories.length > 0 ? metadataRecord.categories : undefined,
+        keywords: metadataRecord.keywords.length > 0 ? metadataRecord.keywords : undefined,
+      }
+    : undefined;
+
+  return {
+    ...chat,
+    ...(rows.length > 0 ? { messages: toMessageDict(rows) } : {}),
+    ...(haevnMetadata ? { haevnMetadata } : {}),
+  };
 }
 
 async function writeJsonlArray(
