@@ -1,3 +1,5 @@
+import { ChatRepository } from "../../services/chatRepository";
+import { getDB } from "../../services/db";
 import * as MetadataRepository from "../../services/metadataRepository";
 import { enqueueAllMissing, generateForChat, getQueueStatus } from "../../services/metadataService";
 import { getMetadataAIConfig, setMetadataAIConfig } from "../../services/settingsService";
@@ -108,6 +110,31 @@ export async function handleGetMetadataQueueStatus(
     sendResponse({ success: true, data: status });
   } catch (err) {
     log.error("[MetadataHandlers] getMetadataQueueStatus failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetChatPreview(
+  message: Extract<BackgroundRequest, { action: "getChatPreview" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const [metadata, messageCount, chat] = await Promise.all([
+      MetadataRepository.get(message.chatId),
+      ChatRepository.getChatMessageCount(message.chatId),
+      getDB().chats.get(message.chatId),
+    ]);
+    sendResponse({
+      success: true,
+      data: {
+        metadata,
+        messageCount,
+        createdAt: chat?.timestamp ?? 0,
+        models: chat?.models ?? [],
+      },
+    });
+  } catch (err) {
+    log.error("[MetadataHandlers] getChatPreview failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
 import type { ChatMeta } from "../../types";
 import { escapeHtml, formatTime, getPlatformIcon, ICONS, Icon } from "../../utils";
+import { ChatPreviewPopover } from "./ChatPreviewPopover";
 
 interface ChatTableRowProps {
   chat: ChatMeta;
@@ -47,13 +48,15 @@ export const ChatTableRow = ({
 
       {/* Title column - flexible to take remaining space */}
       <div className="flex-1 min-w-0 py-1 px-2 flex items-center">
-        <div
-          className="font-semibold truncate cursor-pointer hover:underline w-full"
-          title={parseEntities(chat.metaTitle || chat.title || "")}
-          onClick={(e) => handleAction(e, "open_viewer")}
-        >
-          {parseEntities(chat.metaTitle || chat.title || "(Untitled)")}
-        </div>
+        <ChatPreviewPopover chat={chat}>
+          <div
+            className="font-semibold truncate cursor-pointer hover:underline w-full"
+            title={parseEntities(chat.metaTitle || chat.title || "")}
+            onClick={(e) => handleAction(e, "open_viewer")}
+          >
+            {parseEntities(chat.metaTitle || chat.title || "(Untitled)")}
+          </div>
+        </ChatPreviewPopover>
       </div>
 
       {/* Last Modified column */}

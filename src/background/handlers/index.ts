@@ -88,6 +88,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
   rebuildAllMetadata: metadataHandlers.handleRebuildAllMetadata as HandlerFunction,
+  getChatPreview: metadataHandlers.handleGetChatPreview as HandlerFunction,
 };
 
 export function handleMessage(
