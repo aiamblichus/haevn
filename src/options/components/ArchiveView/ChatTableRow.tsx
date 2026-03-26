@@ -51,7 +51,6 @@ export const ChatTableRow = ({
         <ChatPreviewPopover chat={chat}>
           <div
             className="font-semibold truncate cursor-pointer hover:underline w-full"
-            title={parseEntities(chat.metaTitle || chat.title || "")}
             onClick={(e) => handleAction(e, "open_viewer")}
           >
             {parseEntities(chat.metaTitle || chat.title || "(Untitled)")}
