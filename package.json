@@ -32,6 +32,13 @@
     "release:patch": "./scripts/quick-release.sh patch",
     "release:minor": "./scripts/quick-release.sh minor",
     "release:major": "./scripts/quick-release.sh major",
+    "cli:version:patch": "./scripts/cli-version-bump.sh patch",
+    "cli:version:minor": "./scripts/cli-version-bump.sh minor",
+    "cli:version:major": "./scripts/cli-version-bump.sh major",
+    "cli:release:patch": "./scripts/cli-quick-release.sh patch",
+    "cli:release:minor": "./scripts/cli-quick-release.sh minor",
+    "cli:release:major": "./scripts/cli-quick-release.sh major",
+    "release:all": "./scripts/release-all.sh",
     "package": "cd dist && zip -r ../haevn-extension-v$(node -p \"require('../package.json').version\").zip . && cd .. && echo 'Package created: haevn-extension-v'$(node -p \"require('./package.json').version\")'.zip'"
   },
   "devDependencies": {

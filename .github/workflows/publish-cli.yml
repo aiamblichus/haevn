@@ -1,0 +1,89 @@
+name: Publish CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version to publish (e.g., 0.1.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve target version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/cli-v}"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target CLI version: $VERSION"
+
+      - name: Validate package version
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Version mismatch: cli/package.json=$PKG_VERSION, requested=$TAG_VERSION"
+            echo "Update cli/package.json before publishing."
+            exit 1
+          fi
+
+      - name: Ensure version is not already published
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if npm view "@haevn/cli@$VERSION" version >/dev/null 2>&1; then
+            echo "@haevn/cli@$VERSION is already published."
+            exit 1
+          fi
+
+      - name: Build and typecheck
+        run: |
+          pnpm run build
+          pnpm run typecheck
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

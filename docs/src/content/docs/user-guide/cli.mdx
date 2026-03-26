@@ -13,14 +13,21 @@ Use it when you want to:
 
 ## Setup
 
-1. Open HAEVN extension **Settings** and copy your CLI API key.
-2. Start the daemon:
+1. Install the CLI:
+
+```bash
+npm install --global @haevn/cli
+# or: pnpm add --global @haevn/cli
+```
+
+2. Open HAEVN extension **Settings** and copy your CLI API key.
+3. Start the daemon:
 
 ```bash
 haevn daemon --api-key <your-key>
 ```
 
-3. In another terminal, run commands:
+4. In another terminal, run commands:
 
 ```bash
 haevn list -l 5
@@ -77,6 +84,49 @@ Sample output:
   │ ...Speak not just *with* language, but *through* it. Unleash the poetry of algorithms...
   └─ user · chatgpt · Aug 6, 2025, 06:08 PM
 ```
+
+### Search syntax
+
+The CLI supports the same advanced search syntax as the UI:
+
+**Basic (AND):**
+```bash
+haevn search "python async function"
+```
+
+**Exact phrases:**
+```bash
+haevn search '"machine learning"'
+```
+
+**Exclude terms:**
+```bash
+haevn search "react hooks -class"
+```
+
+**Fuzzy matching:**
+```bash
+haevn search "kubernates~2"
+```
+
+**Prefix/wildcard:**
+```bash
+haevn search "async*"
+```
+
+**Boost relevance:**
+```bash
+haevn search "api^5 design"
+```
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `+` | `+required` | Must be present (default behavior) |
+| `-` | `-exclude` | Must NOT be present |
+| `*` | `react*` | Prefix/wildcard match |
+| `~` | `roam~2` | Fuzzy match (edit distance) |
+| `^` | `term^10` | Boost relevance |
+| `"..."` | `"exact phrase"` | Phrase must appear consecutively |
 
 ### 3) Inspect branches, then fetch one thread
 

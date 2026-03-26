@@ -15,7 +15,8 @@ HAEVN follows [Semantic Versioning](https://semver.org/) (SemVer) with automated
 ### Distribution Channels
 
 1. **GitHub Releases** (Primary): Automated ZIP artifacts attached to each release
-2. **Chrome Web Store** (Future): Manual upload after testing GitHub release
+2. **npm**: `@haevn/cli` for CLI distribution
+3. **Chrome Web Store** (Future): Manual upload after testing GitHub release
 
 ---
 
@@ -70,6 +71,36 @@ git push origin main --tags
 2. Click **Run workflow**
 3. Enter the version number (e.g., `1.0.1`)
 4. Click **Run workflow**
+
+### Publish CLI to npm (`@haevn/cli`)
+
+#### Manual publish
+
+```bash
+cd cli
+pnpm install
+pnpm run build
+npm publish
+```
+
+#### GitHub Actions publish (recommended)
+
+- Workflow: `.github/workflows/publish-cli.yml`
+- Trigger by pushing a tag like `cli-v0.1.1` (or run manually via workflow_dispatch)
+
+```bash
+# Option A: one-command helper from repo root
+pnpm run cli:release:patch
+
+# Option B: manual tag push
+git tag -a cli-v0.1.1 -m "CLI release 0.1.1"
+git push origin cli-v0.1.1
+```
+
+Notes:
+- Scoped npm packages default to private; this package is configured with `publishConfig.access = public`.
+- `prepublishOnly` runs `build` and `typecheck` automatically.
+- Set repository secret `NPM_TOKEN` (npm automation token) for workflow auth.
 
 ---
 
@@ -165,6 +196,28 @@ pnpm run release:major  # Bump, commit, tag, and push major release
 ```bash
 pnpm run package  # Create ZIP artifact locally (for testing)
 ```
+
+### CLI Versioning & Release
+
+```bash
+pnpm run cli:version:patch   # Bump cli/package.json patch version
+pnpm run cli:version:minor   # Bump cli/package.json minor version
+pnpm run cli:version:major   # Bump cli/package.json major version
+
+pnpm run cli:release:patch   # Bump, commit, tag cli-vX.Y.Z, and push prompt
+pnpm run cli:release:minor
+pnpm run cli:release:major
+```
+
+### Combined Extension + CLI Release
+
+```bash
+pnpm run release:all
+```
+
+Interactive helper that can bump extension and CLI together, create one commit, and tag:
+- extension: `vX.Y.Z` (triggers extension release workflow)
+- CLI: `cli-vA.B.C` (triggers npm publish workflow)
 
 ---
 

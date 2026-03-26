@@ -3,19 +3,43 @@
   "version": "0.1.0",
   "description": "CLI tool for searching and accessing HAEVN chat archives",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiamblichus/haevn.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/aiamblichus/haevn#readme",
+  "bugs": {
+    "url": "https://github.com/aiamblichus/haevn/issues"
+  },
+  "keywords": [
+    "haevn",
+    "cli",
+    "ai",
+    "archive",
+    "chat",
+    "search"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "haevn": "./dist/index.mjs"
   },
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "templates"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "unbuild",
     "dev": "unbuild --stub",
     "start": "node ./dist/index.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check ./src",
-    "lint:fix": "biome check --write ./src"
+    "lint:fix": "biome check --write ./src",
+    "prepublishOnly": "pnpm run build && pnpm run typecheck"
   },
   "dependencies": {
     "citty": "^0.1.6",

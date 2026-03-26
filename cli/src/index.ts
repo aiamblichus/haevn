@@ -13,6 +13,7 @@
  */
 
 import { defineCommand, runMain } from "citty";
+import packageJson from "../package.json";
 import branchesCommand from "./commands/branches";
 import daemonCommand from "./commands/daemon";
 import exportCommand from "./commands/export";
@@ -22,7 +23,7 @@ import listCommand from "./commands/list";
 import searchCommand from "./commands/search";
 import { consola } from "./utils/output";
 
-const VERSION = "0.1.0";
+const VERSION = packageJson.version;
 
 const mainCommand = defineCommand({
   meta: {

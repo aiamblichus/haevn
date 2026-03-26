@@ -184,6 +184,9 @@ pnpm run lint:fix  # Auto-fix issues
 HAEVN also includes a terminal CLI for fast retrieval and scripting.
 
 ```bash
+# Install
+npm install --global @haevn/cli
+
 # Help
 haevn --help
 

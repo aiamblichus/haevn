@@ -4,6 +4,27 @@ CLI tool for searching and accessing HAEVN chat archives from the terminal.
 
 ## Installation
 
+### From npm (recommended)
+
+```bash
+# npm
+npm install --global @haevn/cli
+
+# pnpm
+pnpm add --global @haevn/cli
+
+# yarn
+yarn global add @haevn/cli
+```
+
+Or run without installing globally:
+
+```bash
+npx @haevn/cli --help
+```
+
+### From source (development)
+
 ```bash
 # From the cli directory
 pnpm install
@@ -25,11 +46,48 @@ haevn search "api design" --after 2024-01-01 --format json
 
 Options:
 - `-p, --platform <name>` - Filter by platform (claude, chatgpt, gemini, etc.)
-- `-l, --limit <n>` - Max results (default: 20)
+- `-l, --limit <n>` - Max chats to scan (default: 20)
 - `-c, --context <chars>` - Context around match (default: 120)
 - `-f, --format <fmt>` - Output format (text, json)
-- `--after <date>` - Only chats after date (YYYY-MM-DD)
-- `--before <date>` - Only chats before date
+- `--after <date>` - Only messages after date (YYYY-MM-DD)
+- `--before <date>` - Only messages before date
+
+#### Search Syntax
+
+HAEVN uses **Lunr.js** for full-text search with advanced query operators:
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| (none) | `term1 term2` | All terms must match (AND logic) |
+| `"..."` | `"exact phrase"` | Phrase must appear consecutively |
+| `-` | `-exclude` | Term must NOT be present |
+| `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, etc. |
+| `~` | `roam~2` | Fuzzy match with edit distance 2 |
+| `^` | `api^10` | Boost term relevance |
+
+**Examples:**
+
+```bash
+# Basic AND search
+haevn search "python async function"
+
+# Exact phrase
+haevn search '"machine learning"'
+
+# Exclude unwanted terms
+haevn search "react hooks -class"
+
+# Fuzzy matching (catches typos)
+haevn search "kubernates~2"
+
+# Prefix/wildcard
+haevn search "async* await*"
+
+# Boost important terms
+haevn search "api^5 design documentation"
+```
+
+If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics).
 
 ### `get` - Fetch a chat branch
 
@@ -186,6 +244,35 @@ pnpm start        # Run CLI
 pnpm typecheck    # Type-check CLI
 pnpm lint         # Check code
 ```
+
+## Publishing (maintainers)
+
+### Automated (recommended)
+
+From repo root:
+
+```bash
+pnpm run cli:release:patch
+# or: cli:release:minor / cli:release:major
+```
+
+This bumps `cli/package.json`, creates a `cli-vX.Y.Z` tag, and pushes it.
+GitHub Actions workflow `.github/workflows/publish-cli.yml` then publishes to npm.
+
+### Manual
+
+```bash
+cd cli
+pnpm install
+pnpm run build
+npm publish
+```
+
+Notes:
+- Package name: `@haevn/cli`
+- Access: public (configured via `publishConfig.access`)
+- `prepublishOnly` runs build + typecheck automatically
+- CI publish requires repo secret `NPM_TOKEN`
 
 ## Architecture
 
