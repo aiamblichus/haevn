@@ -41,7 +41,9 @@ import { generateForChat } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
+import { validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
+import { parseMarkdownContent } from "../utils/markdownImporter";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
@@ -91,7 +93,7 @@ interface WsExportOptions {
   includeMedia?: boolean;
 }
 
-type WsImportFormat = "claude_code" | "codex" | "pi";
+type WsImportFormat = "claude_code" | "codex" | "pi" | "haevn_json" | "markdown";
 
 interface WsImportFilePayload {
   name: string;
@@ -210,6 +212,14 @@ function maybeStripBinary(
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+async function wssha256Hex(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /** Alarm name used to wake a dormant SW and attempt reconnection. */
 export const WS_RECONNECT_ALARM = "haevn-ws-reconnect";
 
@@ -237,13 +247,9 @@ let reconnectAttempts = 0;
  * Gracefully no-ops if the daemon is not running.
  */
 export function initWsBridge(): void {
-  connect();
-
-  chrome.alarms.create(WS_RECONNECT_ALARM, {
-    periodInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
+  applyWsBridgeSettings().catch((err) => {
+    log.warn("[WsBridge] Failed to initialize bridge settings:", err);
   });
-
-  schedulePings();
 }
 
 /**
@@ -252,18 +258,16 @@ export function initWsBridge(): void {
  * event loop active and prevent Chrome from terminating it.
  */
 export function handleWsReconnectAlarm(): void {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    sendJson({ type: "ping" });
-  } else {
-    connect();
-  }
+  applyWsBridgeSettings().catch((err) => {
+    log.warn("[WsBridge] Failed to apply bridge settings on reconnect alarm:", err);
+  });
 }
 
 /**
  * Drop the current connection and reconnect with fresh settings.
  * Called after the port or API key changes in Settings.
  */
-export function resetWsBridge(): void {
+export async function resetWsBridge(): Promise<void> {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -275,10 +279,55 @@ export function resetWsBridge(): void {
     socket = null;
     authenticated = false;
   }
-  connect();
+  await applyWsBridgeSettings();
+}
+
+export async function applyWsBridgeSettings(): Promise<void> {
+  let settings: { enabled: boolean };
+  try {
+    settings = await getCliSettings();
+  } catch (err) {
+    log.debug("[WsBridge] Could not read CLI settings:", err);
+    return;
+  }
+
+  if (!settings.enabled) {
+    stopWsBridge();
+    return;
+  }
+
+  chrome.alarms.create(WS_RECONNECT_ALARM, {
+    periodInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
+  });
+  schedulePings();
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    sendJson({ type: "ping" });
+    return;
+  }
+  await connect();
 }
 
 // ─── Connection management ────────────────────────────────────────────────────
+
+function stopWsBridge(): void {
+  chrome.alarms.clear(WS_RECONNECT_ALARM).catch(() => {});
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
+  if (pingTimer !== null) {
+    clearInterval(pingTimer);
+    pingTimer = null;
+  }
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+    socket = null;
+    authenticated = false;
+  }
+}
 
 async function connect(): Promise<void> {
   if (
@@ -288,11 +337,14 @@ async function connect(): Promise<void> {
     return; // already alive
   }
 
-  let settings: { port: number; apiKey: string };
+  let settings: { enabled: boolean; port: number; apiKey: string };
   try {
     settings = await getCliSettings();
   } catch (err) {
     log.debug("[WsBridge] Could not read CLI settings:", err);
+    return;
+  }
+  if (!settings.enabled) {
     return;
   }
 
@@ -350,7 +402,9 @@ function scheduleReconnect(): void {
   reconnectAttempts++;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connect();
+    applyWsBridgeSettings().catch((err) => {
+      log.warn("[WsBridge] Failed to apply bridge settings during reconnect:", err);
+    });
   }, delayMs);
   log.debug(`[WsBridge] Scheduling reconnect in ${delayMs}ms (attempt ${reconnectAttempts})`);
 }
@@ -654,11 +708,18 @@ async function handleImport(
     return { id, success: false, error: "At least one file is required", code: "BAD_REQUEST" };
   }
 
-  if (format !== "claude_code" && format !== "codex" && format !== "pi") {
+  const SUPPORTED_FORMATS: WsImportFormat[] = [
+    "claude_code",
+    "codex",
+    "pi",
+    "haevn_json",
+    "markdown",
+  ];
+  if (!SUPPORTED_FORMATS.includes(format)) {
     return {
       id,
       success: false,
-      error: `Unsupported import format: ${format}`,
+      error: `Unsupported import format: ${format}. Expected one of: ${SUPPORTED_FORMATS.join(", ")}`,
       code: "BAD_REQUEST",
     };
   }
@@ -693,6 +754,11 @@ async function handleImport(
           const extraction = await parsePiJsonl(file.content);
           chat = transformPiToHaevnChat(extraction);
           raw = extraction;
+        } else if (format === "haevn_json") {
+          const contentHash = await wssha256Hex(file.content);
+          chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
+        } else if (format === "markdown") {
+          chat = await parseMarkdownContent(file.content);
         } else {
           const extraction = await parseClaudeCodeJsonl(file.content);
           chat = transformToHaevnChat(extraction);

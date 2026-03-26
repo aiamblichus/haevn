@@ -68,6 +68,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   setOpenWebUIBaseUrl: settingsHandlers.handleSetOpenWebUIBaseUrl as HandlerFunction,
   clearOpenWebUIBaseUrl: settingsHandlers.handleClearOpenWebUIBaseUrl as HandlerFunction,
   getCliSettings: settingsHandlers.handleGetCliSettings as HandlerFunction,
+  setCliEnabled: settingsHandlers.handleSetCliEnabled as HandlerFunction,
   setCliPort: settingsHandlers.handleSetCliPort as HandlerFunction,
   regenerateCliApiKey: settingsHandlers.handleRegenerateCliApiKey as HandlerFunction,
   getMediaContent: mediaHandlers.handleGetMediaContent as HandlerFunction,

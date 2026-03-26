@@ -146,8 +146,11 @@ export const SettingsView = () => {
 // ─── CLI Integration Card ─────────────────────────────────────────────────────
 
 const CliSettingsCard = () => {
+  const [enabled, setEnabled] = useState<boolean>(false);
   const [port, setPort] = useState<string>(String(DEFAULT_CLI_PORT));
   const [apiKey, setApiKey] = useState<string>("");
+  const [enabledError, setEnabledError] = useState<string | null>(null);
+  const [enabledSaved, setEnabledSaved] = useState(false);
   const [portError, setPortError] = useState<string | null>(null);
   const [portSaved, setPortSaved] = useState(false);
   const [keyCopied, setKeyCopied] = useState(false);
@@ -160,6 +163,7 @@ const CliSettingsCard = () => {
       .sendMessage({ action: "getCliSettings" })
       .then((response) => {
         if (response.success) {
+          setEnabled(!!response.enabled);
           setPort(String(response.port));
           setApiKey(response.apiKey ?? "");
         }
@@ -189,6 +193,27 @@ const CliSettingsCard = () => {
     } catch (err: unknown) {
       log.error("Failed to save CLI port:", err);
       setPortError("Failed to save port");
+    }
+  };
+
+  const handleToggleEnabled = async (nextEnabled: boolean) => {
+    setEnabledError(null);
+    setEnabledSaved(false);
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "setCliEnabled",
+        enabled: nextEnabled,
+      });
+      if (!response.success) {
+        setEnabledError(response.error ?? "Failed to update WebSocket server state");
+        return;
+      }
+      setEnabled(nextEnabled);
+      setEnabledSaved(true);
+      setTimeout(() => setEnabledSaved(false), 2000);
+    } catch (err: unknown) {
+      log.error("Failed to toggle CLI WebSocket bridge:", err);
+      setEnabledError("Failed to update WebSocket server state");
     }
   };
 
@@ -235,6 +260,26 @@ const CliSettingsCard = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* WS bridge toggle */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <Checkbox
+              id="cliEnabled"
+              checked={enabled}
+              onCheckedChange={(v) => handleToggleEnabled(!!v)}
+            />
+            <Label htmlFor="cliEnabled" className="cursor-pointer">
+              Enable extension WebSocket bridge (default: off)
+            </Label>
+          </div>
+          {enabledError && <p className="text-xs text-red-600">{enabledError}</p>}
+          {enabledSaved && (
+            <p className="text-xs text-green-600">
+              {enabled ? "Bridge started" : "Bridge stopped"}
+            </p>
+          )}
+        </div>
+
         {/* Port */}
         <div className="space-y-2">
           <Label htmlFor="cliPort">Daemon port</Label>

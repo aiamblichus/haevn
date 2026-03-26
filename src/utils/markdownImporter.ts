@@ -1,5 +1,6 @@
 // Generic Markdown importer for HAEVN Chat format
 
+import objectHash from "object-hash";
 import type {
   Chat,
   ChatMessage,
@@ -9,6 +10,21 @@ import type {
   TextPart,
   UserPromptPart,
 } from "../model/haevn_model";
+
+async function sha256Hex(text: string): Promise<string> {
+  try {
+    if (globalThis.crypto && "subtle" in globalThis.crypto) {
+      const data = new TextEncoder().encode(text);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    }
+  } catch {
+    // fall through to objectHash
+  }
+  return objectHash(text, { algorithm: "sha1" });
+}
 
 /**
  * Parses a Markdown file containing a HAEVN chat export
@@ -31,7 +47,7 @@ export async function parseMarkdownFile(file: File): Promise<Chat> {
   return parseMarkdownContent(text);
 }
 
-export function parseMarkdownContent(content: string): Chat {
+export async function parseMarkdownContent(content: string): Promise<Chat> {
   const lines = content.split("\n");
 
   // Extract metadata from header
@@ -76,8 +92,11 @@ export function parseMarkdownContent(content: string): Chat {
   }
 
   if (!metadata.source) {
-    throw new Error("Missing required metadata: **Source:** provider-name");
+    metadata.source = "unknown";
   }
+
+  // Stable chat ID: prefer explicit conversation ID from metadata, fall back to SHA-256 of content
+  const chatId = metadata["conversation id"] || (await sha256Hex(content));
 
   // Parse messages from content after header
   const messageSections = content
@@ -133,7 +152,7 @@ export function parseMarkdownContent(content: string): Chat {
         model: models[0] || "unknown",
         done: true,
         timestamp: Date.now(),
-        chatId: metadata["conversation id"] || `imported_${Date.now()}`,
+        chatId,
       };
 
       messages[messageId] = chatMessage;
@@ -158,7 +177,7 @@ export function parseMarkdownContent(content: string): Chat {
         model: models[0] || "unknown",
         done: true,
         timestamp: Date.now(),
-        chatId: metadata["conversation id"] || `imported_${Date.now()}`,
+        chatId,
       };
 
       messages[messageId] = chatMessage;
@@ -188,9 +207,6 @@ export function parseMarkdownContent(content: string): Chat {
       msg.childrenIds = [messageIds[i + 1]];
     }
   }
-
-  // Create chat ID if not provided
-  const chatId = metadata["conversation id"] || `imported_${Date.now()}`;
 
   // If system prompt exists and we have messages, add it as SystemPromptPart to first user message
   if (systemPrompt && messageIds.length > 0) {

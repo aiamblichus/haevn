@@ -1,150 +1,66 @@
-// Generic JSON importer for HAEVN Chat format
-
-import type { Chat, ChatMessage, ModelRequest, ModelResponse } from "../model/haevn_model";
-
 /**
- * Validates that a JSON object matches the HAEVN Chat structure
+ * Validates and normalizes a raw parsed object into a HAEVN Chat.
+ * Used when importing single-file haevn_json payloads where the input
+ * is user-supplied and may be malformed or incomplete.
  */
-export function validateAndNormalizeChat(json: unknown): Chat {
-  if (!json || typeof json !== "object") {
-    throw new Error("Chat must be an object");
+
+import type { Chat } from "../model/haevn_model";
+
+export function validateAndNormalizeChat(raw: unknown, contentHash: string): Chat {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `Invalid HAEVN JSON: expected a chat object, got ${Array.isArray(raw) ? "array" : typeof raw}`,
+    );
   }
 
-  const chatJson = json as Record<string, unknown>;
+  const obj = raw as Record<string, unknown>;
 
-  // Required fields
-  if (!chatJson.source || typeof chatJson.source !== "string") {
-    throw new Error("Missing or invalid required field: source");
-  }
-  if (!chatJson.sourceId || typeof chatJson.sourceId !== "string") {
-    throw new Error("Missing or invalid required field: sourceId");
-  }
-  if (!chatJson.title || typeof chatJson.title !== "string") {
-    throw new Error("Missing or invalid required field: title");
-  }
-  if (!Array.isArray(chatJson.models)) {
-    throw new Error("Missing or invalid required field: models (must be array)");
-  }
-  if (!chatJson.messages || typeof chatJson.messages !== "object") {
-    throw new Error("Missing or invalid required field: messages (must be object)");
-  }
-  if (!chatJson.currentId || typeof chatJson.currentId !== "string") {
-    throw new Error("Missing or invalid required field: currentId");
-  }
-  if (typeof chatJson.timestamp !== "number") {
-    throw new Error("Missing or invalid required field: timestamp (must be number)");
+  if (typeof obj.title !== "string" || !obj.title.trim()) {
+    throw new Error('Invalid HAEVN JSON: missing or empty required field "title"');
   }
 
-  // Validate messages structure
-  const messages: { [key: string]: ChatMessage } = {};
-  for (const [msgId, msg] of Object.entries(chatJson.messages)) {
-    if (!msg || typeof msg !== "object") {
-      throw new Error(`Invalid message at key ${msgId}: must be an object`);
-    }
-    const chatMsg = msg as Record<string, unknown>;
-
-    if (!chatMsg.id || typeof chatMsg.id !== "string") {
-      throw new Error(`Message ${msgId}: missing or invalid id`);
-    }
-    if (!Array.isArray(chatMsg.message)) {
-      throw new Error(`Message ${msgId}: missing or invalid message array`);
-    }
-    if (chatMsg.message.length === 0) {
-      throw new Error(`Message ${msgId}: message array cannot be empty`);
-    }
-    if (!chatMsg.model || typeof chatMsg.model !== "string") {
-      throw new Error(`Message ${msgId}: missing or invalid model`);
-    }
-    if (typeof chatMsg.done !== "boolean") {
-      throw new Error(`Message ${msgId}: missing or invalid done flag`);
-    }
-    if (!Array.isArray(chatMsg.childrenIds)) {
-      throw new Error(`Message ${msgId}: missing or invalid childrenIds (must be array)`);
-    }
-    // Validate parentId if present (it's optional)
-    if (
-      chatMsg.parentId !== undefined &&
-      chatMsg.parentId !== null &&
-      typeof chatMsg.parentId !== "string"
-    ) {
-      throw new Error(`Message ${msgId}: invalid parentId (must be string, undefined, or null)`);
-    }
-
-    // Validate message parts
-    const modelMsg = chatMsg.message[0];
-    if (modelMsg.kind === "request") {
-      const req = modelMsg as ModelRequest;
-      if (!Array.isArray(req.parts)) {
-        throw new Error(`Message ${msgId}: request parts must be an array`);
-      }
-      // Validate system prompt parts if present
-      for (const part of req.parts) {
-        if (part.part_kind === "system-prompt") {
-          if (typeof part.content !== "string") {
-            throw new Error(`Message ${msgId}: system-prompt content must be a string`);
-          }
-          if (!part.timestamp || typeof part.timestamp !== "string") {
-            throw new Error(`Message ${msgId}: system-prompt must have timestamp`);
-          }
-        }
-      }
-    } else if (modelMsg.kind === "response") {
-      const resp = modelMsg as ModelResponse;
-      if (!Array.isArray(resp.parts)) {
-        throw new Error(`Message ${msgId}: response parts must be an array`);
-      }
-      if (!resp.timestamp || typeof resp.timestamp !== "string") {
-        throw new Error(`Message ${msgId}: response must have timestamp`);
-      }
-    } else {
-      throw new Error(`Message ${msgId}: invalid message kind: ${modelMsg.kind}`);
-    }
-
-    messages[msgId] = chatMsg as unknown as ChatMessage;
+  if (!obj.messages || typeof obj.messages !== "object" || Array.isArray(obj.messages)) {
+    throw new Error(
+      'Invalid HAEVN JSON: "messages" must be a non-null object (message dictionary)',
+    );
   }
 
-  // Rebuild parent-child relationships to ensure consistency
-  // This is critical for maintaining message tree structure, especially for branched conversations
-  Object.values(messages).forEach((msg) => {
-    // Clear existing childrenIds - we'll rebuild them from parentId relationships
-    msg.childrenIds = [];
-  });
+  if (Object.keys(obj.messages as object).length === 0) {
+    throw new Error("Invalid HAEVN JSON: chat has no messages");
+  }
 
-  // Build childrenIds arrays from parentId relationships
-  Object.values(messages).forEach((msg) => {
-    if (msg.parentId && messages[msg.parentId]) {
-      // Only add to parent's childrenIds if not already present
-      if (!messages[msg.parentId].childrenIds.includes(msg.id)) {
-        messages[msg.parentId].childrenIds.push(msg.id);
-      }
-    }
-  });
+  if (typeof obj.currentId !== "string" || !obj.currentId) {
+    throw new Error('Invalid HAEVN JSON: missing or empty required field "currentId"');
+  }
 
-  // Build normalized chat object
-  const chat: Chat = {
-    source: chatJson.source as string,
-    sourceId: chatJson.sourceId as string,
-    title: chatJson.title as string,
-    models: chatJson.models as string[],
-    system: chatJson.system as string | undefined, // Optional system prompt (string)
-    params: (chatJson.params as Record<string, unknown>) || {},
-    currentId: chatJson.currentId as string,
-    messages,
-    tags: Array.isArray(chatJson.tags) ? (chatJson.tags as string[]) : [],
-    timestamp: chatJson.timestamp as number,
-    files: chatJson.files as Record<string, unknown>[] | undefined,
-    lastSyncedTimestamp: (chatJson.lastSyncedTimestamp as number) || Date.now(),
-    providerLastModifiedTimestamp: chatJson.providerLastModifiedTimestamp as number | undefined,
-    checksum: (chatJson.checksum as string) || "",
-    syncStatus: (chatJson.syncStatus as Chat["syncStatus"]) || "new",
-    lastSyncAttemptMessage: chatJson.lastSyncAttemptMessage as string | undefined,
+  // Apply defaults for fields that can be synthesized
+  const source = typeof obj.source === "string" && obj.source ? obj.source : "unknown";
+  const sourceId = typeof obj.sourceId === "string" && obj.sourceId ? obj.sourceId : contentHash;
+  const id = typeof obj.id === "string" && obj.id ? obj.id : sourceId;
+
+  return {
+    ...obj,
+    id,
+    source,
+    sourceId,
+    title: obj.title as string,
+    models: Array.isArray(obj.models) ? (obj.models as string[]) : [],
+    params:
+      obj.params && typeof obj.params === "object" && !Array.isArray(obj.params)
+        ? (obj.params as Record<string, unknown>)
+        : {},
+    tags: Array.isArray(obj.tags) ? (obj.tags as string[]) : [],
+    timestamp: typeof obj.timestamp === "number" ? obj.timestamp : Date.now(),
+    currentId: obj.currentId as string,
+    messages: obj.messages as Chat["messages"],
+    lastSyncedTimestamp:
+      typeof obj.lastSyncedTimestamp === "number" ? obj.lastSyncedTimestamp : Date.now(),
+    checksum: typeof obj.checksum === "string" ? obj.checksum : "",
+    syncStatus: (["synced", "changed", "error", "pending", "new"] as const).includes(
+      obj.syncStatus as never,
+    )
+      ? (obj.syncStatus as Chat["syncStatus"])
+      : "synced",
+    deleted: obj.deleted === 1 ? 1 : 0,
   };
-
-  // Generate ID if missing
-  if (!chat.id) {
-    // Use sourceId as fallback, or generate from timestamp
-    chat.id = chat.sourceId || `imported_${chat.timestamp}`;
-  }
-
-  return chat;
 }

@@ -5,6 +5,7 @@ import {
   getCliSettings,
   getOpenWebUIBaseUrl,
   regenerateCliApiKey,
+  setCliEnabled,
   setCliPort,
   setOpenWebUIBaseUrl,
 } from "../../services/settingsService";
@@ -98,9 +99,9 @@ export async function handleSetCliPort(
 ): Promise<void> {
   try {
     await setCliPort(message.port);
-    // Reconnect the WS bridge with the new port (lazy import to avoid circular deps).
+    // Reapply bridge state with updated settings (lazy import to avoid circular deps).
     const { resetWsBridge } = await import("../wsBridge");
-    resetWsBridge();
+    await resetWsBridge();
     sendResponse({ success: true });
   } catch (err: unknown) {
     sendResponse({
@@ -116,14 +117,31 @@ export async function handleRegenerateCliApiKey(
 ): Promise<void> {
   try {
     const apiKey = await regenerateCliApiKey();
-    // Reconnect immediately so the new key is used for auth.
+    // Reapply bridge state so the new key is used for auth.
     const { resetWsBridge } = await import("../wsBridge");
-    resetWsBridge();
+    await resetWsBridge();
     sendResponse({ success: true, apiKey });
   } catch (err: unknown) {
     sendResponse({
       success: false,
       error: err instanceof Error ? err.message : "Failed to regenerate CLI API key",
+    });
+  }
+}
+
+export async function handleSetCliEnabled(
+  message: Extract<BackgroundRequest, { action: "setCliEnabled" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    await setCliEnabled(message.enabled);
+    const { applyWsBridgeSettings } = await import("../wsBridge");
+    await applyWsBridgeSettings();
+    sendResponse({ success: true });
+  } catch (err: unknown) {
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to set CLI bridge state",
     });
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Service for managing extension settings, particularly OpenWebUI instance configuration
- * and CLI integration (WebSocket daemon port + API key).
+ * and CLI integration (WebSocket daemon enable flag + port + API key).
  */
 
 import { getStorageAdapter } from "../storage";
@@ -112,10 +112,13 @@ export async function clearOpenWebUIBaseUrl(): Promise<void> {
 
 const CLI_PORT_KEY = "haevn.cli.port";
 const CLI_API_KEY_KEY = "haevn.cli.apiKey";
+const CLI_ENABLED_KEY = "haevn.cli.enabled";
 
 export const DEFAULT_CLI_PORT = 5517;
+export const DEFAULT_CLI_ENABLED = false;
 
 export interface CliSettings {
+  enabled: boolean;
   port: number;
   apiKey: string;
 }
@@ -126,6 +129,7 @@ export interface CliSettings {
  */
 export async function getCliSettings(): Promise<CliSettings> {
   const storage = getStorageAdapter();
+  const enabled = (await storage.get<boolean>(CLI_ENABLED_KEY)) ?? DEFAULT_CLI_ENABLED;
   const port = (await storage.get<number>(CLI_PORT_KEY)) ?? DEFAULT_CLI_PORT;
 
   let apiKey = await storage.get<string>(CLI_API_KEY_KEY);
@@ -135,7 +139,12 @@ export async function getCliSettings(): Promise<CliSettings> {
     log.info("[SettingsService] Generated new CLI API key");
   }
 
-  return { port, apiKey };
+  return { enabled, port, apiKey };
+}
+
+export async function setCliEnabled(enabled: boolean): Promise<void> {
+  await getStorageAdapter().set(CLI_ENABLED_KEY, !!enabled);
+  log.info("[SettingsService] CLI WebSocket bridge enabled flag updated", { enabled: !!enabled });
 }
 
 /**
