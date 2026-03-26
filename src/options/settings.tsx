@@ -334,7 +334,6 @@ const AIMetadataSettingsCard = () => {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryDesc, setNewCategoryDesc] = useState("");
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
-  const [queuing, setQueuing] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const pendingEnableRef = useRef(false);
@@ -403,18 +402,6 @@ const AIMetadataSettingsCard = () => {
     }, 4000);
     return () => clearInterval(interval);
   }, [config.enabled, loadQueueStatus]);
-
-  const handleQueueMissing = async () => {
-    setQueuing(true);
-    try {
-      await chrome.runtime.sendMessage({ action: "queueMissingMetadata" });
-      await loadQueueStatus();
-    } catch {
-      // ignore
-    } finally {
-      setQueuing(false);
-    }
-  };
 
   const handleRebuildAll = async () => {
     setRebuilding(true);
@@ -591,7 +578,12 @@ const AIMetadataSettingsCard = () => {
                   checked={config.indexMissing}
                   onCheckedChange={(v) => {
                     save({ indexMissing: !!v });
-                    if (v) handleQueueMissing();
+                    if (v) {
+                      chrome.runtime
+                        .sendMessage({ action: "queueMissingMetadata" })
+                        .then(() => loadQueueStatus())
+                        .catch(() => {});
+                    }
                   }}
                 />
                 <Label htmlFor="metaIndexMissing" className="cursor-pointer">
@@ -599,40 +591,20 @@ const AIMetadataSettingsCard = () => {
                 </Label>
               </div>
 
-              {/* Queue status + manual trigger */}
-              <div className="rounded-md border px-3 py-2.5 space-y-2 bg-muted/30">
+              {/* Queue status + rebuild */}
+              <div className="rounded-md border px-3 py-2.5 bg-muted/30">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <p className="text-xs text-muted-foreground">
                     {queueStatus === null ? "Loading…" : formatQueueStatus(queueStatus)}
                   </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => setShowRebuildConfirm(true)}
-                      disabled={rebuilding || queuing}
-                    >
-                      {rebuilding ? "Rebuilding…" : "Rebuild all"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleQueueMissing}
-                      disabled={
-                        queuing ||
-                        rebuilding ||
-                        (queueStatus !== null &&
-                          queueStatus.missing === 0 &&
-                          queueStatus.failed === 0)
-                      }
-                    >
-                      {queuing
-                        ? "Queuing…"
-                        : queueStatus !== null && queueStatus.missing + queueStatus.failed > 0
-                          ? `Queue ${queueStatus.missing + queueStatus.failed} chats`
-                          : "Nothing to queue"}
-                    </Button>
-                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setShowRebuildConfirm(true)}
+                    disabled={rebuilding}
+                  >
+                    {rebuilding ? "Rebuilding…" : "Rebuild all"}
+                  </Button>
                 </div>
               </div>
             </>
