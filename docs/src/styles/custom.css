@@ -40,6 +40,11 @@
   --sl-border-radius: 0;
 }
 
+/* Fix light-mode contrast: Starlight asides use --sl-color-white for body text */
+:root[data-theme="light"] {
+  --sl-color-white: hsl(224 10% 10%);
+}
+
 /* Background with harbor gradient and scanline effect */
 html {
   background:
