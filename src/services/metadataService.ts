@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
-import type { ChatMetadataRecord } from "./db";
+import type { ChatMetadataRecord, StoredChatMessage } from "./db";
 import { getDB } from "./db";
 import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
@@ -259,6 +259,181 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
 const OTHER_CATEGORY = "Other";
 
+// ─── Message Sampling ─────────────────────────────────────────────────────────
+
+/** Total messages to include in the LLM prompt. */
+const SAMPLE_TARGET = 50;
+/** Max characters per message excerpt (~750 tokens each at average density). */
+const CHARS_PER_MSG = 3000;
+
+/**
+ * Extract the display role and plain text from a stored ChatMessage.
+ * Handles the ModelMessage format (kind: "request" | "response" with parts).
+ * Returns null if no text content is found.
+ */
+function getMessageRoleAndText(
+  cm: StoredChatMessage,
+): { role: "user" | "assistant"; text: string } | null {
+  for (const mm of cm.message ?? []) {
+    const parts: string[] = [];
+
+    if (mm.kind === "request") {
+      for (const part of mm.parts) {
+        const p = part as { part_kind?: string; content?: unknown };
+        if (p.part_kind === "user-prompt" || p.part_kind === "system-prompt") {
+          if (typeof p.content === "string") {
+            parts.push(p.content);
+          } else if (Array.isArray(p.content)) {
+            for (const c of p.content) {
+              if (typeof c === "string") parts.push(c);
+            }
+          }
+        }
+      }
+      const text = parts.join(" ").trim();
+      if (text) return { role: "user", text };
+    } else if (mm.kind === "response") {
+      for (const part of mm.parts) {
+        const p = part as { part_kind?: string; content?: string };
+        if ((p.part_kind === "text" || p.part_kind === "thinking") && p.content) {
+          parts.push(p.content);
+        }
+      }
+      const text = parts.join(" ").trim();
+      if (text) return { role: "assistant", text };
+    }
+  }
+  return null;
+}
+
+/**
+ * Walk the deepest path from startId, always following the child with the
+ * largest subtree at each branching point.
+ */
+function walkDeepestPath(
+  startId: string,
+  byId: Map<string, StoredChatMessage>,
+  subtreeSize: Map<string, number>,
+): StoredChatMessage[] {
+  const path: StoredChatMessage[] = [];
+  let current = byId.get(startId);
+  while (current) {
+    path.push(current);
+    const children = (current.childrenIds ?? []).filter((cid) => byId.has(cid));
+    if (children.length === 0) break;
+    const nextId = children.reduce((best, cid) =>
+      (subtreeSize.get(cid) ?? 0) > (subtreeSize.get(best) ?? 0) ? cid : best,
+    );
+    current = byId.get(nextId);
+  }
+  return path;
+}
+
+/** Sample n items evenly distributed from arr. */
+function evenSample<T>(arr: T[], n: number): T[] {
+  if (n <= 0 || arr.length === 0) return [];
+  if (arr.length <= n) return [...arr];
+  const result: T[] = [];
+  for (let i = 0; i < n; i++) {
+    result.push(arr[Math.floor((i / n) * arr.length)]);
+  }
+  return result;
+}
+
+interface ConversationSection {
+  label: string | null;
+  messages: StoredChatMessage[];
+}
+
+/**
+ * Build sampled conversation sections from a flat message list.
+ *
+ * For short conversations (≤ SAMPLE_TARGET), returns everything as a single section.
+ * For longer ones:
+ *   - Builds the message tree from parentId/childrenIds
+ *   - Walks the main thread (deepest path — at each fork, follows the child with most descendants)
+ *   - Samples beginning (40%), middle (35%), end (25%) of the main thread
+ *   - Appends a short sample from any significant alternate branches (≥ 3 messages)
+ */
+function buildSampledSections(messages: StoredChatMessage[]): ConversationSection[] {
+  if (messages.length === 0) return [];
+
+  const byId = new Map<string, StoredChatMessage>();
+  for (const m of messages) byId.set(m.id, m);
+
+  if (messages.length <= SAMPLE_TARGET) {
+    return [{ label: null, messages }];
+  }
+
+  // Compute subtree sizes via memoized recursion
+  const subtreeSize = new Map<string, number>();
+  function getSize(id: string): number {
+    const cached = subtreeSize.get(id);
+    if (cached !== undefined) return cached;
+    const msg = byId.get(id);
+    if (!msg) return 0;
+    const size =
+      1 +
+      (msg.childrenIds ?? [])
+        .filter((cid) => byId.has(cid))
+        .reduce((s, cid) => s + getSize(cid), 0);
+    subtreeSize.set(id, size);
+    return size;
+  }
+  for (const m of messages) getSize(m.id);
+
+  // Identify roots (no parent, or parent not present in this chat)
+  const roots = messages.filter((m) => !m.parentId || !byId.has(m.parentId));
+  const bestRoot = roots.reduce((best, m) => (getSize(m.id) > getSize(best.id) ? m : best));
+
+  const mainThread = walkDeepestPath(bestRoot.id, byId, subtreeSize);
+  const mainSet = new Set(mainThread.map((m) => m.id));
+
+  // Collect significant alternate branches (≥ 3 messages) off the main thread
+  const branchMessages: StoredChatMessage[] = [];
+  for (const msg of mainThread) {
+    const altChildren = (msg.childrenIds ?? []).filter((cid) => byId.has(cid) && !mainSet.has(cid));
+    for (const cid of altChildren) {
+      if (getSize(cid) >= 3) {
+        const branch = walkDeepestPath(cid, byId, subtreeSize);
+        branchMessages.push(...branch.slice(0, 4));
+      }
+    }
+  }
+
+  // Budget allocation
+  const branchBudget = Math.min(
+    branchMessages.length,
+    Math.min(9, Math.floor(SAMPLE_TARGET * 0.15)),
+  );
+  const mainBudget = SAMPLE_TARGET - branchBudget;
+
+  // Divide main budget: beginning 40%, middle 35%, end 25%
+  const beginCount = Math.ceil(mainBudget * 0.4);
+  const endCount = Math.ceil(mainBudget * 0.25);
+  const midCount = mainBudget - beginCount - endCount;
+
+  const begin = mainThread.slice(0, beginCount);
+  const end = mainThread.slice(-endCount);
+  const midPool = mainThread.slice(beginCount, mainThread.length - endCount);
+  const mid = evenSample(midPool, midCount);
+
+  const sections: ConversationSection[] = [
+    { label: null, messages: begin },
+    { label: "Mid-conversation sample", messages: mid },
+    { label: "End of conversation", messages: end },
+  ];
+
+  if (branchBudget > 0) {
+    sections.push({
+      label: "Alternate branch sample",
+      messages: branchMessages.slice(0, branchBudget),
+    });
+  }
+
+  return sections.filter((s) => s.messages.length > 0);
+}
+
 function buildMetadataSchema(categories: CategoryConfig[]) {
   // Build the union of all configured category names plus the always-present "Other"
   const allNames = [...categories.map((c) => c.name), OTHER_CATEGORY];
@@ -299,35 +474,24 @@ function buildMetadataSchema(categories: CategoryConfig[]) {
 
 function buildConversationText(
   chat: { title?: string; source?: string },
-  messages: Array<{ role?: string; content?: unknown }>,
+  messages: StoredChatMessage[],
 ): string {
   const lines: string[] = [];
   if (chat.title) lines.push(`Title: ${chat.title}`);
   if (chat.source) lines.push(`Platform: ${chat.source}`);
-  lines.push("");
 
-  for (const msg of messages.slice(0, 40)) {
-    const role = msg.role === "user" ? "User" : "Assistant";
-    const content = extractTextContent(msg.content);
-    if (content) {
-      lines.push(`${role}: ${content.slice(0, 500)}`);
+  for (const section of buildSampledSections(messages)) {
+    lines.push("");
+    if (section.label) lines.push(`--- ${section.label} ---`);
+    for (const msg of section.messages) {
+      const extracted = getMessageRoleAndText(msg);
+      if (!extracted) continue;
+      const role = extracted.role === "user" ? "User" : "Assistant";
+      lines.push(`${role}: ${extracted.text.slice(0, CHARS_PER_MSG)}`);
     }
   }
 
   return lines.join("\n");
-}
-
-function extractTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) =>
-        typeof c === "object" && c && "text" in c ? String((c as { text: unknown }).text) : "",
-      )
-      .filter(Boolean)
-      .join(" ");
-  }
-  return "";
 }
 
 async function callLLM(
