@@ -87,6 +87,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   setMetadataAIConfig: metadataHandlers.handleSetMetadataAIConfig as HandlerFunction,
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
+  rebuildAllMetadata: metadataHandlers.handleRebuildAllMetadata as HandlerFunction,
 };
 
 export function handleMessage(

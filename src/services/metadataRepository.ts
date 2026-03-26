@@ -52,3 +52,10 @@ export async function removeMany(chatIds: string[]): Promise<void> {
     log.warn("[MetadataRepository] Failed to bulk-delete metadata records", err);
   }
 }
+
+/** Delete every metadata record and clear the queue — used by "Rebuild All". */
+export async function clearAll(): Promise<void> {
+  await getDB().chatMetadata.clear();
+  await getDB().metadataQueue.clear();
+  log.info("[MetadataRepository] Cleared all metadata and queue");
+}

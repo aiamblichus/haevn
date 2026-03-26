@@ -306,7 +306,8 @@ export type BackgroundRequest =
   | { action: "getMetadataAIConfig" }
   | { action: "setMetadataAIConfig"; config: Partial<MetadataAIConfig> }
   | { action: "queueMissingMetadata" }
-  | { action: "getMetadataQueueStatus" };
+  | { action: "getMetadataQueueStatus" }
+  | { action: "rebuildAllMetadata" };
 
 // ======================
 // Background Response Messages

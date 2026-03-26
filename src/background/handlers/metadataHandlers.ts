@@ -111,3 +111,18 @@ export async function handleGetMetadataQueueStatus(
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
+
+export async function handleRebuildAllMetadata(
+  _message: Extract<BackgroundRequest, { action: "rebuildAllMetadata" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    await MetadataRepository.clearAll();
+    const queued = await enqueueAllMissing();
+    log.info(`[MetadataHandlers] Rebuild all: cleared metadata, queued ${queued} chats`);
+    sendResponse({ success: true, data: { queued } });
+  } catch (err) {
+    log.error("[MetadataHandlers] rebuildAllMetadata failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}

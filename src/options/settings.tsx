@@ -335,6 +335,8 @@ const AIMetadataSettingsCard = () => {
   const [newCategoryDesc, setNewCategoryDesc] = useState("");
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [queuing, setQueuing] = useState(false);
+  const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const pendingEnableRef = useRef(false);
 
   useEffect(() => {
@@ -414,6 +416,19 @@ const AIMetadataSettingsCard = () => {
     }
   };
 
+  const handleRebuildAll = async () => {
+    setRebuilding(true);
+    setShowRebuildConfirm(false);
+    try {
+      await chrome.runtime.sendMessage({ action: "rebuildAllMetadata" });
+      await loadQueueStatus();
+    } catch {
+      // ignore
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
   const handleAddCategory = () => {
     const name = newCategoryName.trim();
     if (!name || config.categories.some((c) => c.name === name)) return;
@@ -431,6 +446,33 @@ const AIMetadataSettingsCard = () => {
 
   return (
     <>
+      <Dialog
+        open={showRebuildConfirm}
+        onOpenChange={(open) => !open && setShowRebuildConfirm(false)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rebuild All Metadata?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete all existing metadata (titles, descriptions, categories,
+              keywords) for every chat and re-queue them for AI generation.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Any metadata you have set or edited manually will be lost. The AI will regenerate
+            everything from scratch. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRebuildConfirm(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRebuildAll}>
+              Yes, rebuild all
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showWarning} onOpenChange={(open) => !open && handleWarningCancel()}>
         <DialogContent>
           <DialogHeader>
@@ -563,23 +605,34 @@ const AIMetadataSettingsCard = () => {
                   <p className="text-xs text-muted-foreground">
                     {queueStatus === null ? "Loading…" : formatQueueStatus(queueStatus)}
                   </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleQueueMissing}
-                    disabled={
-                      queuing ||
-                      (queueStatus !== null &&
-                        queueStatus.missing === 0 &&
-                        queueStatus.failed === 0)
-                    }
-                  >
-                    {queuing
-                      ? "Queuing…"
-                      : queueStatus !== null && queueStatus.missing + queueStatus.failed > 0
-                        ? `Queue ${queueStatus.missing + queueStatus.failed} chats`
-                        : "Nothing to queue"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setShowRebuildConfirm(true)}
+                      disabled={rebuilding || queuing}
+                    >
+                      {rebuilding ? "Rebuilding…" : "Rebuild all"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleQueueMissing}
+                      disabled={
+                        queuing ||
+                        rebuilding ||
+                        (queueStatus !== null &&
+                          queueStatus.missing === 0 &&
+                          queueStatus.failed === 0)
+                      }
+                    >
+                      {queuing
+                        ? "Queuing…"
+                        : queueStatus !== null && queueStatus.missing + queueStatus.failed > 0
+                          ? `Queue ${queueStatus.missing + queueStatus.failed} chats`
+                          : "Nothing to queue"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             </>
