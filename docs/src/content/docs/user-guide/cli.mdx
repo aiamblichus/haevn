@@ -39,6 +39,7 @@ haevn list -l 5
 - `haevn search "<query>"` — message-level search with context snippets.
 - `haevn branches <chatId>` — inspect tree/forks with short message refs.
 - `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
+- `haevn info <chatId>` — view or edit metadata for a single chat.
 - `haevn export <chatId> -o file.json` — export full chat.
 - `haevn import --format <claude_code|codex|pi> <file...>` — import local JSONL session files.
 
@@ -146,6 +147,41 @@ Sample `branches` output:
    [ae4beb4aea54] * [user]
    [92de52f1f6b0] * [user] **User Profile:** The user provided the…
    [80a6c24e0af9] * [user] Hey! I need research on philosophical a…
+```
+
+## Viewing and editing chat metadata
+
+The `info` command lets you inspect or update the [AI-generated metadata](/user-guide/metadata/) for any chat.
+
+```bash
+# View current metadata (title, description, synopsis, categories, keywords)
+haevn info <chatId>
+
+# Set or override individual fields
+haevn info <chatId> --title "Better Title"
+haevn info <chatId> --description "A short summary"
+haevn info <chatId> --categories "Coding,DevTools Automation"
+haevn info <chatId> --keywords "typescript,chrome-extension"
+
+# Trigger AI generation (or re-generation) for one chat
+haevn info <chatId> --generate
+
+# Output as JSON
+haevn info <chatId> --format json
+```
+
+Sample output:
+
+```text
+━━ metadata  68937df7-e198-8325-973e-ed9528104e0c
+
+  Title:         Emergence and Consciousness Research
+  Description:   Explores philosophical frameworks for emergent intelligence and AI consciousness.
+  Synopsis:      The user asks for research on philosophical approaches to consciousness …
+  Categories:    AI Research, Philosophy and Consciousness
+  Keywords:      emergence, consciousness, rlhf, post-human
+
+  source: ai  updated 2 hours ago · generated 2 hours ago
 ```
 
 ## JSON mode for automation

@@ -148,6 +148,37 @@ Options:
 - `-f, --format <fmt>` - Output format (tree, json)
 - `--show-ids` - Include raw message IDs (tree always shows short refs)
 
+### `info` - View or edit chat metadata
+
+```bash
+# View current metadata
+haevn info <chatId>
+
+# Set title, description, synopsis
+haevn info <chatId> --title "My Title"
+haevn info <chatId> --description "A short summary"
+haevn info <chatId> --synopsis "A paragraph-length overview"
+
+# Set keywords and categories (comma-separated)
+haevn info <chatId> --keywords "typescript,react,hooks"
+haevn info <chatId> --categories "Coding,DevTools Automation"
+
+# Trigger AI generation for this chat (requires AI config in Settings)
+haevn info <chatId> --generate
+
+# Output as JSON
+haevn info <chatId> --format json
+```
+
+Options:
+- `--title <text>` - Set the metadata title
+- `-d, --description <text>` - Set the description
+- `-s, --synopsis <text>` - Set the synopsis
+- `-k, --keywords <list>` - Set keywords (comma-separated)
+- `--categories <list>` - Set categories (comma-separated)
+- `-g, --generate` - AI-generate metadata (requires AI config in Settings)
+- `-f, --format <fmt>` - Output format (text, json)
+
 ### `export` - Export full chat
 
 ```bash
@@ -285,6 +316,7 @@ cli/
 │   │   ├── get.ts
 │   │   ├── list.ts
 │   │   ├── branches.ts
+│   │   ├── info.ts
 │   │   ├── export.ts
 │   │   ├── import.ts
 │   │   └── daemon.ts

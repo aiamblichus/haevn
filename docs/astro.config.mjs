@@ -51,6 +51,7 @@ export default defineConfig({
             { label: "Gallery", slug: "user-guide/gallery" },
             { label: "Import", slug: "user-guide/import" },
             { label: "Export", slug: "user-guide/export" },
+            { label: "AI Metadata", slug: "user-guide/metadata" },
           ],
         },
         {

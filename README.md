@@ -74,11 +74,21 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 - **Platform Backups**: Import from ChatGPT, Claude, and other platform exports
 - **Duplicate Detection**: Smart handling of existing conversations
 
+### 🏷️ AI Metadata
+
+- **Auto-generate**: Titles, descriptions, synopses, categories, and keywords via any OpenAI-compatible LLM
+- **Local-model friendly**: Works with Ollama and LM Studio for privacy-first enrichment
+- **Custom categories**: Define your own topic taxonomy with names and descriptions — the AI classifies every chat into them
+- **Category filtering**: Browse your archive by topic using the Category dropdown
+- **Queue management**: Background processing with live status, retry on failure, and a Rebuild All option
+- **Manual overrides**: Edit metadata per-chat from the UI or via `haevn info` in the CLI
+
 ### 🗂️ Archive Management
 
 - **Soft Delete**: Delete chats with undo capability (7-day retention)
 - **Provider Stats**: See conversation counts per platform
 - **Storage Overview**: Track your archive size and media usage
+- **Hover preview**: Hover over any row in the archive to see a quick preview of the first few messages
 
 ---
 
@@ -201,6 +211,11 @@ haevn branches <chatId>
 
 # Fetch a specific branch by short ref
 haevn get <chatId> -m <messageRef>
+
+# View or edit metadata for a chat
+haevn info <chatId>
+haevn info <chatId> --title "Better Title" --categories "Coding,DevTools"
+haevn info <chatId> --generate   # AI-generate metadata
 ```
 
 CLI highlights:
@@ -208,6 +223,7 @@ CLI highlights:
 - **Branch-aware listing** (`msgs`, `br`, and branched chat indicator).
 - **Context control** in search (`--context`).
 - **Safer payloads** for `get` by default (media omitted unless explicitly requested).
+- **Metadata management** via `haevn info` — view, edit, or AI-generate metadata per chat.
 
 See [CLI README](./cli/README.md) for full setup and command reference.
 
