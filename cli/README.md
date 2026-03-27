@@ -49,6 +49,7 @@ Options:
 - `-l, --limit <n>` - Max chats to scan (default: 20)
 - `-c, --context <chars>` - Context around match (default: 120)
 - `-f, --format <fmt>` - Output format (text, json)
+- `--no-metadata` - Skip chat metadata in output (default includes metadata)
 - `--after <date>` - Only messages after date (YYYY-MM-DD)
 - `--before <date>` - Only messages before date
 

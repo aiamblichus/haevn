@@ -74,6 +74,7 @@ interface WsSearchOptions {
   before?: string;
   limit?: number;
   contextChars?: number;
+  includeMetadata?: boolean;
 }
 
 interface WsGetOptions {
@@ -529,16 +530,38 @@ async function handleSearch(
     return true;
   });
 
+  const includeMetadata = options.includeMetadata !== false;
+  const category = options.category;
+  const needsMetadataLookup = includeMetadata || (!!category && category !== "all");
+
   const uniqueChatIds = [...new Set(filtered.map((r) => r.chatId))];
   const metaMap =
-    uniqueChatIds.length > 0 ? await MetadataRepository.getMany(uniqueChatIds) : new Map();
-  const enriched = filtered.map((r) => {
-    const meta = metaMap.get(r.chatId);
-    return meta?.title ? { ...r, metaTitle: meta.title } : r;
-  });
+    needsMetadataLookup && uniqueChatIds.length > 0
+      ? await MetadataRepository.getMany(uniqueChatIds)
+      : new Map();
+
+  const enriched = includeMetadata
+    ? filtered.map((r) => {
+        const meta = metaMap.get(r.chatId);
+        if (!meta) return r;
+        return {
+          ...r,
+          ...(meta.title ? { metaTitle: meta.title } : {}),
+          metadata: {
+            title: meta.title,
+            description: meta.description,
+            synopsis: meta.synopsis,
+            categories: meta.categories,
+            keywords: meta.keywords,
+            source: meta.source,
+            generatedAt: meta.generatedAt,
+            updatedAt: meta.updatedAt,
+          },
+        };
+      })
+    : filtered;
 
   // Apply category filter if requested
-  const category = options.category;
   const categoryFiltered =
     category && category !== "all"
       ? enriched.filter((r) => {

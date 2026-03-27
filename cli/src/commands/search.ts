@@ -3,8 +3,8 @@
  */
 
 import { defineCommand } from "citty";
-import { toJsonString } from "../formatters/json";
 import { daemonRequest } from "../daemon/client.js";
+import { toJsonString } from "../formatters/json";
 import type { SearchResult } from "../types";
 import { createMessageRef } from "../utils/messageRefs";
 import { consola, formatPlatform, formatRelativeTime, header, pc, truncate } from "../utils/output";
@@ -45,6 +45,11 @@ export default defineCommand({
       description: "Output format (text, json)",
       default: "text",
     },
+    "no-metadata": {
+      type: "boolean",
+      description: "Skip metadata in text and JSON output",
+      default: false,
+    },
     after: {
       type: "string",
       description: "Only messages after date (YYYY-MM-DD)",
@@ -56,6 +61,7 @@ export default defineCommand({
   },
   async run({ args }) {
     const { query, platform, category, format, after, before, context } = args;
+    const includeMetadata = !args["no-metadata"];
     const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
     const contextChars = context ? Number.parseInt(context, 10) : 120;
 
@@ -64,7 +70,7 @@ export default defineCommand({
       results = await daemonRequest<SearchResult[]>({
         action: "search",
         query,
-        options: { platform, category, limit, after, before, contextChars },
+        options: { platform, category, limit, after, before, contextChars, includeMetadata },
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
@@ -72,13 +78,17 @@ export default defineCommand({
     }
 
     if (format === "json") {
+      const jsonResults = includeMetadata
+        ? results
+        : results.map(({ metadata, metaTitle, ...rest }) => rest);
+
       consola.log(
         toJsonString({
-          results: results.map((result) => ({
+          results: jsonResults.map((result) => ({
             ...result,
             messageRef: createMessageRef(result.chatId, result.messageId),
           })),
-          total: results.length,
+          total: jsonResults.length,
         }),
       );
       return;
@@ -89,7 +99,7 @@ export default defineCommand({
       return;
     }
 
-    consola.log(formatSearchResultsText(results));
+    consola.log(formatSearchResultsText(results, { includeMetadata }));
   },
 });
 
@@ -105,17 +115,35 @@ function renderSnippet(snippet: string): string {
   );
 }
 
-export function formatSearchResultsText(results: SearchResult[]): string {
+export function formatSearchResultsText(
+  results: SearchResult[],
+  options: { includeMetadata?: boolean } = {},
+): string {
   const lines: string[] = [];
+  const includeMetadata = options.includeMetadata !== false;
   let lastChatId: string | null = null;
 
   for (const result of results) {
     // Print a chat header each time we enter a new chat.
     if (result.chatId !== lastChatId) {
       lastChatId = result.chatId;
-      const displayTitle = result.metaTitle || result.chatTitle;
+      const displayTitle = includeMetadata
+        ? (result.metaTitle || result.chatTitle)
+        : result.chatTitle;
       lines.push("");
       lines.push(header(`${result.chatId}  "${truncate(displayTitle, 45)}"`));
+
+      if (includeMetadata && result.metadata) {
+        const description = result.metadata.description?.trim();
+        const keywords = result.metadata.keywords ?? [];
+
+        if (description) {
+          lines.push(`  ${pc.dim("desc:")} ${pc.dim(description)}`);
+        }
+        if (keywords.length > 0) {
+          lines.push(`  ${pc.dim("keywords:")} ${pc.dim(keywords.join(", "))}`);
+        }
+      }
     }
 
     const roleLabel = result.messageRole === "user" ? pc.cyan("user") : pc.magenta("asst");

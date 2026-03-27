@@ -261,11 +261,24 @@ export interface Chat {
 // Search Result Types
 // ======================
 
+export interface SearchResultMetadata {
+  title: string;
+  description: string;
+  synopsis: string;
+  categories: string[];
+  keywords: string[];
+  source: "manual" | "ai" | "unset";
+  generatedAt?: number;
+  updatedAt: number;
+}
+
 export interface SearchResult {
   chatId: string;
   chatTitle: string;
   /** Populated by the extension when a metadata title exists for this chat. */
   metaTitle?: string;
+  /** Full chat metadata (when requested by caller). */
+  metadata?: SearchResultMetadata;
   source: string;
   messageId: string;
   messageSnippet: string;

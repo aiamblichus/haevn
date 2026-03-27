@@ -279,6 +279,17 @@ export interface Chat {
 // Search Result Types
 // ======================
 
+export interface SearchResultMetadata {
+  title: string;
+  description: string;
+  synopsis: string;
+  categories: string[];
+  keywords: string[];
+  source: "manual" | "ai" | "unset";
+  generatedAt?: number;
+  updatedAt: number;
+}
+
 /**
  * Enriched search result with message-level context and snippet.
  * Used by streaming search and getAllMatchesForChat to provide rich search results.
@@ -288,6 +299,8 @@ export interface SearchResult {
   chatTitle: string;
   /** Metadata title override, populated by search handler when a metadata record exists. */
   metaTitle?: string;
+  /** Full chat metadata (when requested by caller). */
+  metadata?: SearchResultMetadata;
   source: string;
   messageId: string;
   messageSnippet: string;

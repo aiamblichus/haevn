@@ -69,6 +69,7 @@ export interface SearchOptions {
   before?: string; // ISO date
   limit?: number;
   contextChars?: number;
+  includeMetadata?: boolean;
 }
 
 export interface GetOptions {
