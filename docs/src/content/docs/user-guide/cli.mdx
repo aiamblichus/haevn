@@ -40,7 +40,7 @@ haevn list -l 5
 - `haevn branches <chatId>` — inspect tree/forks with short message refs.
 - `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
 - `haevn info <chatId>` — view or edit metadata for a single chat.
-- `haevn export <chatId> -o file.json` — export full chat.
+- `haevn export <chatId> -o file --format <haevn_json|haevn_markdown|pi_session_jsonl>` — export one chat.
 - `haevn import --format <claude_code|codex|pi> <file...>` — import local JSONL session files.
 
 ## Short message refs
@@ -183,6 +183,27 @@ Sample output:
 
   source: ai  updated 2 hours ago · generated 2 hours ago
 ```
+
+## Exporting from CLI
+
+CLI exports route through the extension's exporter pipeline (same source of truth as UI exporters).
+
+```bash
+# Canonical JSON (default)
+haevn export <chatId> -o chat.json --format haevn_json
+
+# Markdown transcript
+haevn export <chatId> -o chat.md --format haevn_markdown
+
+# Pi session JSONL
+haevn export <chatId> -o chat.jsonl --format pi_session_jsonl
+```
+
+Current CLI export constraints:
+- single chat per command
+- no media payload transfer (`includeMedia=false` on daemon bridge)
+
+This keeps daemon requests small and avoids long-running payload transfers from the extension.
 
 ## JSON mode for automation
 

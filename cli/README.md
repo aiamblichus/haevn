@@ -180,16 +180,27 @@ Options:
 - `-g, --generate` - AI-generate metadata (requires AI config in Settings)
 - `-f, --format <fmt>` - Output format (text, json)
 
-### `export` - Export full chat
+### `export` - Export a single chat via extension exporters
 
 ```bash
+# Canonical JSON (default)
 haevn export chat_abc123 -o ./backup.json
-haevn export chat_abc123 -o ./backup.json --include-media
+haevn export chat_abc123 -o ./backup.json --format haevn_json
+
+# Markdown transcript
+haevn export chat_abc123 -o ./chat.md --format haevn_markdown
+
+# Pi session JSONL
+haevn export chat_abc123 -o ./.pi/sessions/chat.jsonl --format pi_session_jsonl
 ```
 
 Options:
 - `-o, --output <file>` - Output file path (required)
-- `--include-media` - Embed base64 media (default: false)
+- `-f, --format <fmt>` - Export format (`haevn_json`, `haevn_markdown`, `pi_session_jsonl`)
+
+Notes:
+- CLI export is intentionally **single-chat** and **no-assets** (to keep daemon requests predictable).
+- Formatting is produced by the extension exporter pipeline (single source of truth), not reimplemented in CLI.
 
 ### `daemon` - Start the local daemon
 
