@@ -435,6 +435,7 @@ const SystemPrompt = ({
   query?: string;
   markdownEnabled: boolean;
 }) => {
+  const [open, setOpen] = useState(false);
   const bodyHtml = useMemo(
     () => (markdownEnabled ? renderMarkdown(text, query) : renderPlainText(text, query)),
     [text, query, markdownEnabled],
@@ -443,8 +444,25 @@ const SystemPrompt = ({
   return (
     <div id="system" className="system-container">
       <div className="system-bubble">
-        <div className="system-label">System Prompt</div>
-        <div className="system-content" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+        <button
+          type="button"
+          aria-expanded={open}
+          className="system-header"
+          onClick={() => setOpen((v) => !v)}
+          style={{ fontFamily: "'JetBrains Mono', monospace" }}
+        >
+          <span
+            style={{
+              transform: open ? "rotate(180deg)" : "rotate(0deg)",
+              display: "inline-block",
+              transition: "transform 0.2s",
+            }}
+          >
+            <ChevronDown />
+          </span>
+          <span className="system-label">System Prompt</span>
+        </button>
+        {open && <div className="system-content" dangerouslySetInnerHTML={{ __html: bodyHtml }} />}
       </div>
     </div>
   );
@@ -491,6 +509,7 @@ const Attachments = ({
   attachments: (UserAttachment | AssistantAttachment)[];
   onImageClick?: (src: string, filename?: string) => void;
 }) => {
+  const [open, setOpen] = useState(true);
   const items = attachments || [];
 
   // State to track blob URLs for OPFS media
@@ -640,68 +659,94 @@ const Attachments = ({
   if (items.length === 0) return null;
 
   return (
-    <div className="attachment-grid">
-      {items.map((att) => {
-        const { mimeType, contentUrl, content, filename } = getDetails(att);
-        // Create a unique key from content URL, content hash, or filename
-        const key = contentUrl || content || filename || `attachment-${mimeType}`;
+    <div className="mt-4 border-2 border-[hsl(var(--border))] bg-[hsl(var(--card))]">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full inline-flex items-center gap-2 px-3 py-2 text-xs font-bold uppercase tracking-widest border-b-2 border-[hsl(var(--border))] text-[hsl(var(--muted-foreground))]"
+        style={{ fontFamily: "'JetBrains Mono', monospace" }}
+      >
+        <span
+          style={{
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            display: "inline-block",
+            transition: "transform 0.2s",
+          }}
+        >
+          <ChevronDown />
+        </span>
+        <span>Attachments ({items.length})</span>
+      </button>
 
-        // Determine the source URL
-        let src: string;
-        if (contentUrl) {
-          // HTTP URL
-          src = contentUrl;
-        } else if (content && isOpfsPath(content)) {
-          // OPFS path - use blob URL from state
-          src = blobUrls.get(content) || "";
-        } else if (content) {
-          // Base64 data
-          src = `data:${mimeType};base64,${content}`;
-        } else {
-          src = "";
-        }
+      {open && (
+        <div className="px-4 pb-4">
+          <div className="attachment-grid">
+            {items.map((att) => {
+              const { mimeType, contentUrl, content, filename } = getDetails(att);
+              // Create a unique key from content URL, content hash, or filename
+              const key = contentUrl || content || filename || `attachment-${mimeType}`;
 
-        if (mimeType.startsWith("image/")) {
-          return (
-            <div className="attachment-item" key={key}>
-              {src ? (
-                <img
-                  src={src}
-                  alt={filename || "Image attachment"}
-                  onClick={() => onImageClick?.(src, filename)}
-                  style={{ cursor: "pointer" }}
-                />
-              ) : (
-                <div className="attachment-placeholder">Loading...</div>
-              )}
-            </div>
-          );
-        } else if (mimeType.startsWith("video/")) {
-          return (
-            <div className="attachment-item" key={key}>
-              {src ? (
-                <video src={src} controls />
-              ) : (
-                <div className="attachment-placeholder">Loading...</div>
-              )}
-            </div>
-          );
-        }
-        return (
-          <div className="attachment-item" key={key}>
-            <div className="attachment-placeholder">
-              <svg
-                className="w-6 h-6 text-slate-500 shrink-0"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path d="M5.5 16.5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015.5 3.5h5.914a1.5 1.5 0 011.06.44l3.586 3.586a1.5 1.5 0 01.44 1.06V15a1.5 1.5 0 01-1.5 1.5h-9zM9 12a1 1 0 00-1 1v1.5a.5.5 0 00.5.5h3a.5.5 0 00.5-.5V13a1 1 0 00-1-1H9zM5.5 5a.5.5 0 00-.5.5v10a.5.5 0 00.5.5h9a.5.5 0 00.5-.5V10.5a.5.5 0 00-.5-.5h-3a1.5 1.5 0 01-1.5-1.5V5.5a.5.5 0 00-.5-.5h-4z" />
-              </svg>
-              <span className="truncate">{escapeHtml(filename || "Attachment")}</span>
-            </div>
+              // Determine the source URL
+              let src: string;
+              if (contentUrl) {
+                // HTTP URL
+                src = contentUrl;
+              } else if (content && isOpfsPath(content)) {
+                // OPFS path - use blob URL from state
+                src = blobUrls.get(content) || "";
+              } else if (content) {
+                // Base64 data
+                src = `data:${mimeType};base64,${content}`;
+              } else {
+                src = "";
+              }
+
+              if (mimeType.startsWith("image/")) {
+                return (
+                  <div className="attachment-item" key={key}>
+                    {src ? (
+                      <img
+                        src={src}
+                        alt={filename || "Image attachment"}
+                        onClick={() => onImageClick?.(src, filename)}
+                        style={{ cursor: "pointer" }}
+                      />
+                    ) : (
+                      <div className="attachment-placeholder">Loading...</div>
+                    )}
+                  </div>
+                );
+              }
+              if (mimeType.startsWith("video/")) {
+                return (
+                  <div className="attachment-item" key={key}>
+                    {src ? (
+                      <video src={src} controls />
+                    ) : (
+                      <div className="attachment-placeholder">Loading...</div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div className="attachment-item" key={key}>
+                  <div className="attachment-placeholder">
+                    <svg
+                      className="w-6 h-6 text-slate-500 shrink-0"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path d="M5.5 16.5a1.5 1.5 0 01-1.5-1.5V5A1.5 1.5 0 015.5 3.5h5.914a1.5 1.5 0 011.06.44l3.586 3.586a1.5 1.5 0 01.44 1.06V15a1.5 1.5 0 01-1.5 1.5h-9zM9 12a1 1 0 00-1 1v1.5a.5.5 0 00.5.5h3a.5.5 0 00.5-.5V13a1 1 0 00-1-1H9zM5.5 5a.5.5 0 00-.5.5v10a.5.5 0 00.5.5h9a.5.5 0 00.5-.5V10.5a.5.5 0 00-.5-.5h-3a1.5 1.5 0 01-1.5-1.5V5.5a.5.5 0 00-.5-.5h-4z" />
+                    </svg>
+                    <span className="truncate">{escapeHtml(filename || "Attachment")}</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        );
-      })}
+        </div>
+      )}
     </div>
   );
 };
@@ -729,6 +774,7 @@ const Bubble = ({
   modelName?: string;
   onImageClick?: (src: string, filename?: string) => void;
 }) => {
+  const [open, setOpen] = useState(true);
   const [copied, setCopied] = useState(false);
   const tsStr = useMemo(() => {
     if (!ts) return "";
@@ -805,13 +851,25 @@ const Bubble = ({
     <div className={`message-container ${role}`}>
       <div className={`message-bubble ${role}`}>
         <div className="message-header-wrapper">
-          <div
-            className="text-xs mb-3 font-bold uppercase tracking-widest flex items-center gap-2"
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            className="message-collapse-header"
             style={{
               fontFamily: "'JetBrains Mono', monospace",
               color: promptColor,
             }}
           >
+            <span
+              style={{
+                transform: open ? "rotate(180deg)" : "rotate(0deg)",
+                display: "inline-block",
+                transition: "transform 0.2s",
+              }}
+            >
+              <ChevronDown />
+            </span>
             <span className="opacity-70">{promptSymbol}</span>
             <span>{label}</span>
             {modelName && (
@@ -828,7 +886,7 @@ const Bubble = ({
                 <span className="opacity-60 font-normal normal-case tracking-normal">{tsStr}</span>
               </>
             )}
-          </div>
+          </button>
           <button
             type="button"
             onClick={handleCopy}
@@ -839,22 +897,26 @@ const Bubble = ({
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
         </div>
-        {role === "assistant" && thinkingText ? (
-          <Thinking text={thinkingText} query={query} />
-        ) : null}
-        {text ? (
-          <div
-            ref={contentRef}
-            className={
-              markdownEnabled
-                ? "break-words leading-relaxed"
-                : "whitespace-pre-wrap break-words leading-relaxed"
-            }
-            style={{ fontFamily: "'JetBrains Mono', monospace" }}
-            dangerouslySetInnerHTML={{ __html: bodyHtml }}
-          />
-        ) : null}
-        <Attachments attachments={attachments} onImageClick={onImageClick} />
+        {open && (
+          <>
+            {role === "assistant" && thinkingText ? (
+              <Thinking text={thinkingText} query={query} />
+            ) : null}
+            {text ? (
+              <div
+                ref={contentRef}
+                className={
+                  markdownEnabled
+                    ? "break-words leading-relaxed"
+                    : "whitespace-pre-wrap break-words leading-relaxed"
+                }
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                dangerouslySetInnerHTML={{ __html: bodyHtml }}
+              />
+            ) : null}
+            <Attachments attachments={attachments} onImageClick={onImageClick} />
+          </>
+        )}
       </div>
     </div>
   );
