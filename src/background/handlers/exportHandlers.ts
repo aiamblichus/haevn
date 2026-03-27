@@ -10,6 +10,7 @@ import {
   startBulkExport,
 } from "../bulkExport/bulkExport";
 import { getExporter, normalizeExportOptions } from "../export/exporters";
+import { exportSingleChatFile } from "../export/singleChatExport";
 import { handleFileDownload } from "../utils/fileDownload";
 
 export async function handleExportSyncedChat(
@@ -20,12 +21,18 @@ export async function handleExportSyncedChat(
     const options: ExportOptions = normalizeExportOptions(message.options);
     const exporter = getExporter(options.exporterId || "haevn_zip");
 
-    if (exporter.id !== "haevn_zip") {
-      throw new Error(`Exporter not implemented yet: ${exporter.id}`);
+    if (exporter.outputKind === "zip") {
+      await startBulkExport([message.chatId], options);
+      sendResponse({ success: true, message: "Bulk export started" });
+      return;
     }
 
-    await startBulkExport([message.chatId], options);
-    sendResponse({ success: true, message: "Bulk export started" });
+    const result = await exportSingleChatFile(message.chatId, options);
+    sendResponse({
+      success: true,
+      message: `Exported ${result.filename}`,
+      downloadId: result.downloadId,
+    });
   } catch (err: unknown) {
     log.error("[ExportHandler] Export failed:", err);
     sendResponse({
@@ -51,14 +58,30 @@ export async function handleStartBulkExport(
     const options: ExportOptions = normalizeExportOptions(message.options);
     const exporter = getExporter(options.exporterId || "haevn_zip");
 
-    if (exporter.id !== "haevn_zip") {
-      throw new Error(`Exporter not implemented yet: ${exporter.id}`);
+    if (!exporter.supportsMultiChat && chatIds.length > 1) {
+      throw new Error(
+        `Exporter "${exporter.label}" does not support multi-chat export. Select one chat.`,
+      );
     }
 
-    await startBulkExport(chatIds, options);
+    if (exporter.outputKind === "zip") {
+      await startBulkExport(chatIds, options);
+      sendResponse({
+        success: true,
+        message: "Bulk export started",
+      });
+      return;
+    }
+
+    if (chatIds.length !== 1) {
+      throw new Error(`Exporter "${exporter.label}" requires exactly one chat.`);
+    }
+
+    const result = await exportSingleChatFile(chatIds[0], options);
     sendResponse({
       success: true,
-      message: "Bulk export started",
+      message: `Exported ${result.filename}`,
+      downloadId: result.downloadId,
     });
   } catch (err: unknown) {
     sendResponse({

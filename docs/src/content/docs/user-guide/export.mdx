@@ -1,16 +1,20 @@
 ---
 title: Export
-description: Download your conversations as a HAEVN archive ZIP.
+description: Export conversations as HAEVN ZIP, JSON, or Markdown.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-HAEVN currently exports conversations as a **HAEVN archive ZIP** (canonical backup format).
+HAEVN supports multiple export formats.
 
-## Export format
+## Export formats
+
+- **HAEVN Archive (.zip)** — canonical, lossless backup with chats + media + manifest.
+- **HAEVN JSON (.json)** — single-chat canonical JSON export.
+- **HAEVN Markdown (.md)** — single-chat readable transcript export.
 
 <Aside type="note">
-  Export plugin support is being expanded. Right now, the extension uses a single exporter: **HAEVN Archive (.zip)**.
+  Multi-chat exports currently use **HAEVN Archive (.zip)**. JSON and Markdown exporters are single-chat for now.
 </Aside>
 
 The archive ZIP includes:
@@ -19,11 +23,9 @@ The archive ZIP includes:
 - `chats/*.json` (canonical HAEVN chat records)
 - `media/**/*` (staged media assets when present)
 
-This is the recommended **lossless backup format** for restore/import across machines.
-
 ## Exporting a single conversation
 
-**From the Archive:** Click **Export** on any conversation row, then confirm the export. The HAEVN archive ZIP downloads when ready.
+**From the Archive:** Click **Export** on any conversation row, choose an export format, then confirm.
 
 **From the Viewer:** Click the **Export** button in the viewer toolbar.
 
@@ -35,7 +37,7 @@ To export a selection of conversations:
 
 1. In the Archive, use the checkboxes to select the conversations you want.
 2. Click **Export Selected** in the toolbar.
-3. Confirm export.
+3. Confirm export (multi-chat exports are packaged as HAEVN ZIP).
 4. HAEVN generates a ZIP file containing canonical chat JSON and extracted media files.
 
 ## Exporting your entire archive
@@ -48,17 +50,17 @@ Click **Export All** in the Archive toolbar to download your complete archive as
 
 ## What's included in exports
 
-| Content | HAEVN Archive ZIP |
-|---|---|
-| All messages | ✅ |
-| Timestamps | ✅ |
-| Platform metadata | ✅ |
-| Attachments/media | ✅ |
-| Thinking blocks | ✅ |
-| Tool calls | ✅ |
-| Conversation branches | ✅ |
-| Canonical manifest | ✅ |
+| Content | HAEVN Archive ZIP | HAEVN JSON | HAEVN Markdown |
+|---|---|---|---|
+| All messages | ✅ | ✅ | ✅ |
+| Timestamps | ✅ | ✅ | ✅ |
+| Platform metadata | ✅ | ✅ | ✅ |
+| Attachments/media | ✅ | Inline/encoded references | Placeholder/link references |
+| Thinking blocks | ✅ | ✅ | ✅ |
+| Tool calls | ✅ | ✅ | ✅ |
+| Conversation branches | ✅ | ✅ | Current selected path |
+| Canonical manifest | ✅ | ❌ | ❌ |
 
 <Aside>
-  The extension export path currently uses the HAEVN archive exporter only. Additional exporters (JSON file, Markdown, Pi session JSONL) are planned.
+  Planned next: richer exporter plugins (including Pi session JSONL).
 </Aside>

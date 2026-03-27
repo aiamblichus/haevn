@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import type { ExportOptions } from "../formatters";
+import type { ExporterId, ExportOptions } from "../formatters";
 import type { BackgroundEvent } from "../types/messaging";
 import { log } from "../utils/logger";
 import { Button } from "./ui/button";
@@ -34,6 +34,34 @@ interface ExportProgress {
   isComplete: boolean;
 }
 
+interface ExporterChoice {
+  id: ExporterId;
+  label: string;
+  description: string;
+  supportsMultiChat: boolean;
+}
+
+const EXPORTER_CHOICES: ExporterChoice[] = [
+  {
+    id: "haevn_zip",
+    label: "HAEVN Archive (.zip)",
+    description: "Canonical backup export with chat JSON, media assets, and manifest.",
+    supportsMultiChat: true,
+  },
+  {
+    id: "haevn_json",
+    label: "HAEVN JSON (.json)",
+    description: "Single-chat canonical JSON export.",
+    supportsMultiChat: false,
+  },
+  {
+    id: "haevn_markdown",
+    label: "HAEVN Markdown (.md)",
+    description: "Single-chat readable transcript export.",
+    supportsMultiChat: false,
+  },
+];
+
 export const ExportModal = ({
   open,
   onOpenChange,
@@ -45,6 +73,9 @@ export const ExportModal = ({
 }: ExportModalProps) => {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
+  const [selectedExporter, setSelectedExporter] = useState<ExporterId>(
+    exportOptions.exporterId || "haevn_zip",
+  );
 
   // Status helper that falls back to logging
   const setStatus = (text: string, kind: "ok" | "warn" | "error" | "work" = "ok") => {
@@ -55,6 +86,27 @@ export const ExportModal = ({
       else if (kind === "warn") log.warn(`[ExportModal] ${text}`);
       else log.info(`[ExportModal] ${text}`);
     }
+  };
+
+  const selectedExporterDef =
+    EXPORTER_CHOICES.find((choice) => choice.id === selectedExporter) || EXPORTER_CHOICES[0];
+
+  const canUseSelectedExporterForCurrentSelection =
+    !exportModalIds || exportModalIds.length <= 1 || selectedExporterDef.supportsMultiChat;
+
+  const buildExportOptions = (): ExportOptions => {
+    const format =
+      selectedExporter === "haevn_markdown"
+        ? "markdown"
+        : selectedExporter === "haevn_json"
+          ? "json"
+          : "json";
+
+    return {
+      ...exportOptions,
+      exporterId: selectedExporter,
+      format,
+    };
   };
 
   // Internal export handler if none provided
@@ -160,13 +212,28 @@ export const ExportModal = ({
     if (!open) {
       setIsExporting(false);
       setProgress(null);
+      setSelectedExporter(exportOptions.exporterId || "haevn_zip");
     }
-  }, [open]);
+  }, [open, exportOptions.exporterId]);
+
+  // Force multi-chat selection to an exporter that supports it.
+  useEffect(() => {
+    if (exportModalIds && exportModalIds.length > 1) {
+      setSelectedExporter("haevn_zip");
+    }
+  }, [exportModalIds]);
 
   const handleStartExport = async () => {
+    if (!canUseSelectedExporterForCurrentSelection) {
+      setStatus("Selected exporter only supports single-chat exports.", "warn");
+      return;
+    }
+
+    const effectiveOptions = buildExportOptions();
+
     if (exportModalIds && exportModalIds.length === 1) {
       // Single chat export
-      await internalExportChatById(exportModalIds[0], exportOptions);
+      await internalExportChatById(exportModalIds[0], effectiveOptions);
       onClose();
     } else if (exportModalIds && exportModalIds.length > 1) {
       // Bulk export
@@ -175,7 +242,7 @@ export const ExportModal = ({
         const resp = await chrome.runtime.sendMessage({
           action: "startBulkExport",
           chatIds: exportModalIds,
-          options: exportOptions,
+          options: effectiveOptions,
         });
         if (!resp?.success) {
           setStatus(`Export failed to start: ${resp?.error || "Unknown error"}`, "error");
@@ -228,10 +295,40 @@ export const ExportModal = ({
             <>
               <DialogHeader>
                 <DialogTitle>Export</DialogTitle>
-                <DialogDescription>
-                  {exportModalIds.length} chat(s) will be exported as a HAEVN archive (.zip).
-                </DialogDescription>
+                <DialogDescription>{exportModalIds.length} chat(s) selected.</DialogDescription>
               </DialogHeader>
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label htmlFor="exporter-select" className="text-sm font-medium">
+                    Export format
+                  </label>
+                  <select
+                    id="exporter-select"
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={selectedExporter}
+                    onChange={(event) => setSelectedExporter(event.target.value as ExporterId)}
+                    disabled={!!(exportModalIds && exportModalIds.length > 1)}
+                  >
+                    {EXPORTER_CHOICES.map((choice) => (
+                      <option
+                        key={choice.id}
+                        value={choice.id}
+                        disabled={!choice.supportsMultiChat && (exportModalIds?.length || 0) > 1}
+                      >
+                        {choice.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">{selectedExporterDef.description}</p>
+                  {!canUseSelectedExporterForCurrentSelection && (
+                    <p className="text-xs text-yellow-600">
+                      This exporter currently supports single-chat export only.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <DialogFooter>
                 <Button variant="outline" onClick={onClose}>
                   Cancel

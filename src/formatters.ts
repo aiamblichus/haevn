@@ -16,7 +16,7 @@ import type {
 } from "./model/haevn_model";
 import { log } from "./utils/logger";
 
-export type ExporterId = "haevn_zip";
+export type ExporterId = "haevn_zip" | "haevn_json" | "haevn_markdown";
 
 export interface ExportOptions {
   includeMetadata?: boolean;

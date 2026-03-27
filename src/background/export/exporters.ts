@@ -7,7 +7,7 @@ export interface ExporterDefinition {
   description: string;
   supportsMultiChat: boolean;
   supportsMessageSelection: boolean;
-  outputKind: "zip";
+  outputKind: "zip" | "file";
 }
 
 const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -25,6 +25,22 @@ const EXPORTERS: Record<ExporterId, ExporterDefinition> = {
     supportsMultiChat: true,
     supportsMessageSelection: true,
     outputKind: "zip",
+  },
+  haevn_json: {
+    id: "haevn_json",
+    label: "HAEVN JSON (.json)",
+    description: "Single-chat canonical JSON export.",
+    supportsMultiChat: false,
+    supportsMessageSelection: true,
+    outputKind: "file",
+  },
+  haevn_markdown: {
+    id: "haevn_markdown",
+    label: "HAEVN Markdown (.md)",
+    description: "Single-chat readable transcript export.",
+    supportsMultiChat: false,
+    supportsMessageSelection: true,
+    outputKind: "file",
   },
 };
 
@@ -51,13 +67,20 @@ export function normalizeExportOptions(options?: ExportOptions): ExportOptions {
     throw new Error(`Unsupported exporter: ${normalized.exporterId}`);
   }
 
-  // Phase 1: Only JSON-backed HAEVN ZIP exports are supported in extension pipeline.
-  if (normalized.format !== "json") {
+  if (normalized.exporterId === "haevn_zip" && normalized.format !== "json") {
     log.warn("[Export] Non-JSON format requested for HAEVN ZIP exporter. Falling back to JSON.", {
       requestedFormat: normalized.format,
       exporterId: normalized.exporterId,
     });
     normalized.format = "json";
+  }
+
+  if (normalized.exporterId === "haevn_json") {
+    normalized.format = "json";
+  }
+
+  if (normalized.exporterId === "haevn_markdown") {
+    normalized.format = "markdown";
   }
 
   return normalized;
