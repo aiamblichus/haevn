@@ -75,6 +75,42 @@ export interface MetadataQueueRecord {
   error?: string;
 }
 
+export interface ChatEmbeddingRecord {
+  chatId: string; // Primary key — matches chats.id
+  vector: number[];
+  vectorDim: number;
+  model: string;
+  endpointHash: string;
+  inputFingerprint: string;
+  updatedAt: number;
+}
+
+export interface StarmapPoint {
+  chatId: string;
+  x: number;
+  y: number;
+  z: number;
+  clusterId: number;
+}
+
+export interface StarmapLayoutRecord {
+  layoutKey: string; // Primary key
+  points: StarmapPoint[];
+  bounds: {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  };
+  params: {
+    umap: Record<string, unknown>;
+    cluster: Record<string, unknown>;
+  };
+  updatedAt: number;
+}
+
 export class HaevnDatabase extends Dexie {
   chats!: Table<Chat, string>; // Primary key 'id' is of type string
   chatMessages!: Table<StoredChatMessage, [string, string]>; // PK: [chatId, id]
@@ -87,6 +123,8 @@ export class HaevnDatabase extends Dexie {
   mediaContent!: Table<MediaContent, number>; // New table for heavy content
   chatMetadata!: Table<ChatMetadataRecord, string>; // Primary key 'chatId'
   metadataQueue!: Table<MetadataQueueRecord, string>; // Primary key 'chatId'
+  chatEmbeddings!: Table<ChatEmbeddingRecord, string>; // Primary key 'chatId'
+  starmapLayout!: Table<StarmapLayoutRecord, string>; // Primary key 'layoutKey'
 
   constructor() {
     super("HaevnDB"); // Database name
@@ -497,6 +535,23 @@ export class HaevnDatabase extends Dexie {
       mediaContent: "id",
       chatMetadata: "chatId",
       metadataQueue: "chatId, status, addedAt",
+    });
+
+    // Version 19: Add starmap embedding and layout cache tables
+    this.version(19).stores({
+      chats:
+        "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
+      chatMessages: "[chatId+id], chatId, parentId, timestamp",
+      lunrIndex: "id",
+      openwebuiInstances: "id, baseUrl",
+      cache: "id",
+      thumbnails:
+        "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
+      mediaContent: "id",
+      chatMetadata: "chatId",
+      metadataQueue: "chatId, status, addedAt",
+      chatEmbeddings: "chatId, updatedAt, [model+updatedAt]",
+      starmapLayout: "layoutKey, updatedAt",
     });
     // Define future versions here with .version(n).stores({}) for schema migrations
   }

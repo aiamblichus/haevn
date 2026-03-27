@@ -223,3 +223,46 @@ export async function setMetadataAIConfig(config: Partial<MetadataAIConfig>): Pr
   await getStorageAdapter().set(METADATA_AI_KEY, { ...current, ...config });
   log.info("[SettingsService] Metadata AI config updated");
 }
+
+// ─── Starmap Settings ──────────────────────────────────────────────────────────
+
+const STARMAP_KEY = "haevn.starmap";
+
+export interface StarmapConfig {
+  enabled: boolean;
+  embeddingsEnabled: boolean;
+  embeddingUrl: string;
+  embeddingApiKey: string;
+  embeddingModel: string;
+  autoEmbedOnMetadataChange: boolean;
+  umapNeighbors: number;
+  umapMinDist: number;
+  umapSeed: number;
+  clusterMode: "auto" | "manual";
+  clusterK: number;
+}
+
+const STARMAP_DEFAULTS: StarmapConfig = {
+  enabled: false,
+  embeddingsEnabled: false,
+  embeddingUrl: "",
+  embeddingApiKey: "",
+  embeddingModel: "",
+  autoEmbedOnMetadataChange: true,
+  umapNeighbors: 15,
+  umapMinDist: 0.1,
+  umapSeed: 42,
+  clusterMode: "auto",
+  clusterK: 12,
+};
+
+export async function getStarmapConfig(): Promise<StarmapConfig> {
+  const stored = await getStorageAdapter().get<Partial<StarmapConfig>>(STARMAP_KEY);
+  return { ...STARMAP_DEFAULTS, ...(stored ?? {}) };
+}
+
+export async function setStarmapConfig(config: Partial<StarmapConfig>): Promise<void> {
+  const current = await getStarmapConfig();
+  await getStorageAdapter().set(STARMAP_KEY, { ...current, ...config });
+  log.info("[SettingsService] Starmap config updated");
+}

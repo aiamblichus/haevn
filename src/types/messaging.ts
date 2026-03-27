@@ -22,10 +22,10 @@ import type { ExportOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
 import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
-import type { MetadataAIConfig } from "../services/settingsService";
+import type { MetadataAIConfig, StarmapConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
 
-export type { ChatMetadataRecord, MetadataAIConfig, MetadataQueueRecord };
+export type { ChatMetadataRecord, MetadataAIConfig, MetadataQueueRecord, StarmapConfig };
 
 import type {
   BulkExportWorkerMessage,
@@ -312,7 +312,9 @@ export type BackgroundRequest =
   | { action: "getMetadataQueueItem"; chatId: string }
   | { action: "resetMetadataQueueItem"; chatId: string }
   | { action: "rebuildAllMetadata" }
-  | { action: "getChatPreview"; chatId: string };
+  | { action: "getChatPreview"; chatId: string }
+  | { action: "getStarmapConfig" }
+  | { action: "setStarmapConfig"; config: Partial<StarmapConfig> };
 
 // ======================
 // Background Response Messages

@@ -12,7 +12,7 @@ import {
 } from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import type { CategoryConfig, MetadataAIConfig } from "../services/settingsService";
+import type { CategoryConfig, MetadataAIConfig, StarmapConfig } from "../services/settingsService";
 import { DEFAULT_CLI_PORT } from "../services/settingsService";
 import { log } from "../utils/logger";
 
@@ -139,6 +139,7 @@ export const SettingsView = () => {
 
       <CliSettingsCard />
       <AIMetadataSettingsCard />
+      <StarmapSettingsCard />
     </div>
   );
 };
@@ -715,5 +716,171 @@ const AIMetadataSettingsCard = () => {
         </CardContent>
       </Card>
     </>
+  );
+};
+
+const DEFAULT_STARMAP_CONFIG: StarmapConfig = {
+  enabled: false,
+  embeddingsEnabled: false,
+  embeddingUrl: "",
+  embeddingApiKey: "",
+  embeddingModel: "",
+  autoEmbedOnMetadataChange: true,
+  umapNeighbors: 15,
+  umapMinDist: 0.1,
+  umapSeed: 42,
+  clusterMode: "auto",
+  clusterK: 12,
+};
+
+const StarmapSettingsCard = () => {
+  const [metadataEnabled, setMetadataEnabled] = useState(false);
+  const [config, setConfig] = useState<StarmapConfig>(DEFAULT_STARMAP_CONFIG);
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const [metaRes, starmapRes] = await Promise.all([
+          chrome.runtime.sendMessage({ action: "getMetadataAIConfig" }),
+          chrome.runtime.sendMessage({ action: "getStarmapConfig" }),
+        ]);
+
+        if (cancelled) return;
+
+        if (metaRes?.success) {
+          setMetadataEnabled(!!(metaRes.data as MetadataAIConfig).enabled);
+        }
+        if (starmapRes?.success) {
+          setConfig(starmapRes.data as StarmapConfig);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        log.error("[Settings] Failed to load Starmap config:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async (patch: Partial<StarmapConfig>) => {
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: "setStarmapConfig",
+        config: patch,
+      });
+      if (!res.success) throw new Error(res.error ?? "Save failed");
+      setConfig((prev) => ({ ...prev, ...patch }));
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
+  if (loading || !metadataEnabled) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Starmap (Experimental)</CardTitle>
+        <CardDescription>
+          Configure semantic map generation from metadata embeddings. Starmap depends on AI metadata
+          and may lag while embeddings catch up.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id="starmapEnabled"
+            checked={config.enabled}
+            onCheckedChange={(v) => save({ enabled: !!v })}
+          />
+          <Label htmlFor="starmapEnabled" className="cursor-pointer">
+            Enable Starmap
+          </Label>
+        </div>
+
+        {config.enabled && (
+          <>
+            <div className="flex items-center gap-3">
+              <Checkbox
+                id="starmapEmbeddingsEnabled"
+                checked={config.embeddingsEnabled}
+                onCheckedChange={(v) => save({ embeddingsEnabled: !!v })}
+              />
+              <Label htmlFor="starmapEmbeddingsEnabled" className="cursor-pointer">
+                Enable embeddings generation
+              </Label>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="starmapEmbeddingUrl">Embedding API URL</Label>
+              <Input
+                id="starmapEmbeddingUrl"
+                type="url"
+                placeholder="http://localhost:11434/v1"
+                value={config.embeddingUrl}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    embeddingUrl: (e.target as HTMLInputElement).value,
+                  }))
+                }
+                onBlur={() => save({ embeddingUrl: config.embeddingUrl })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="starmapEmbeddingApiKey">Embedding API Key</Label>
+              <Input
+                id="starmapEmbeddingApiKey"
+                type="password"
+                placeholder="sk-... (optional for local models)"
+                value={config.embeddingApiKey}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    embeddingApiKey: (e.target as HTMLInputElement).value,
+                  }))
+                }
+                onBlur={() => save({ embeddingApiKey: config.embeddingApiKey })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="starmapEmbeddingModel">Embedding Model</Label>
+              <Input
+                id="starmapEmbeddingModel"
+                type="text"
+                placeholder="e.g. text-embedding-3-small, nomic-embed-text"
+                value={config.embeddingModel}
+                onChange={(e) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    embeddingModel: (e.target as HTMLInputElement).value,
+                  }))
+                }
+                onBlur={() => save({ embeddingModel: config.embeddingModel })}
+              />
+            </div>
+          </>
+        )}
+
+        {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
+        {saved && <div className="text-sm text-green-600 bg-green-50 p-2 rounded">Saved</div>}
+      </CardContent>
+    </Card>
   );
 };

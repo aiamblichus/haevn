@@ -10,7 +10,12 @@ import {
   resetFailedQueueItem,
   syncMetadataQueueAlarms,
 } from "../../services/metadataService";
-import { getMetadataAIConfig, setMetadataAIConfig } from "../../services/settingsService";
+import {
+  getMetadataAIConfig,
+  getStarmapConfig,
+  setMetadataAIConfig,
+  setStarmapConfig,
+} from "../../services/settingsService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
 
@@ -99,6 +104,41 @@ export async function handleSetMetadataAIConfig(
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setMetadataAIConfig failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetStarmapConfig(
+  _message: Extract<BackgroundRequest, { action: "getStarmapConfig" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const config = await getStarmapConfig();
+    sendResponse({ success: true, data: config });
+  } catch (err) {
+    log.error("[MetadataHandlers] getStarmapConfig failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleSetStarmapConfig(
+  message: Extract<BackgroundRequest, { action: "setStarmapConfig" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const metadataConfig = await getMetadataAIConfig();
+    if (!metadataConfig.enabled) {
+      sendResponse({
+        success: false,
+        error: "AI metadata must be enabled before configuring Starmap.",
+      });
+      return;
+    }
+
+    await setStarmapConfig(message.config);
+    sendResponse({ success: true });
+  } catch (err) {
+    log.error("[MetadataHandlers] setStarmapConfig failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

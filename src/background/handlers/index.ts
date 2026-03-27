@@ -86,6 +86,8 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   generateChatMetadata: metadataHandlers.handleGenerateChatMetadata as HandlerFunction,
   getMetadataAIConfig: metadataHandlers.handleGetMetadataAIConfig as HandlerFunction,
   setMetadataAIConfig: metadataHandlers.handleSetMetadataAIConfig as HandlerFunction,
+  getStarmapConfig: metadataHandlers.handleGetStarmapConfig as HandlerFunction,
+  setStarmapConfig: metadataHandlers.handleSetStarmapConfig as HandlerFunction,
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
   getMetadataQueueItem: metadataHandlers.handleGetMetadataQueueItem as HandlerFunction,
