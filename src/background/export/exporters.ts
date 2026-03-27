@@ -42,6 +42,14 @@ const EXPORTERS: Record<ExporterId, ExporterDefinition> = {
     supportsMessageSelection: true,
     outputKind: "file",
   },
+  pi_session_jsonl: {
+    id: "pi_session_jsonl",
+    label: "Pi Session (.jsonl)",
+    description: "Single-chat export in Pi session JSONL format.",
+    supportsMultiChat: false,
+    supportsMessageSelection: true,
+    outputKind: "file",
+  },
 };
 
 export function listExporters(): ExporterDefinition[] {
@@ -81,6 +89,10 @@ export function normalizeExportOptions(options?: ExportOptions): ExportOptions {
 
   if (normalized.exporterId === "haevn_markdown") {
     normalized.format = "markdown";
+  }
+
+  if (normalized.exporterId === "pi_session_jsonl") {
+    normalized.format = "json";
   }
 
   return normalized;

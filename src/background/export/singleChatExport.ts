@@ -4,6 +4,7 @@ import {
   generateExportFilename,
 } from "../../formatters";
 import { SyncService } from "../../services/syncService";
+import { exportChatAsPiSessionJsonl } from "./piSessionExport";
 
 function toBase64Utf8(content: string): string {
   const encoder = new TextEncoder();
@@ -52,6 +53,18 @@ export async function exportSingleChatFile(
   const chat = await SyncService.getChatWithMessages(chatId);
   if (!chat) {
     throw new Error(`Chat not found: ${chatId}`);
+  }
+
+  if (options.exporterId === "pi_session_jsonl") {
+    const content = exportChatAsPiSessionJsonl(chat, options.messageIds);
+    const sessionId = chat.id || chat.sourceId || "session";
+    const filename = `pi_session_${sessionId}.jsonl`;
+    const downloadId = await downloadTextContent(
+      content,
+      filename,
+      "application/x-ndjson;charset=utf-8",
+    );
+    return { filename, downloadId };
   }
 
   const format = options.exporterId === "haevn_markdown" ? "markdown" : "json";

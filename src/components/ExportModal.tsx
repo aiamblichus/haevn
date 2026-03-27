@@ -60,6 +60,13 @@ const EXPORTER_CHOICES: ExporterChoice[] = [
     description: "Single-chat readable transcript export.",
     supportsMultiChat: false,
   },
+  {
+    id: "pi_session_jsonl",
+    label: "Pi Session (.jsonl)",
+    description:
+      "Single-chat export for Pi session format. Binary media is exported as text placeholders.",
+    supportsMultiChat: false,
+  },
 ];
 
 export const ExportModal = ({
@@ -100,7 +107,9 @@ export const ExportModal = ({
         ? "markdown"
         : selectedExporter === "haevn_json"
           ? "json"
-          : "json";
+          : selectedExporter === "pi_session_jsonl"
+            ? "json"
+            : "json";
 
     return {
       ...exportOptions,

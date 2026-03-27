@@ -12,6 +12,7 @@ HAEVN supports multiple export formats.
 - **HAEVN Archive (.zip)** — canonical, lossless backup with chats + media + manifest.
 - **HAEVN JSON (.json)** — single-chat canonical JSON export.
 - **HAEVN Markdown (.md)** — single-chat readable transcript export.
+- **Pi Session (.jsonl)** — single-chat export for Pi-compatible session files.
 
 <Aside type="note">
   Multi-chat exports currently use **HAEVN Archive (.zip)**. JSON and Markdown exporters are single-chat for now.
@@ -50,17 +51,17 @@ Click **Export All** in the Archive toolbar to download your complete archive as
 
 ## What's included in exports
 
-| Content | HAEVN Archive ZIP | HAEVN JSON | HAEVN Markdown |
-|---|---|---|---|
-| All messages | ✅ | ✅ | ✅ |
-| Timestamps | ✅ | ✅ | ✅ |
-| Platform metadata | ✅ | ✅ | ✅ |
-| Attachments/media | ✅ | Inline/encoded references | Placeholder/link references |
-| Thinking blocks | ✅ | ✅ | ✅ |
-| Tool calls | ✅ | ✅ | ✅ |
-| Conversation branches | ✅ | ✅ | Current selected path |
-| Canonical manifest | ✅ | ❌ | ❌ |
+| Content | HAEVN Archive ZIP | HAEVN JSON | HAEVN Markdown | Pi Session JSONL |
+|---|---|---|---|---|
+| All messages | ✅ | ✅ | ✅ | ✅ |
+| Timestamps | ✅ | ✅ | ✅ | ✅ |
+| Platform metadata | ✅ | ✅ | ✅ | Partial |
+| Attachments/media | ✅ | Inline/encoded references | Placeholder/link references | URLs + binary placeholders |
+| Thinking blocks | ✅ | ✅ | ✅ | ✅ |
+| Tool calls | ✅ | ✅ | ✅ | ✅ |
+| Conversation branches | ✅ | ✅ | Current selected path | Current selected path |
+| Canonical manifest | ✅ | ❌ | ❌ | ❌ |
 
 <Aside>
-  Planned next: richer exporter plugins (including Pi session JSONL).
+  Pi Session export prioritizes interoperability and is currently lossy for embedded binary media.
 </Aside>
