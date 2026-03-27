@@ -1,9 +1,21 @@
 # Changelog
 
-## [v1.2.0] - 2026-03-26
+## [v1.2.1] - 2026-03-27
 
-- Initial release
+### Added
 
+- Archive search result actions now include a direct "Edit metadata" shortcut.
+- Metadata modal now shows failed queue item diagnostics with a "Reset and retry" action.
+
+### Changed
+
+- Metadata generation prompts are now budgeted and trimmed to avoid oversized LLM requests.
+- Metadata failure events/status now include retry counters and terminal failure state.
+
+### Fixed
+
+- Metadata queue failures now become terminal after max retries instead of retrying forever.
+- Terminal metadata failures are preserved across startup resets until explicitly reset.
 
 ## [v1.2.0] - 2026-03-26
 
