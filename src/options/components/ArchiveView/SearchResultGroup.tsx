@@ -17,6 +17,7 @@ interface SearchResultGroupProps {
   onOpenViewer: (chatIdOrResult: SearchResult | string) => void;
   onOpenProvider: (chatId: string) => void;
   onExport: (chatId: string) => void;
+  onMetadata: (chatId: string) => void;
   canOpenProvider?: boolean;
 }
 
@@ -28,6 +29,7 @@ export const SearchResultGroup = ({
   onOpenViewer,
   onOpenProvider,
   onExport,
+  onMetadata,
   canOpenProvider = true,
 }: SearchResultGroupProps) => {
   const decodedTitle = parseEntities(group.chatTitle || "");
@@ -83,6 +85,13 @@ export const SearchResultGroup = ({
             onClick={() => onOpenViewer(group.chatId)}
           >
             <Icon icon={ICONS.open_viewer} />
+          </button>
+          <button
+            className="p-1 hover:bg-haevn-purple/20 rounded-md transition-colors"
+            title="Edit Metadata"
+            onClick={() => onMetadata(group.chatId)}
+          >
+            <Icon icon={ICONS.tag} />
           </button>
           <button
             className="p-1 hover:bg-haevn-purple/20 rounded-md transition-colors"

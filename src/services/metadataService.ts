@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
-import type { ChatMetadataRecord, StoredChatMessage } from "./db";
+import type { ChatMetadataRecord, MetadataQueueRecord, StoredChatMessage } from "./db";
 import { getDB } from "./db";
 import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
@@ -11,6 +11,17 @@ import { getMetadataAIConfig } from "./settingsService";
 export const METADATA_PROCESS_ALARM = "metadataQueueProcessAlarm";
 export const METADATA_REFRESH_ALARM = "metadataQueueRefreshAlarm";
 const METADATA_QUEUE_PERIOD_MINUTES = 5;
+const METADATA_MAX_RETRIES = 3;
+const METADATA_MAX_COMPLETION_TOKENS = 2000;
+const METADATA_MAX_INPUT_TOKENS = 5000;
+const METADATA_EST_CHARS_PER_TOKEN = 4;
+const METADATA_MAX_PROMPT_CHARS = METADATA_MAX_INPUT_TOKENS * METADATA_EST_CHARS_PER_TOKEN;
+const METADATA_PROMPT_OVERHEAD_CHARS = 4500;
+const METADATA_MIN_CONVERSATION_CHARS = 3000;
+const METADATA_MAX_CONVERSATION_CHARS = Math.max(
+  METADATA_MIN_CONVERSATION_CHARS,
+  METADATA_MAX_PROMPT_CHARS - METADATA_PROMPT_OVERHEAD_CHARS,
+);
 
 // ─── Title Resolution ──────────────────────────────────────────────────────────
 
@@ -77,11 +88,19 @@ export async function queueGeneration(chatId: string): Promise<void> {
     return;
   }
 
-  await getDB().metadataQueue.put({
+  const db = getDB();
+  const existingQueueItem = await db.metadataQueue.get(chatId);
+  if (existingQueueItem?.status === "failed") {
+    // Terminal failure: requires explicit user reset.
+    return;
+  }
+
+  await db.metadataQueue.put({
     chatId,
     status: "pending",
     retries: 0,
     addedAt: Date.now(),
+    error: undefined,
   });
   await scheduleProcessTick();
 }
@@ -133,15 +152,24 @@ export async function processQueueTick(): Promise<void> {
   } catch (err) {
     const retries = item.retries + 1;
     const errMsg = err instanceof Error ? err.message : String(err);
+    const terminal = retries >= METADATA_MAX_RETRIES;
     log.warn(`[MetadataService] Generation failed for ${item.chatId} (attempt ${retries})`, err);
 
     await getDB().metadataQueue.update(item.chatId, {
-      status: "pending",
+      status: terminal ? "failed" : "pending",
       retries,
       error: errMsg,
-      addedAt: Date.now(),
+      lastAttemptAt: Date.now(),
+      addedAt: terminal ? item.addedAt : Date.now(),
     });
-    safeSendMessage({ action: "metadataGenerationFailed", chatId: item.chatId, error: errMsg });
+    safeSendMessage({
+      action: "metadataGenerationFailed",
+      chatId: item.chatId,
+      error: errMsg,
+      retries,
+      maxRetries: METADATA_MAX_RETRIES,
+      terminal,
+    });
   }
 
   const remaining = await db.metadataQueue.where("status").equals("pending").count();
@@ -208,6 +236,28 @@ export async function enqueueAllMissing(): Promise<number> {
 export interface MetadataQueueStatus {
   pending: number;
   processing: number;
+  failed: number;
+}
+
+export async function getQueueItem(chatId: string): Promise<MetadataQueueRecord | undefined> {
+  return getDB().metadataQueue.get(chatId);
+}
+
+/**
+ * Reset a terminally failed queue item so it can be processed again.
+ */
+export async function resetFailedQueueItem(chatId: string): Promise<void> {
+  const existing = await getDB().metadataQueue.get(chatId);
+  if (!existing || existing.status !== "failed") return;
+
+  await getDB().metadataQueue.update(chatId, {
+    status: "pending",
+    retries: 0,
+    error: undefined,
+    addedAt: Date.now(),
+    lastAttemptAt: Date.now(),
+  });
+  await scheduleProcessTick();
 }
 
 /**
@@ -216,34 +266,34 @@ export interface MetadataQueueStatus {
 export async function getQueueStatus(): Promise<MetadataQueueStatus> {
   const db = getDB();
 
-  const [pending, processing] = await Promise.all([
+  const [pending, processing, failed] = await Promise.all([
     db.metadataQueue.where("status").equals("pending").count(),
     db.metadataQueue.where("status").equals("processing").count(),
+    db.metadataQueue.where("status").equals("failed").count(),
   ]);
 
-  return { pending, processing };
+  return { pending, processing, failed };
 }
 
 /**
- * On service worker startup, reset any items stuck in 'processing' or 'failed'
- * back to 'pending' and synchronize the periodic alarm.
+ * On service worker startup, reset any items stuck in 'processing'
+ * back to 'pending' and synchronize alarms.
  */
 export async function resetStuckQueueItems(): Promise<void> {
   const db = getDB();
-  const [processingItems, failedItems] = await Promise.all([
-    db.metadataQueue.where("status").equals("processing").toArray(),
-    db.metadataQueue.where("status").equals("failed").toArray(),
-  ]);
-  const stuck = [...processingItems, ...failedItems];
-  if (stuck.length > 0) {
+  const processingItems = await db.metadataQueue.where("status").equals("processing").toArray();
+
+  if (processingItems.length > 0) {
     const now = Date.now();
-    for (const item of stuck) {
+    for (const item of processingItems) {
       await db.metadataQueue.update(item.chatId, {
         status: "pending",
         addedAt: now,
       });
     }
-    log.info(`[MetadataService] Reset ${stuck.length} stuck metadata queue items to pending`);
+    log.info(
+      `[MetadataService] Reset ${processingItems.length} stuck metadata queue items to pending`,
+    );
   }
 
   await syncMetadataQueueAlarms();
@@ -251,10 +301,10 @@ export async function resetStuckQueueItems(): Promise<void> {
   const config = await getMetadataAIConfig();
   if (config.enabled && config.indexMissing) {
     const added = await enqueueAllMissing();
-    if (added > 0 || stuck.length > 0) {
+    if (added > 0 || processingItems.length > 0) {
       await scheduleProcessTick();
     }
-  } else if (stuck.length > 0) {
+  } else if (processingItems.length > 0) {
     await scheduleProcessTick();
   }
 }
@@ -275,20 +325,50 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
   const messages = await getDB().chatMessages.where("chatId").equals(chatId).toArray();
 
-  // Build a compact text representation for the prompt
-  const conversationText = buildConversationText(chat, messages);
-
   // Build schema dynamically from current category list
   const schema = buildMetadataSchema(config.categories);
-  const prompt = createPromptWithSchema(
-    `Analyze the following AI conversation and extract structured metadata for it.\n\n${conversationText}`,
+
+  // Build a compact, budgeted conversation excerpt.
+  // We enforce a hard prompt-size budget (~5000 input tokens estimated)
+  // by limiting conversation chars and re-fitting once using real prompt overhead.
+  let conversationText = buildConversationText(chat, messages, METADATA_MAX_CONVERSATION_CHARS);
+  let prompt = createPromptWithSchema(
+    `Analyze the following AI conversation and extract structured metadata for it. You will be an excerpt from the chat with several significant messages inside <chat-to-analyze> tags. You should format your analysis using JSON ONLY as described below the chat.\n\n${conversationText}`,
     schema,
   );
+
+  if (prompt.length > METADATA_MAX_PROMPT_CHARS) {
+    const overheadChars = Math.max(0, prompt.length - conversationText.length);
+    const reducedConversationBudget = Math.max(
+      METADATA_MIN_CONVERSATION_CHARS,
+      METADATA_MAX_PROMPT_CHARS - overheadChars,
+    );
+    conversationText = buildConversationText(chat, messages, reducedConversationBudget);
+    prompt = createPromptWithSchema(
+      `Analyze the following AI conversation and extract structured metadata for it.\n\n${conversationText}`,
+      schema,
+    );
+  }
+
+  if (prompt.length > METADATA_MAX_PROMPT_CHARS) {
+    throw new Error(
+      `Metadata prompt exceeds max input budget (~${METADATA_MAX_INPUT_TOKENS} tokens est).`,
+    );
+  }
 
   const rawResponse = await callLLM(config.url, config.apiKey, config.model, prompt);
   const result = parseResponse(rawResponse, schema);
 
   if (!result.success) {
+    log.warn("[MetadataService] Parse diagnostics", {
+      chatId,
+      promptChars: prompt.length,
+      estimatedPromptTokens: Math.round(prompt.length / METADATA_EST_CHARS_PER_TOKEN),
+      responseChars: rawResponse.length,
+      responseStartsWithBrace: rawResponse.trimStart().startsWith("{"),
+      responsePreviewStart: rawResponse.slice(0, 240),
+      responsePreviewEnd: rawResponse.slice(-240),
+    });
     throw new Error(
       `Failed to parse LLM response: ${result.errors.map((e) => e.message).join(", ")}`,
     );
@@ -325,10 +405,10 @@ const OTHER_CATEGORY = "Other";
 
 // ─── Message Sampling ─────────────────────────────────────────────────────────
 
-/** Total messages to include in the LLM prompt. */
+/** Total sampled messages considered before dedupe and final budgeting. */
 const SAMPLE_TARGET = 50;
-/** Max characters per message excerpt (~750 tokens each at average density). */
-const CHARS_PER_MSG = 3000;
+/** Hard per-message cap before global prompt budgeting. */
+const METADATA_PER_MESSAGE_CHAR_CAP = 1000;
 
 /**
  * Extract the display role and plain text from a stored ChatMessage.
@@ -407,6 +487,17 @@ function evenSample<T>(arr: T[], n: number): T[] {
 interface ConversationSection {
   label: string | null;
   messages: StoredChatMessage[];
+}
+
+interface ConversationExcerpt {
+  id: string;
+  label: string | null;
+  role: "user" | "assistant";
+  text: string;
+}
+
+function excerptFingerprint(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240);
 }
 
 /**
@@ -539,21 +630,78 @@ function buildMetadataSchema(categories: CategoryConfig[]) {
 function buildConversationText(
   chat: { title?: string; source?: string },
   messages: StoredChatMessage[],
+  maxConversationChars: number,
 ): string {
+  const maxChars = Math.max(METADATA_MIN_CONVERSATION_CHARS, maxConversationChars);
   const lines: string[] = [];
-  if (chat.title) lines.push(`Title: ${chat.title}`);
-  if (chat.source) lines.push(`Platform: ${chat.source}`);
 
+  lines.push("<chat-to-analyse>");
+  if (chat.title) lines.push(`<title>${chat.title}</title>`);
+  if (chat.source) lines.push(`<platform>${chat.source}</platform>`);
+
+  const excerpts: ConversationExcerpt[] = [];
   for (const section of buildSampledSections(messages)) {
-    lines.push("");
-    if (section.label) lines.push(`--- ${section.label} ---`);
     for (const msg of section.messages) {
       const extracted = getMessageRoleAndText(msg);
       if (!extracted) continue;
-      const role = extracted.role === "user" ? "User" : "Assistant";
-      lines.push(`${role}: ${extracted.text.slice(0, CHARS_PER_MSG)}`);
+      excerpts.push({
+        id: msg.id,
+        label: section.label,
+        role: extracted.role,
+        text: extracted.text,
+      });
     }
   }
+
+  // Dedupe by message id first, then by text fingerprint to reduce repeated content
+  // across branch sampling.
+  const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  const deduped: ConversationExcerpt[] = [];
+
+  for (const ex of excerpts) {
+    if (seenIds.has(ex.id)) continue;
+    seenIds.add(ex.id);
+
+    const fp = excerptFingerprint(ex.text);
+    if (!fp || seenFingerprints.has(fp)) continue;
+    seenFingerprints.add(fp);
+    deduped.push(ex);
+  }
+
+  let currentLength = lines.join("\n").length;
+  let lastLabel: string | null = null;
+
+  for (const ex of deduped) {
+    const remaining = maxChars - currentLength;
+    if (remaining <= 32) break;
+
+    if (ex.label && ex.label !== lastLabel) {
+      const labelLine = `--- ${ex.label} ---`;
+      const withSpacing = `\n${labelLine}\n`;
+      if (withSpacing.length < remaining) {
+        lines.push("");
+        lines.push(labelLine);
+        currentLength += withSpacing.length;
+      }
+      lastLabel = ex.label;
+    }
+
+    const role = ex.role === "user" ? "User" : "Assistant";
+    const prefix = `${role}: `;
+    const lineBudget = Math.min(
+      METADATA_PER_MESSAGE_CHAR_CAP,
+      Math.max(0, maxChars - currentLength - prefix.length - 1),
+    );
+
+    if (lineBudget <= 0) break;
+
+    const text = ex.text.slice(0, lineBudget);
+    lines.push(`<message role="${prefix}">${text}</message>`);
+    currentLength += prefix.length + text.length + 1;
+  }
+
+  lines.push("</chat-to-analyze>");
 
   return lines.join("\n");
 }
@@ -565,18 +713,32 @@ async function callLLM(
   prompt: string,
 ): Promise<string> {
   const endpoint = `${url.replace(/\/$/, "")}/chat/completions`;
+  const requestBody = {
+    model: model || "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: METADATA_MAX_COMPLETION_TOKENS,
+  };
+  const requestHeaders = {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  };
+
+  log.debug("[MetadataService] LLM request", {
+    endpoint,
+    headers: {
+      ...requestHeaders,
+      ...(apiKey ? { Authorization: "Bearer [REDACTED]" } : {}),
+    },
+    body: requestBody,
+    promptChars: prompt.length,
+    estimatedPromptTokens: Math.round(prompt.length / METADATA_EST_CHARS_PER_TOKEN),
+  });
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: model || "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-    }),
+    headers: requestHeaders,
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {

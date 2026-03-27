@@ -67,6 +67,7 @@ export interface ChatMetadataRecord {
 
 export interface MetadataQueueRecord {
   chatId: string; // Primary key
+  // failed = terminal/unprocessable until explicitly reset
   status: "pending" | "processing" | "failed";
   retries: number;
   addedAt: number;

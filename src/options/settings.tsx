@@ -336,10 +336,11 @@ const CliSettingsCard = () => {
   );
 };
 
-function formatQueueStatus(s: { pending: number; processing: number }): string {
+function formatQueueStatus(s: { pending: number; processing: number; failed: number }): string {
   const parts: string[] = [];
   if (s.pending > 0) parts.push(`${s.pending} queued`);
   if (s.processing > 0) parts.push(`${s.processing} processing`);
+  if (s.failed > 0) parts.push(`${s.failed} unprocessable`);
   return parts.length > 0 ? parts.join(" · ") : "Idle · queue refresh runs every 5 minutes";
 }
 
@@ -359,6 +360,7 @@ const DEFAULT_CONFIG: MetadataAIConfig = {
 interface QueueStatus {
   pending: number;
   processing: number;
+  failed: number;
 }
 
 const AIMetadataSettingsCard = () => {

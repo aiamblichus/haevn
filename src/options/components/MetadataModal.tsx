@@ -11,7 +11,11 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import type { ChatMetadataRecord, MetadataAIConfig } from "../../types/messaging";
+import type {
+  ChatMetadataRecord,
+  MetadataAIConfig,
+  MetadataQueueRecord,
+} from "../../types/messaging";
 import { log } from "../../utils/logger";
 
 interface MetadataModalProps {
@@ -33,10 +37,12 @@ export const MetadataModal = ({
 }: MetadataModalProps) => {
   const [mode, setMode] = useState<Mode>("view");
   const [metadata, setMetadata] = useState<ChatMetadataRecord | null>(null);
+  const [queueItem, setQueueItem] = useState<MetadataQueueRecord | null>(null);
   const [aiConfig, setAiConfig] = useState<MetadataAIConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resettingFailure, setResettingFailure] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Edit form state
@@ -50,13 +56,18 @@ export const MetadataModal = ({
     setLoading(true);
     setError(null);
     try {
-      const [metaRes, configRes] = await Promise.all([
+      const [metaRes, configRes, queueRes] = await Promise.all([
         chrome.runtime.sendMessage({ action: "getChatMetadata", chatId }),
         chrome.runtime.sendMessage({ action: "getMetadataAIConfig" }),
+        chrome.runtime.sendMessage({ action: "getMetadataQueueItem", chatId }),
       ]);
       const record = metaRes.success ? (metaRes.data as ChatMetadataRecord | null) : null;
       const config = configRes.success ? (configRes.data as MetadataAIConfig) : null;
+      const queue = queueRes.success
+        ? ((queueRes.data as MetadataQueueRecord | null) ?? null)
+        : null;
       setMetadata(record);
+      setQueueItem(queue);
       setAiConfig(config);
     } catch (err) {
       log.error("[MetadataModal] Failed to load metadata:", err);
@@ -90,7 +101,7 @@ export const MetadataModal = ({
         .split(",")
         .map((k) => k.trim())
         .filter(Boolean);
-      await chrome.runtime.sendMessage({
+      const res = await chrome.runtime.sendMessage({
         action: "setChatMetadata",
         chatId,
         metadata: {
@@ -101,6 +112,7 @@ export const MetadataModal = ({
           keywords,
         },
       });
+      if (!res.success) throw new Error(res.error ?? "Save failed");
       onMetadataSaved(chatId, editTitle);
       await load();
       setMode("view");
@@ -124,6 +136,20 @@ export const MetadataModal = ({
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleResetFailure = async () => {
+    setResettingFailure(true);
+    setError(null);
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "resetMetadataQueueItem", chatId });
+      if (!res.success) throw new Error(res.error ?? "Failed to reset metadata error");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset metadata error");
+    } finally {
+      setResettingFailure(false);
     }
   };
 
@@ -158,6 +184,27 @@ export const MetadataModal = ({
 
         {!loading && mode === "view" && (
           <div className="space-y-4 text-sm">
+            {queueItem?.status === "failed" && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                <p className="text-sm font-medium">
+                  This chat is marked unprocessable for AI metadata.
+                </p>
+                <p className="mt-1 text-xs">
+                  Last error: {queueItem.error || "Unknown error"}
+                  {typeof queueItem.retries === "number" ? ` (attempts: ${queueItem.retries})` : ""}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={handleResetFailure}
+                  disabled={resettingFailure}
+                >
+                  {resettingFailure ? "Resetting…" : "Reset and retry"}
+                </Button>
+              </div>
+            )}
+
             <Field label="Title" value={metadata?.title} placeholder="Not set" />
             <Field label="Description" value={metadata?.description} placeholder="Not set" />
             <Field label="Synopsis" value={metadata?.synopsis} placeholder="Not set" multiline />

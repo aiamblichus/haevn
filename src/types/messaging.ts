@@ -21,11 +21,11 @@ import type { BulkSyncOptions, BulkSyncState } from "../background/bulkSync/type
 import type { ExportOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
-import type { ChatMetadataRecord } from "../services/db";
+import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
 import type { MetadataAIConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
 
-export type { ChatMetadataRecord, MetadataAIConfig };
+export type { ChatMetadataRecord, MetadataAIConfig, MetadataQueueRecord };
 
 import type {
   BulkExportWorkerMessage,
@@ -309,6 +309,8 @@ export type BackgroundRequest =
   | { action: "setMetadataAIConfig"; config: Partial<MetadataAIConfig> }
   | { action: "queueMissingMetadata" }
   | { action: "getMetadataQueueStatus" }
+  | { action: "getMetadataQueueItem"; chatId: string }
+  | { action: "resetMetadataQueueItem"; chatId: string }
   | { action: "rebuildAllMetadata" }
   | { action: "getChatPreview"; chatId: string };
 
@@ -790,4 +792,7 @@ export type BackgroundEvent =
       action: "metadataGenerationFailed";
       chatId: string;
       error: string;
+      retries: number;
+      maxRetries: number;
+      terminal: boolean;
     };

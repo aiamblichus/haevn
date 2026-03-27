@@ -5,7 +5,9 @@ import {
   dequeueGeneration,
   enqueueAllMissing,
   generateForChat,
+  getQueueItem,
   getQueueStatus,
+  resetFailedQueueItem,
   syncMetadataQueueAlarms,
 } from "../../services/metadataService";
 import { getMetadataAIConfig, setMetadataAIConfig } from "../../services/settingsService";
@@ -123,6 +125,32 @@ export async function handleGetMetadataQueueStatus(
     sendResponse({ success: true, data: status });
   } catch (err) {
     log.error("[MetadataHandlers] getMetadataQueueStatus failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetMetadataQueueItem(
+  message: Extract<BackgroundRequest, { action: "getMetadataQueueItem" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const item = await getQueueItem(message.chatId);
+    sendResponse({ success: true, data: item ?? null });
+  } catch (err) {
+    log.error("[MetadataHandlers] getMetadataQueueItem failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleResetMetadataQueueItem(
+  message: Extract<BackgroundRequest, { action: "resetMetadataQueueItem" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    await resetFailedQueueItem(message.chatId);
+    sendResponse({ success: true });
+  } catch (err) {
+    log.error("[MetadataHandlers] resetMetadataQueueItem failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

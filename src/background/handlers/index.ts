@@ -88,6 +88,8 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   setMetadataAIConfig: metadataHandlers.handleSetMetadataAIConfig as HandlerFunction,
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
+  getMetadataQueueItem: metadataHandlers.handleGetMetadataQueueItem as HandlerFunction,
+  resetMetadataQueueItem: metadataHandlers.handleResetMetadataQueueItem as HandlerFunction,
   rebuildAllMetadata: metadataHandlers.handleRebuildAllMetadata as HandlerFunction,
   getChatPreview: metadataHandlers.handleGetChatPreview as HandlerFunction,
 };

@@ -390,6 +390,7 @@ export const ArchiveView = ({
                         }
                         onOpenProvider={(id) => onOpenChatInProvider(id)}
                         onExport={(id) => onOpenExportModal([id])}
+                        onMetadata={(id) => onSearchResultAction("metadata", id)}
                         canOpenProvider={
                           (g.source || "").includes("openwebui")
                             ? !!g.params?.openwebui_origin || !!openableById[g.chatId]

@@ -378,7 +378,12 @@ const App = () => {
             setStatus(`Metadata ready: "${event.title}"`, "ok");
             break;
           case "metadataGenerationFailed":
-            setStatus(`Metadata generation failed for a chat`, "error");
+            setStatus(
+              event.terminal
+                ? `Metadata failed permanently for a chat (${event.retries}/${event.maxRetries})`
+                : `Metadata generation failed for a chat (${event.retries}/${event.maxRetries})`,
+              "error",
+            );
             break;
         }
       }
@@ -564,6 +569,9 @@ const App = () => {
         }
         case "export":
           await openExportModal([chatId]);
+          break;
+        case "metadata":
+          setMetadataModalChatId(chatId);
           break;
       }
     },
@@ -813,7 +821,13 @@ const App = () => {
       {metadataModalChatId && (
         <MetadataModal
           chatId={metadataModalChatId}
-          chatTitle={displayedChats.find((c) => c.id === metadataModalChatId)?.title ?? ""}
+          chatTitle={
+            displayedChats.find((c) => c.id === metadataModalChatId)?.metaTitle ||
+            displayedChats.find((c) => c.id === metadataModalChatId)?.title ||
+            searchResults?.find((r) => r.chatId === metadataModalChatId)?.metaTitle ||
+            searchResults?.find((r) => r.chatId === metadataModalChatId)?.chatTitle ||
+            ""
+          }
           open={!!metadataModalChatId}
           onClose={() => setMetadataModalChatId(null)}
           onMetadataSaved={(chatId, metaTitle) => {
