@@ -302,12 +302,14 @@ import { ExportModal } from "../components/ExportModal";
 
 const Header = ({
   chat,
+  displayTitle,
   markdownEnabled,
   onMarkdownToggle,
   onCopy,
   onOpenExport,
 }: {
   chat: Chat;
+  displayTitle?: string;
   markdownEnabled: boolean;
   onMarkdownToggle: (enabled: boolean) => void;
   onCopy: () => Promise<void>;
@@ -362,7 +364,7 @@ const Header = ({
               id="title"
               className="text-lg font-bold text-[hsl(var(--foreground))] truncate uppercase tracking-wider"
             >
-              {chat.title || "(UNTITLED)"}
+              {displayTitle || chat.haevnMetadata?.title || chat.title || "(UNTITLED)"}
             </h1>
             <p className="text-xs text-[hsl(var(--muted-foreground))] truncate font-mono">
               {chat.source || ""}
@@ -1279,6 +1281,7 @@ function findBranchPathToMessage(
 const App = () => {
   const params = useMemo(() => parseParams(location.search), []);
   const [chat, setChat] = useState<Chat | null>(null);
+  const [metadataTitle, setMetadataTitle] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [visibleIndex, setVisibleIndex] = useState<Map<string, number>>(new Map());
   const [selectedRootIndex, setSelectedRootIndex] = useState<number>(0);
@@ -1360,6 +1363,7 @@ const App = () => {
   useEffect(() => {
     const load = async () => {
       try {
+        setMetadataTitle(null);
         if (!params.chatId) throw new Error("Missing chatId");
 
         // Safety: Wait for chrome.runtime if it's missing (can happen on fresh tabs)
@@ -1386,6 +1390,25 @@ const App = () => {
         }
         const c = resp.data as Chat;
         setChat(c);
+
+        // Resolve metadata title for header display (if available)
+        try {
+          const metadataResp = await chrome.runtime.sendMessage({
+            action: "getChatMetadata",
+            chatId: params.chatId,
+          } as BackgroundRequest);
+          const title =
+            metadataResp?.success &&
+            metadataResp.data &&
+            typeof metadataResp.data === "object" &&
+            "title" in metadataResp.data &&
+            typeof metadataResp.data.title === "string"
+              ? metadataResp.data.title.trim()
+              : "";
+          setMetadataTitle(title || null);
+        } catch {
+          setMetadataTitle(null);
+        }
 
         if (params.debug) {
           // Minimal debug logging of structure
@@ -1568,6 +1591,7 @@ const App = () => {
     <Fragment>
       <Header
         chat={chat}
+        displayTitle={metadataTitle || undefined}
         markdownEnabled={markdownEnabled}
         onMarkdownToggle={handleMarkdownToggle}
         onCopy={handleCopyMarkdown}
