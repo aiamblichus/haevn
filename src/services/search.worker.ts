@@ -760,7 +760,10 @@ function verifyPhrase(
 
   const tokens = phraseTerms.map((t) => {
     // 1. Trimmer & StopWord
-    let res = prePipeline.run([new lunr.Token(t)]);
+    // Lunr query tokenization lowercases input before pipelines run.
+    // We must mirror that here, otherwise quoted terms with capitals
+    // (e.g. "Fisherman") won't match lowercase matchData keys.
+    let res = prePipeline.run([new lunr.Token(t.toLowerCase())]);
     if (res.length === 0) return null; // Stop word identified
 
     // 2. Search Pipeline (Stemmer)

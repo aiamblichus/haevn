@@ -55,6 +55,7 @@ Notes:
 haevn search "model welfare inner experience"
 haevn search "emergence" --platform claude --limit 100
 haevn search "memory leak" --context 220
+haevn search "memory leak" --category "AI Emergence"
 ```
 
 Useful flags:
@@ -67,24 +68,41 @@ Useful flags:
 haevn search "ai consciousness" --format json | jq '.results[0]'
 ```
 
-### Search syntax
+### Search syntax (important)
 
-HAEVN uses **Lunr.js** with support for advanced operators:
+HAEVN search is term-based by default.
 
-| Operator | Example | Description |
-|----------|---------|-------------|
-| (none) | `term1 term2` | All terms must match (AND) |
-| `"..."` | `"exact phrase"` | Phrase must appear consecutively |
-| `-` | `-exclude` | Term must NOT be present |
-| `*` | `react*` | Prefix/wildcard match |
-| `~` | `roam~2` | Fuzzy match (edit distance 2) |
-| `^` | `api^10` | Boost term relevance |
-
-**Examples:**
+- A multi-word query like `haevn search "you may not recognize me"` is **not** an exact phrase search.
+- Default semantics are AND-like term matching (plus Lunr tokenization/stemming behavior).
+- For exact phrase matching, pass inner quotes to Lunr:
 
 ```bash
-# Exact phrase
-haevn search '"machine learning"'
+haevn search '"you may not recognize me"'
+```
+
+The CLI now prints a hint for unquoted multi-word queries to reduce confusion.
+
+#### Operators
+
+HAEVN uses **Lunr.js** query syntax:
+
+| Operator | Example          | Description                      |
+| -------- | ---------------- | -------------------------------- |
+| (none)   | `term1 term2`    | Multi-term query (default term matching) |
+| `"..."`  | `"exact phrase"` | Phrase must appear consecutively |
+| `-`      | `-exclude`       | Term must NOT be present         |
+| `*`      | `react*`         | Prefix/wildcard match            |
+| `~`      | `roam~2`         | Fuzzy match (edit distance 2)    |
+| `^`      | `api^10`         | Boost term relevance             |
+
+#### Examples
+
+```bash
+# Multi-word term search (NOT exact phrase)
+haevn search "you may not recognize me"
+
+# Exact phrase (recommended shell-safe form)
+haevn search '"you may not recognize me"'
 
 # Exclude terms
 haevn search "react hooks -class"
@@ -93,13 +111,26 @@ haevn search "react hooks -class"
 haevn search "kubernates~2"
 
 # Prefix matching
-haevn search "async*"
+haevn search "async* await*"
 
 # Boost relevance
 haevn search "api^5 design"
 ```
 
-If strict AND returns nothing, HAEVN auto-retries with relaxed prefix matching (OR).
+#### JSON output hint field
+
+When the query is multi-word and does not contain an explicit quoted phrase,
+`haevn search --format json` includes a top-level `hint` field:
+
+```json
+{
+  "results": [...],
+  "total": 8,
+  "hint": "Tip: multi-word search matches terms (AND), not an exact phrase..."
+}
+```
+
+If strict AND-style matching returns nothing, HAEVN auto-retries with relaxed prefix matching (OR).
 
 ---
 

@@ -12,7 +12,15 @@ import { consola, formatPlatform, formatRelativeTime, header, pc, truncate } fro
 export default defineCommand({
   meta: {
     name: "search",
-    description: "Search for messages matching a query",
+    description:
+      "Search for messages matching a query.\n\n" +
+      "Search syntax:\n" +
+      '  • multi-word query (default AND): haevn search "you may not recognize me"\n' +
+      "  • exact phrase: haevn search '\"you may not recognize me\"'\n" +
+      '  • exclude term: haevn search "alignment -rlhf"\n' +
+      '  • prefix wildcard: haevn search "recurs*"\n' +
+      '  • fuzzy term: haevn search "kubernates~2"\n' +
+      '  • boost term: haevn search "api^5 design"',
   },
   args: {
     query: {
@@ -64,6 +72,7 @@ export default defineCommand({
     const includeMetadata = !args["no-metadata"];
     const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
     const contextChars = context ? Number.parseInt(context, 10) : 120;
+    const hint = getQueryHint(query);
 
     let results: SearchResult[];
     try {
@@ -89,6 +98,7 @@ export default defineCommand({
             messageRef: createMessageRef(result.chatId, result.messageId),
           })),
           total: jsonResults.length,
+          ...(hint ? { hint } : {}),
         }),
       );
       return;
@@ -96,10 +106,12 @@ export default defineCommand({
 
     if (results.length === 0) {
       consola.info(`No results for "${query}".`);
+      if (hint) consola.log(pc.dim(hint));
       return;
     }
 
-    consola.log(formatSearchResultsText(results, { includeMetadata }));
+    const output = formatSearchResultsText(results, { includeMetadata });
+    consola.log(hint ? `${output}\n${pc.dim(hint)}` : output);
   },
 });
 
@@ -112,6 +124,21 @@ export default defineCommand({
 function renderSnippet(snippet: string): string {
   return snippet.replace(/\{\{HIGHLIGHT\}\}(.*?)\{\{\/HIGHLIGHT\}\}/g, (_match, inner) =>
     pc.bold(pc.yellow(inner)),
+  );
+}
+
+function getQueryHint(query: string): string | undefined {
+  const trimmed = query.trim();
+  if (!trimmed) return undefined;
+
+  const hasQuotedPhrase = /"[^"]+"/.test(trimmed);
+  const hasMultipleTerms = trimmed.split(/\s+/).filter(Boolean).length > 1;
+
+  if (!hasMultipleTerms || hasQuotedPhrase) return undefined;
+
+  return (
+    "Tip: multi-word search matches terms (AND), not an exact phrase. " +
+    "For exact phrase matching, use inner quotes: haevn search '\"you may not recognize me\"'."
   );
 }
 
@@ -128,7 +155,7 @@ export function formatSearchResultsText(
     if (result.chatId !== lastChatId) {
       lastChatId = result.chatId;
       const displayTitle = includeMetadata
-        ? (result.metaTitle || result.chatTitle)
+        ? result.metaTitle || result.chatTitle
         : result.chatTitle;
       lines.push("");
       lines.push(header(`${result.chatId}  "${truncate(displayTitle, 45)}"`));

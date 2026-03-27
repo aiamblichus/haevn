@@ -55,11 +55,22 @@ Options:
 
 #### Search Syntax
 
-HAEVN uses **Lunr.js** for full-text search with advanced query operators:
+HAEVN search is **term-based by default**.
+
+- `haevn search "you may not recognize me"` is a multi-term query (not exact phrase mode).
+- For exact phrase matching, use inner quotes:
+
+```bash
+haevn search '"you may not recognize me"'
+```
+
+When you run an unquoted multi-word query, CLI text output shows a tip, and JSON output includes a top-level `hint` field.
+
+HAEVN uses **Lunr.js** query syntax with these operators:
 
 | Operator | Example | Description |
 |----------|---------|-------------|
-| (none) | `term1 term2` | All terms must match (AND logic) |
+| (none) | `term1 term2` | Multi-term query (default term matching) |
 | `"..."` | `"exact phrase"` | Phrase must appear consecutively |
 | `-` | `-exclude` | Term must NOT be present |
 | `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, etc. |
@@ -69,10 +80,10 @@ HAEVN uses **Lunr.js** for full-text search with advanced query operators:
 **Examples:**
 
 ```bash
-# Basic AND search
-haevn search "python async function"
+# Multi-word term search (NOT exact phrase)
+haevn search "you may not recognize me"
 
-# Exact phrase
+# Exact phrase (shell-safe form)
 haevn search '"machine learning"'
 
 # Exclude unwanted terms
