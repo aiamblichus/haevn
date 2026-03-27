@@ -31,6 +31,21 @@ interface PiThinkingLevelChangeLine {
   thinkingLevel: string;
 }
 
+interface PiUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+}
+
 interface PiMessageLine {
   type: "message";
   id: string;
@@ -45,6 +60,8 @@ interface PiMessageLine {
     toolCallId?: string;
     toolName?: string;
     isError?: boolean;
+    usage?: PiUsage;
+    stopReason?: string;
   };
 }
 
@@ -77,6 +94,42 @@ function pickMessageIds(chat: Chat, selectedMessageIds?: string[]): string[] {
 
 function makeId(prefix: string, index: number): string {
   return `${prefix}_${String(index).padStart(4, "0")}`;
+}
+
+function estimateTokensFromChars(charCount: number): number {
+  if (charCount <= 0) return 0;
+  return Math.max(1, Math.round(charCount / 4));
+}
+
+function estimateContentChars(blocks: Array<Record<string, unknown>>): number {
+  let total = 0;
+  for (const block of blocks) {
+    try {
+      total += JSON.stringify(block).length;
+    } catch {
+      total += 0;
+    }
+  }
+  return total;
+}
+
+function buildUsage(inputChars: number, outputChars: number): PiUsage {
+  const input = estimateTokensFromChars(inputChars);
+  const output = estimateTokensFromChars(outputChars);
+  return {
+    input,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: input + output,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
 }
 
 function toUserContentBlocks(message: ChatMessage): Array<Record<string, unknown>> {
@@ -145,7 +198,12 @@ function toAssistantContentBlocks(message: ChatMessage): Array<Record<string, un
 
     for (const part of (modelMessage as ModelResponse).parts) {
       if (part.part_kind === "thinking") {
-        blocks.push({ type: "thinking", thinking: part.content });
+        blocks.push({
+          type: "thinking",
+          thinking: part.content,
+          ...(part.signature ? { thinkingSignature: part.signature } : {}),
+          ...(part.id ? { id: part.id } : {}),
+        });
         continue;
       }
 
@@ -235,6 +293,7 @@ export function exportChatAsPiSessionJsonl(chat: Chat, selectedMessageIds?: stri
   }
 
   const messageIds = pickMessageIds(chat, selectedMessageIds);
+  let pendingInputChars = 0;
 
   for (const messageId of messageIds) {
     const message = chat.messages[messageId];
@@ -276,6 +335,7 @@ export function exportChatAsPiSessionJsonl(chat: Chat, selectedMessageIds?: stri
               isError: false,
             },
           });
+          pendingInputChars += estimateContentChars(content);
           parentEventId = id;
         }
       } else {
@@ -293,6 +353,7 @@ export function exportChatAsPiSessionJsonl(chat: Chat, selectedMessageIds?: stri
               timestamp: message.timestamp || Date.now(),
             },
           });
+          pendingInputChars += estimateContentChars(content);
           parentEventId = id;
         }
       }
@@ -302,6 +363,8 @@ export function exportChatAsPiSessionJsonl(chat: Chat, selectedMessageIds?: stri
       const content = toAssistantContentBlocks(message);
       if (content.length > 0) {
         const id = makeId("msg", eventIndex++);
+        const outputChars = estimateContentChars(content);
+        const usage = buildUsage(pendingInputChars, outputChars);
         lines.push({
           type: "message",
           id,
@@ -313,8 +376,11 @@ export function exportChatAsPiSessionJsonl(chat: Chat, selectedMessageIds?: stri
             provider: chat.source,
             model: message.model || chat.models[chat.models.length - 1],
             timestamp: message.timestamp || Date.now(),
+            usage,
+            stopReason: "endTurn",
           },
         });
+        pendingInputChars = 0;
         parentEventId = id;
       }
     }
