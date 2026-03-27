@@ -87,9 +87,18 @@ export interface ListOptions {
 
 export interface ExportOptions {
   includeMedia?: boolean;
+  exporterId?: "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
+  format?: "json" | "markdown" | "md" | "pi" | "jsonl" | "haevn_json" | "haevn_markdown";
 }
 
-export type ImportFormat = "claude_code" | "codex" | "pi" | "haevn_json" | "markdown" | "image" | "video";
+export type ImportFormat =
+  | "claude_code"
+  | "codex"
+  | "pi"
+  | "haevn_json"
+  | "markdown"
+  | "image"
+  | "video";
 
 export interface ImportFilePayload {
   name: string;

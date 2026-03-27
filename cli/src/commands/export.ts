@@ -1,18 +1,41 @@
 /**
- * Export command – export a full chat tree in HAEVN JSON format.
+ * Export command – request formatted single-chat exports from extension daemon.
  */
 
 import * as fs from "node:fs";
 import { defineCommand } from "citty";
-import { toJsonString } from "../formatters/json";
 import { daemonRequest } from "../daemon/client.js";
 import type { Chat } from "../types/chat";
 import { consola, pc } from "../utils/output";
 
+type ExportFormat = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
+
+interface ExportArtifactResponse {
+  format: ExportFormat;
+  filename: string;
+  contentType: string;
+  content: string;
+  warnings?: string[];
+}
+
+function normalizeFormat(raw: string | undefined): ExportFormat {
+  const value = (raw || "haevn_json").toLowerCase();
+
+  if (value === "haevn_json" || value === "json") return "haevn_json";
+  if (value === "haevn_markdown" || value === "markdown" || value === "md") {
+    return "haevn_markdown";
+  }
+  if (value === "pi_session_jsonl" || value === "pi" || value === "jsonl") {
+    return "pi_session_jsonl";
+  }
+
+  throw new Error(`Unsupported export format: ${raw}`);
+}
+
 export default defineCommand({
   meta: {
     name: "export",
-    description: "Export a full chat tree in HAEVN JSON format",
+    description: "Export a single chat via extension exporters (JSON, Markdown, Pi JSONL)",
   },
   args: {
     chatId: {
@@ -26,65 +49,70 @@ export default defineCommand({
       description: "Output file path (required)",
       required: true,
     },
-    "include-media": {
-      type: "boolean",
-      description: "Embed base64 media in export (default: false, media referenced by OPFS ID)",
-      default: false,
+    format: {
+      type: "string",
+      alias: "f",
+      description: "Export format (haevn_json | haevn_markdown | pi_session_jsonl)",
+      default: "haevn_json",
     },
   },
   async run({ args }) {
-    const { chatId, output, "include-media": includeMedia } = args;
+    const { chatId, output } = args;
 
-    let chat: Chat;
+    let format: ExportFormat;
     try {
-      chat = await daemonRequest<Chat>({
+      format = normalizeFormat(args.format as string | undefined);
+    } catch (err) {
+      consola.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+
+    let artifact: ExportArtifactResponse;
+    try {
+      artifact = await daemonRequest<ExportArtifactResponse>({
         action: "export",
         chatId,
-        options: { includeMedia },
+        options: {
+          exporterId: format,
+          includeMedia: false,
+        },
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
 
-    const content = toJsonString(chat);
-    fs.writeFileSync(output, content, "utf8");
-    consola.log(formatExportSummary(chat, output));
+    fs.writeFileSync(output, artifact.content, "utf8");
+    consola.log(formatExportResultSummary(chatId, output, artifact));
+
+    if (artifact.warnings && artifact.warnings.length > 0) {
+      for (const warning of artifact.warnings) {
+        consola.warn(warning);
+      }
+    }
   },
 });
 
-// ─── Formatting ───────────────────────────────────────────────────────────────
-
-export function formatExportSummary(chat: Chat, outputPath: string): string {
-  const messageCount = Object.keys(chat.messages).length;
-  const branchCount = Object.values(chat.messages).filter((m) => m.childrenIds.length === 0).length;
-  const mediaCount = countMedia(chat);
-
+export function formatExportResultSummary(
+  chatId: string,
+  outputPath: string,
+  artifact: ExportArtifactResponse,
+): string {
   const lines = [
-    `${pc.green("✓")} Exported ${pc.bold(chat.id)}`,
-    `  ${branchCount} branch${branchCount === 1 ? "" : "es"}  ·  ${messageCount} messages${mediaCount ? `  ·  ${mediaCount} media` : ""}`,
+    `${pc.green("✓")} Exported ${pc.bold(chatId)} as ${pc.cyan(artifact.format)}`,
+    `  ${pc.dim("mime")} ${artifact.contentType}`,
     `  ${pc.dim("→")} ${outputPath}`,
   ];
 
   return lines.join("\n");
 }
 
-function countMedia(chat: Chat): number {
-  let count = 0;
-  for (const msg of Object.values(chat.messages)) {
-    for (const part of msg.message) {
-      if (part.kind === "response") {
-        for (const p of part.parts) {
-          if (
-            p.part_kind === "image-response" ||
-            p.part_kind === "video-response" ||
-            p.part_kind === "audio-response"
-          ) {
-            count++;
-          }
-        }
-      }
-    }
-  }
-  return count;
+// Legacy helper retained for compatibility with prior imports/tests.
+export function formatExportSummary(chat: Chat, outputPath: string): string {
+  return formatExportResultSummary(chat.id || chat.sourceId, outputPath, {
+    format: "haevn_json",
+    filename: outputPath,
+    contentType: "application/json;charset=utf-8",
+    content: "",
+  });
 }

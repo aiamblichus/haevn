@@ -8,7 +8,7 @@
  *   haevn get chat_abc123 -m msg_xyz     # Get specific branch
  *   haevn list                           # List recent chats
  *   haevn branches chat_abc123           # Show tree structure
- *   haevn export chat_abc123 -o out.json # Export full chat
+ *   haevn export chat_abc123 -o out.json --format haevn_json
  *   haevn install -e <extension-id>      # Install native messaging host
  */
 
@@ -19,8 +19,8 @@ import daemonCommand from "./commands/daemon";
 import exportCommand from "./commands/export";
 import getCommand from "./commands/get";
 import importCommand from "./commands/import";
-import listCommand from "./commands/list";
 import infoCommand from "./commands/info";
+import listCommand from "./commands/list";
 import searchCommand from "./commands/search";
 import { consola } from "./utils/output";
 

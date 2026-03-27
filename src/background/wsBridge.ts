@@ -44,6 +44,7 @@ import type { AllProviderRawData } from "../types/messaging";
 import { validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
+import { buildTextExportArtifact } from "./export/textExportArtifact";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
@@ -90,8 +91,12 @@ interface WsListOptions {
   sortBy?: "lastSynced" | "title" | "messageCount";
 }
 
+type WsExporterId = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
+
 interface WsExportOptions {
   includeMedia?: boolean;
+  exporterId?: WsExporterId;
+  format?: "json" | "markdown" | "md" | "pi" | "jsonl" | "haevn_json" | "haevn_markdown";
 }
 
 type WsImportFormat = "claude_code" | "codex" | "pi" | "haevn_json" | "markdown";
@@ -679,6 +684,28 @@ async function handleBranches(
   return { id, success: true, data: chat };
 }
 
+function resolveWsExporterId(options?: WsExportOptions): WsExporterId {
+  const explicit = options?.exporterId;
+  if (explicit) {
+    return explicit;
+  }
+
+  const format = options?.format;
+  if (!format) {
+    return "haevn_json";
+  }
+
+  if (format === "haevn_markdown" || format === "markdown" || format === "md") {
+    return "haevn_markdown";
+  }
+
+  if (format === "pi_session_jsonl" || format === "pi" || format === "jsonl") {
+    return "pi_session_jsonl";
+  }
+
+  return "haevn_json";
+}
+
 async function handleExport(
   id: string,
   req: Extract<WsRequest, { action: "export" }>,
@@ -687,7 +714,31 @@ async function handleExport(
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
-  return { id, success: true, data: chat };
+
+  const exporterId = resolveWsExporterId(req.options);
+  const includeMedia = req.options?.includeMedia === true;
+  const messageRows = maybeStripBinary(Object.values(chat.messages), includeMedia);
+  const artifact = await buildTextExportArtifact(
+    {
+      ...chat,
+      messages: toMessageDict(messageRows),
+    },
+    {
+      exporterId,
+      format: exporterId === "haevn_markdown" ? "markdown" : "json",
+      includeMetadata: true,
+      includeTimestamps: true,
+    },
+  );
+
+  return {
+    id,
+    success: true,
+    data: {
+      format: exporterId,
+      ...artifact,
+    },
+  };
 }
 
 async function handleGetMetadata(

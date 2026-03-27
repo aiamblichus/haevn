@@ -1,10 +1,6 @@
-import {
-  type ExportOptions,
-  generateExportContent,
-  generateExportFilename,
-} from "../../formatters";
+import type { ExportOptions } from "../../formatters";
 import { SyncService } from "../../services/syncService";
-import { exportChatAsPiSessionJsonl } from "./piSessionExport";
+import { buildTextExportArtifact } from "./textExportArtifact";
 
 function toBase64Utf8(content: string): string {
   const encoder = new TextEncoder();
@@ -55,28 +51,12 @@ export async function exportSingleChatFile(
     throw new Error(`Chat not found: ${chatId}`);
   }
 
-  if (options.exporterId === "pi_session_jsonl") {
-    const content = exportChatAsPiSessionJsonl(chat, options.messageIds);
-    const sessionId = chat.id || chat.sourceId || "session";
-    const filename = `pi_session_${sessionId}.jsonl`;
-    const downloadId = await downloadTextContent(
-      content,
-      filename,
-      "application/x-ndjson;charset=utf-8",
-    );
-    return { filename, downloadId };
-  }
+  const artifact = await buildTextExportArtifact(chat, options);
+  const downloadId = await downloadTextContent(
+    artifact.content,
+    artifact.filename,
+    artifact.contentType,
+  );
 
-  const format = options.exporterId === "haevn_markdown" ? "markdown" : "json";
-  const filename = generateExportFilename(chat.source, chat.title, format, chat.sourceId);
-  const content = await generateExportContent(chat, {
-    ...options,
-    format,
-  });
-
-  const contentType =
-    format === "markdown" ? "text/markdown;charset=utf-8" : "application/json;charset=utf-8";
-  const downloadId = await downloadTextContent(content, filename, contentType);
-
-  return { filename, downloadId };
+  return { filename: artifact.filename, downloadId };
 }
