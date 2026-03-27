@@ -53,9 +53,15 @@ export async function removeMany(chatIds: string[]): Promise<void> {
   }
 }
 
-/** Delete every metadata record and clear the queue — used by "Rebuild All". */
+/**
+ * Delete every metadata record and clear metadata/embedding queues and caches.
+ * Used by "Rebuild All".
+ */
 export async function clearAll(): Promise<void> {
   await getDB().chatMetadata.clear();
   await getDB().metadataQueue.clear();
-  log.info("[MetadataRepository] Cleared all metadata and queue");
+  await getDB().chatEmbeddings.clear();
+  await getDB().embeddingQueue.clear();
+  await getDB().starmapLayout.clear();
+  log.info("[MetadataRepository] Cleared metadata, embedding cache, and queues");
 }

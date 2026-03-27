@@ -85,6 +85,15 @@ export interface ChatEmbeddingRecord {
   updatedAt: number;
 }
 
+export interface EmbeddingQueueRecord {
+  chatId: string; // Primary key
+  status: "pending" | "processing" | "failed";
+  retries: number;
+  addedAt: number;
+  lastAttemptAt?: number;
+  error?: string;
+}
+
 export interface StarmapPoint {
   chatId: string;
   x: number;
@@ -124,6 +133,7 @@ export class HaevnDatabase extends Dexie {
   chatMetadata!: Table<ChatMetadataRecord, string>; // Primary key 'chatId'
   metadataQueue!: Table<MetadataQueueRecord, string>; // Primary key 'chatId'
   chatEmbeddings!: Table<ChatEmbeddingRecord, string>; // Primary key 'chatId'
+  embeddingQueue!: Table<EmbeddingQueueRecord, string>; // Primary key 'chatId'
   starmapLayout!: Table<StarmapLayoutRecord, string>; // Primary key 'layoutKey'
 
   constructor() {
@@ -551,6 +561,23 @@ export class HaevnDatabase extends Dexie {
       chatMetadata: "chatId",
       metadataQueue: "chatId, status, addedAt",
       chatEmbeddings: "chatId, updatedAt, [model+updatedAt]",
+      starmapLayout: "layoutKey, updatedAt",
+    });
+    // Version 20: Add embeddingQueue table for independent starmap embedding catch-up
+    this.version(20).stores({
+      chats:
+        "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
+      chatMessages: "[chatId+id], chatId, parentId, timestamp",
+      lunrIndex: "id",
+      openwebuiInstances: "id, baseUrl",
+      cache: "id",
+      thumbnails:
+        "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
+      mediaContent: "id",
+      chatMetadata: "chatId",
+      metadataQueue: "chatId, status, addedAt",
+      chatEmbeddings: "chatId, updatedAt, [model+updatedAt]",
+      embeddingQueue: "chatId, status, addedAt",
       starmapLayout: "layoutKey, updatedAt",
     });
     // Define future versions here with .version(n).stores({}) for schema migrations

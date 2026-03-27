@@ -5,8 +5,11 @@ import {
   dequeueGeneration,
   enqueueAllMissing,
   generateForChat,
+  getEmbeddingQueueStatus,
   getQueueItem,
   getQueueStatus,
+  queueEmbeddingGeneration,
+  rebuildAllEmbeddings,
   resetFailedQueueItem,
   syncMetadataQueueAlarms,
 } from "../../services/metadataService";
@@ -56,6 +59,7 @@ export async function handleSetChatMetadata(
       updatedAt: Date.now(),
     });
     await dequeueGeneration(message.chatId);
+    await queueEmbeddingGeneration(message.chatId);
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setChatMetadata failed", err);
@@ -136,9 +140,36 @@ export async function handleSetStarmapConfig(
     }
 
     await setStarmapConfig(message.config);
+    await syncMetadataQueueAlarms();
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setStarmapConfig failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetStarmapEmbeddingQueueStatus(
+  _message: Extract<BackgroundRequest, { action: "getStarmapEmbeddingQueueStatus" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const status = await getEmbeddingQueueStatus();
+    sendResponse({ success: true, data: status });
+  } catch (err) {
+    log.error("[MetadataHandlers] getStarmapEmbeddingQueueStatus failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleRebuildAllStarmapEmbeddings(
+  _message: Extract<BackgroundRequest, { action: "rebuildAllStarmapEmbeddings" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const queued = await rebuildAllEmbeddings();
+    sendResponse({ success: true, data: { queued } });
+  } catch (err) {
+    log.error("[MetadataHandlers] rebuildAllStarmapEmbeddings failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

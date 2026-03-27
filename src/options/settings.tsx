@@ -739,6 +739,8 @@ const StarmapSettingsCard = () => {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const [rebuilding, setRebuilding] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -786,6 +788,41 @@ const StarmapSettingsCard = () => {
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
+    }
+  };
+
+  const loadQueueStatus = useCallback(async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "getStarmapEmbeddingQueueStatus" });
+      if (res.success) setQueueStatus(res.data as QueueStatus);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!config.enabled || !config.embeddingsEnabled) {
+      setQueueStatus(null);
+      return;
+    }
+    loadQueueStatus();
+    const interval = setInterval(() => {
+      loadQueueStatus();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [config.enabled, config.embeddingsEnabled, loadQueueStatus]);
+
+  const handleRebuildEmbeddings = async () => {
+    setRebuilding(true);
+    setError(null);
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "rebuildAllStarmapEmbeddings" });
+      if (!res.success) throw new Error(res.error ?? "Failed to rebuild embeddings");
+      await loadQueueStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to rebuild embeddings");
+    } finally {
+      setRebuilding(false);
     }
   };
 
@@ -874,6 +911,22 @@ const StarmapSettingsCard = () => {
                 }
                 onBlur={() => save({ embeddingModel: config.embeddingModel })}
               />
+            </div>
+
+            <div className="rounded-md border px-3 py-2.5 bg-muted/30">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-xs text-muted-foreground">
+                  {queueStatus === null ? "Idle" : formatQueueStatus(queueStatus)}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRebuildEmbeddings}
+                  disabled={rebuilding || !config.embeddingsEnabled}
+                >
+                  {rebuilding ? "Rebuilding…" : "Rebuild embeddings"}
+                </Button>
+              </div>
             </div>
           </>
         )}

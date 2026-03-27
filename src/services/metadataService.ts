@@ -1,17 +1,28 @@
 import { Type } from "@sinclair/typebox";
+import objectHash from "object-hash";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
-import type { ChatMetadataRecord, MetadataQueueRecord, StoredChatMessage } from "./db";
+import type {
+  ChatEmbeddingRecord,
+  ChatMetadataRecord,
+  EmbeddingQueueRecord,
+  MetadataQueueRecord,
+  StoredChatMessage,
+} from "./db";
 import { getDB } from "./db";
 import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
-import { getMetadataAIConfig } from "./settingsService";
+import { getMetadataAIConfig, getStarmapConfig } from "./settingsService";
 
 export const METADATA_PROCESS_ALARM = "metadataQueueProcessAlarm";
 export const METADATA_REFRESH_ALARM = "metadataQueueRefreshAlarm";
+export const EMBEDDING_PROCESS_ALARM = "embeddingQueueProcessAlarm";
+export const EMBEDDING_REFRESH_ALARM = "embeddingQueueRefreshAlarm";
 const METADATA_QUEUE_PERIOD_MINUTES = 5;
+const EMBEDDING_QUEUE_PERIOD_MINUTES = 5;
 const METADATA_MAX_RETRIES = 3;
+const EMBEDDING_MAX_RETRIES = 3;
 const METADATA_MAX_COMPLETION_TOKENS = 2000;
 const METADATA_MAX_INPUT_TOKENS = 5000;
 const METADATA_EST_CHARS_PER_TOKEN = 4;
@@ -50,30 +61,59 @@ async function scheduleProcessTick(): Promise<void> {
   chrome.alarms.create(METADATA_PROCESS_ALARM, { delayInMinutes: 0.1 });
 }
 
-export async function syncMetadataQueueAlarms(): Promise<void> {
-  const config = await getMetadataAIConfig();
-  const shouldRun = config.enabled;
+async function scheduleEmbeddingProcessTick(): Promise<void> {
+  chrome.alarms.create(EMBEDDING_PROCESS_ALARM, { delayInMinutes: 0.1 });
+}
 
-  if (!shouldRun) {
+function hasEmbeddingPipelineEnabled(starmapConfig: {
+  enabled: boolean;
+  embeddingsEnabled: boolean;
+}): boolean {
+  return starmapConfig.enabled && starmapConfig.embeddingsEnabled;
+}
+
+export async function syncMetadataQueueAlarms(): Promise<void> {
+  const [config, starmapConfig] = await Promise.all([getMetadataAIConfig(), getStarmapConfig()]);
+  const shouldRunMetadata = config.enabled;
+  const shouldRunEmbeddings = config.enabled && hasEmbeddingPipelineEnabled(starmapConfig);
+
+  if (!shouldRunMetadata) {
     await Promise.all([
       chrome.alarms.clear(METADATA_PROCESS_ALARM),
       chrome.alarms.clear(METADATA_REFRESH_ALARM),
     ]);
+  } else {
+    if (config.indexMissing) {
+      chrome.alarms.create(METADATA_REFRESH_ALARM, {
+        delayInMinutes: 0.1,
+        periodInMinutes: METADATA_QUEUE_PERIOD_MINUTES,
+      });
+    } else {
+      await chrome.alarms.clear(METADATA_REFRESH_ALARM);
+    }
+
+    const pendingCount = await getDB().metadataQueue.where("status").equals("pending").count();
+    if (pendingCount > 0) {
+      await scheduleProcessTick();
+    }
+  }
+
+  if (!shouldRunEmbeddings) {
+    await Promise.all([
+      chrome.alarms.clear(EMBEDDING_PROCESS_ALARM),
+      chrome.alarms.clear(EMBEDDING_REFRESH_ALARM),
+    ]);
     return;
   }
 
-  if (config.indexMissing) {
-    chrome.alarms.create(METADATA_REFRESH_ALARM, {
-      delayInMinutes: 0.1,
-      periodInMinutes: METADATA_QUEUE_PERIOD_MINUTES,
-    });
-  } else {
-    await chrome.alarms.clear(METADATA_REFRESH_ALARM);
-  }
+  chrome.alarms.create(EMBEDDING_REFRESH_ALARM, {
+    delayInMinutes: 0.1,
+    periodInMinutes: EMBEDDING_QUEUE_PERIOD_MINUTES,
+  });
 
-  const pendingCount = await getDB().metadataQueue.where("status").equals("pending").count();
-  if (pendingCount > 0) {
-    await scheduleProcessTick();
+  const pendingEmbeddings = await getDB().embeddingQueue.where("status").equals("pending").count();
+  if (pendingEmbeddings > 0) {
+    await scheduleEmbeddingProcessTick();
   }
 }
 
@@ -110,7 +150,61 @@ export async function dequeueGeneration(chatId: string): Promise<void> {
 }
 
 /**
- * Process one pending queue item. Called by the alarm listener.
+ * Enqueue a chat for metadata-derived embedding generation.
+ * Idempotent; failed entries are terminal until reset/rebuild.
+ */
+export async function queueEmbeddingGeneration(chatId: string): Promise<void> {
+  const [metadataConfig, starmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+  if (!metadataConfig.enabled || !hasEmbeddingPipelineEnabled(starmapConfig)) {
+    return;
+  }
+  if (!starmapConfig.autoEmbedOnMetadataChange) {
+    return;
+  }
+
+  const metadata = await MetadataRepository.get(chatId);
+  if (!hasMeaningfulMetadata(metadata)) {
+    return;
+  }
+
+  const targetInputFingerprint = buildEmbeddingInputFingerprint(metadata);
+  const targetEndpointHash = hashString(normalizeBaseUrl(starmapConfig.embeddingUrl || ""));
+  const existingEmbedding = await getDB().chatEmbeddings.get(chatId);
+  const alreadyCurrent =
+    !!existingEmbedding &&
+    existingEmbedding.inputFingerprint === targetInputFingerprint &&
+    existingEmbedding.model === (starmapConfig.embeddingModel || "") &&
+    existingEmbedding.endpointHash === targetEndpointHash;
+
+  if (alreadyCurrent) {
+    await dequeueEmbeddingGeneration(chatId);
+    return;
+  }
+
+  const existingQueueItem = await getDB().embeddingQueue.get(chatId);
+  if (existingQueueItem?.status === "failed") {
+    return;
+  }
+
+  await getDB().embeddingQueue.put({
+    chatId,
+    status: "pending",
+    retries: 0,
+    addedAt: Date.now(),
+    error: undefined,
+  });
+  await scheduleEmbeddingProcessTick();
+}
+
+export async function dequeueEmbeddingGeneration(chatId: string): Promise<void> {
+  await getDB().embeddingQueue.delete(chatId);
+}
+
+/**
+ * Process one pending metadata queue item. Called by the alarm listener.
  * Reschedules the alarm if more items remain.
  */
 export async function processQueueTick(): Promise<void> {
@@ -148,6 +242,7 @@ export async function processQueueTick(): Promise<void> {
     const record = await generateForChat(item.chatId);
     await dequeueGeneration(item.chatId);
     log.info(`[MetadataService] Generated metadata for chat ${item.chatId}`);
+    await queueEmbeddingGeneration(item.chatId);
     safeSendMessage({ action: "metadataGenerated", chatId: item.chatId, title: record.title });
   } catch (err) {
     const retries = item.retries + 1;
@@ -307,6 +402,213 @@ export async function resetStuckQueueItems(): Promise<void> {
   } else if (processingItems.length > 0) {
     await scheduleProcessTick();
   }
+
+  const embeddingProcessingItems = await db.embeddingQueue
+    .where("status")
+    .equals("processing")
+    .toArray();
+  if (embeddingProcessingItems.length > 0) {
+    const now = Date.now();
+    for (const item of embeddingProcessingItems) {
+      await db.embeddingQueue.update(item.chatId, {
+        status: "pending",
+        addedAt: now,
+      });
+    }
+    log.info(
+      `[MetadataService] Reset ${embeddingProcessingItems.length} stuck embedding queue items to pending`,
+    );
+    await scheduleEmbeddingProcessTick();
+  }
+
+  const [metadataConfig, starmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+  if (metadataConfig.enabled && hasEmbeddingPipelineEnabled(starmapConfig)) {
+    const addedEmbeddings = await enqueueAllMissingEmbeddings();
+    if (addedEmbeddings > 0) {
+      await scheduleEmbeddingProcessTick();
+    }
+  }
+}
+
+export async function processEmbeddingQueueTick(): Promise<void> {
+  const db = getDB();
+  const [metadataConfig, starmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+
+  if (!metadataConfig.enabled || !hasEmbeddingPipelineEnabled(starmapConfig)) {
+    await syncMetadataQueueAlarms();
+    return;
+  }
+
+  const item = (await db.embeddingQueue.where("status").equals("pending").sortBy("addedAt"))[0];
+  if (!item) {
+    await chrome.alarms.clear(EMBEDDING_PROCESS_ALARM);
+    return;
+  }
+
+  const metadata = await MetadataRepository.get(item.chatId);
+  if (!hasMeaningfulMetadata(metadata)) {
+    await dequeueEmbeddingGeneration(item.chatId);
+    const remaining = await db.embeddingQueue.where("status").equals("pending").count();
+    if (remaining > 0) await scheduleEmbeddingProcessTick();
+    return;
+  }
+
+  await db.embeddingQueue.update(item.chatId, {
+    status: "processing",
+    lastAttemptAt: Date.now(),
+  });
+
+  try {
+    await generateEmbeddingForChat(item.chatId);
+    await dequeueEmbeddingGeneration(item.chatId);
+  } catch (err) {
+    const retries = item.retries + 1;
+    const terminal = retries >= EMBEDDING_MAX_RETRIES;
+    const errMsg = err instanceof Error ? err.message : String(err);
+
+    await db.embeddingQueue.update(item.chatId, {
+      status: terminal ? "failed" : "pending",
+      retries,
+      error: errMsg,
+      lastAttemptAt: Date.now(),
+      addedAt: terminal ? item.addedAt : Date.now(),
+    });
+
+    log.warn(
+      `[MetadataService] Embedding generation failed for ${item.chatId} (attempt ${retries})`,
+      err,
+    );
+  }
+
+  const remaining = await db.embeddingQueue.where("status").equals("pending").count();
+  if (remaining > 0) {
+    await scheduleEmbeddingProcessTick();
+  } else {
+    await chrome.alarms.clear(EMBEDDING_PROCESS_ALARM);
+  }
+}
+
+export async function refreshEmbeddingQueueTick(): Promise<void> {
+  const [metadataConfig, starmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+  if (!metadataConfig.enabled || !hasEmbeddingPipelineEnabled(starmapConfig)) {
+    return;
+  }
+
+  const added = await enqueueAllMissingEmbeddings();
+  if (added > 0) {
+    await scheduleEmbeddingProcessTick();
+  }
+}
+
+export async function enqueueAllMissingEmbeddings(): Promise<number> {
+  const db = getDB();
+  const starmapConfig = await getStarmapConfig();
+  const normalizedUrl = normalizeBaseUrl(starmapConfig.embeddingUrl || "");
+  const model = (starmapConfig.embeddingModel || "").trim();
+
+  if (!normalizedUrl || !model) {
+    return 0;
+  }
+
+  const endpointHash = hashString(normalizedUrl);
+  const metadataRows = await db.chatMetadata.toArray();
+  const eligible = metadataRows.filter((m) => hasMeaningfulMetadata(m));
+  if (eligible.length === 0) return 0;
+
+  const existingEmbeddings = await db.chatEmbeddings.bulkGet(eligible.map((m) => m.chatId));
+  const existingMap = new Map<string, ChatEmbeddingRecord>();
+  for (const embedding of existingEmbeddings) {
+    if (embedding) existingMap.set(embedding.chatId, embedding);
+  }
+
+  const queueItems = await db.embeddingQueue.toArray();
+  const queuedIds = new Set(queueItems.map((q) => q.chatId));
+
+  const toQueue: string[] = [];
+  for (const meta of eligible) {
+    const fp = buildEmbeddingInputFingerprint(meta);
+    const existing = existingMap.get(meta.chatId);
+    const upToDate =
+      !!existing &&
+      existing.inputFingerprint === fp &&
+      existing.model === model &&
+      existing.endpointHash === endpointHash;
+
+    if (upToDate) continue;
+    if (queuedIds.has(meta.chatId)) continue;
+    toQueue.push(meta.chatId);
+  }
+
+  if (toQueue.length === 0) return 0;
+
+  const now = Date.now();
+  await db.embeddingQueue.bulkPut(
+    toQueue.map((chatId) => ({
+      chatId,
+      status: "pending" as const,
+      retries: 0,
+      addedAt: now,
+    })),
+  );
+  log.info(`[MetadataService] Enqueued ${toQueue.length} chats for embedding generation`);
+  return toQueue.length;
+}
+
+export interface EmbeddingQueueStatus {
+  pending: number;
+  processing: number;
+  failed: number;
+}
+
+export async function getEmbeddingQueueItem(
+  chatId: string,
+): Promise<EmbeddingQueueRecord | undefined> {
+  return getDB().embeddingQueue.get(chatId);
+}
+
+export async function getEmbeddingQueueStatus(): Promise<EmbeddingQueueStatus> {
+  const db = getDB();
+  const [pending, processing, failed] = await Promise.all([
+    db.embeddingQueue.where("status").equals("pending").count(),
+    db.embeddingQueue.where("status").equals("processing").count(),
+    db.embeddingQueue.where("status").equals("failed").count(),
+  ]);
+  return { pending, processing, failed };
+}
+
+export async function resetFailedEmbeddingQueueItem(chatId: string): Promise<void> {
+  const existing = await getDB().embeddingQueue.get(chatId);
+  if (!existing || existing.status !== "failed") return;
+
+  await getDB().embeddingQueue.update(chatId, {
+    status: "pending",
+    retries: 0,
+    error: undefined,
+    addedAt: Date.now(),
+    lastAttemptAt: Date.now(),
+  });
+  await scheduleEmbeddingProcessTick();
+}
+
+export async function rebuildAllEmbeddings(): Promise<number> {
+  const db = getDB();
+  await db.chatEmbeddings.clear();
+  await db.embeddingQueue.clear();
+  await db.starmapLayout.clear();
+  const queued = await enqueueAllMissingEmbeddings();
+  if (queued > 0) {
+    await scheduleEmbeddingProcessTick();
+  }
+  return queued;
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────
@@ -396,7 +698,48 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
   const saved = await MetadataRepository.get(chatId);
   if (!saved) throw new Error(`Failed to read back metadata for chat ${chatId}`);
+  await queueEmbeddingGeneration(chatId);
   return saved;
+}
+
+export async function generateEmbeddingForChat(chatId: string): Promise<ChatEmbeddingRecord> {
+  const [metadataConfig, starmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+
+  if (!metadataConfig.enabled) {
+    throw new Error("AI metadata generation must be enabled for embeddings");
+  }
+  if (!hasEmbeddingPipelineEnabled(starmapConfig)) {
+    throw new Error("Starmap embeddings are not enabled");
+  }
+
+  const normalizedUrl = normalizeBaseUrl(starmapConfig.embeddingUrl || "");
+  if (!normalizedUrl) throw new Error("Starmap embedding URL is not configured");
+  const model = (starmapConfig.embeddingModel || "").trim();
+  if (!model) throw new Error("Starmap embedding model is not configured");
+
+  const metadata = await MetadataRepository.get(chatId);
+  if (!hasMeaningfulMetadata(metadata)) {
+    throw new Error(`Chat ${chatId} has no meaningful metadata`);
+  }
+
+  const input = buildEmbeddingInput(metadata);
+  const vector = await callEmbeddingLLM(normalizedUrl, starmapConfig.embeddingApiKey, model, input);
+
+  const record: ChatEmbeddingRecord = {
+    chatId,
+    vector,
+    vectorDim: vector.length,
+    model,
+    endpointHash: hashString(normalizedUrl),
+    inputFingerprint: buildEmbeddingInputFingerprint(metadata),
+    updatedAt: Date.now(),
+  };
+
+  await getDB().chatEmbeddings.put(record);
+  return record;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -704,6 +1047,78 @@ function buildConversationText(
   lines.push("</chat-to-analyze>");
 
   return lines.join("\n");
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/$/, "");
+}
+
+function buildEmbeddingInput(
+  metadata: Pick<
+    ChatMetadataRecord,
+    "title" | "description" | "synopsis" | "categories" | "keywords"
+  >,
+): string {
+  const categories = metadata.categories.join(", ");
+  const keywords = metadata.keywords.join(", ");
+  return [
+    `Title: ${metadata.title || ""}`,
+    `Description: ${metadata.description || ""}`,
+    `Synopsis: ${metadata.synopsis || ""}`,
+    `Categories: ${categories}`,
+    `Keywords: ${keywords}`,
+  ].join("\n");
+}
+
+function buildEmbeddingInputFingerprint(
+  metadata: Pick<
+    ChatMetadataRecord,
+    "title" | "description" | "synopsis" | "categories" | "keywords"
+  >,
+): string {
+  return hashString(buildEmbeddingInput(metadata));
+}
+
+function hashString(value: string): string {
+  try {
+    return objectHash(value || "", { algorithm: "sha1" });
+  } catch {
+    return String(value || "");
+  }
+}
+
+async function callEmbeddingLLM(
+  url: string,
+  apiKey: string,
+  model: string,
+  input: string,
+): Promise<number[]> {
+  const endpoint = `${normalizeBaseUrl(url)}/embeddings`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({ model, input }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Embedding API error ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  const data = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
+  const embedding = data.data?.[0]?.embedding;
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    throw new Error("Embedding API response contained no embedding vector");
+  }
+
+  if (embedding.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+    throw new Error("Embedding API response contained invalid vector values");
+  }
+
+  return embedding;
 }
 
 async function callLLM(

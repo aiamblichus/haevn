@@ -2,9 +2,13 @@
 
 import { diagnosticsService } from "../../services/diagnosticsService";
 import {
+  EMBEDDING_PROCESS_ALARM,
+  EMBEDDING_REFRESH_ALARM,
   METADATA_PROCESS_ALARM,
   METADATA_REFRESH_ALARM,
+  processEmbeddingQueueTick,
   processQueueTick,
+  refreshEmbeddingQueueTick,
   refreshQueueTick,
 } from "../../services/metadataService";
 import { log } from "../../utils/logger";
@@ -39,6 +43,18 @@ export function setupAlarmListener(): void {
         .wrap("alarm:metadataQueueRefresh", () => refreshQueueTick())
         .catch((error: unknown) => {
           log.error("[Metadata Queue] Error in refresh tick handler:", error);
+        });
+    } else if (alarm.name === EMBEDDING_PROCESS_ALARM) {
+      diagnosticsService
+        .wrap("alarm:embeddingQueueProcess", () => processEmbeddingQueueTick())
+        .catch((error: unknown) => {
+          log.error("[Embedding Queue] Error in process tick handler:", error);
+        });
+    } else if (alarm.name === EMBEDDING_REFRESH_ALARM) {
+      diagnosticsService
+        .wrap("alarm:embeddingQueueRefresh", () => refreshEmbeddingQueueTick())
+        .catch((error: unknown) => {
+          log.error("[Embedding Queue] Error in refresh tick handler:", error);
         });
     }
   });

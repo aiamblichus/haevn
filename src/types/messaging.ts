@@ -314,7 +314,9 @@ export type BackgroundRequest =
   | { action: "rebuildAllMetadata" }
   | { action: "getChatPreview"; chatId: string }
   | { action: "getStarmapConfig" }
-  | { action: "setStarmapConfig"; config: Partial<StarmapConfig> };
+  | { action: "setStarmapConfig"; config: Partial<StarmapConfig> }
+  | { action: "getStarmapEmbeddingQueueStatus" }
+  | { action: "rebuildAllStarmapEmbeddings" };
 
 // ======================
 // Background Response Messages
