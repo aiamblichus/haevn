@@ -97,7 +97,7 @@ function PopoverCard({ chat, data, isLoading }: PopoverCardProps) {
 
       {/* Description */}
       {!isLoading && description && (
-        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">{description}</p>
+        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
       )}
 
       {/* Synopsis */}
