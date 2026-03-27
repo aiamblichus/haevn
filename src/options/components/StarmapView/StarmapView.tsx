@@ -9,10 +9,21 @@ import {
   CardHeader,
   CardTitle,
 } from "../../../components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../../components/ui/dialog";
+import { Input } from "../../../components/ui/input";
+import { Label } from "../../../components/ui/label";
 import { type ChatMetadataRecord } from "../../../services/db";
 import type { MetadataAIConfig, StarmapConfig } from "../../../services/settingsService";
 import type { BackgroundRequest } from "../../../types/messaging";
 import type { ChatMeta } from "../../types";
+import { ICONS, Icon } from "../../utils";
 import { ChatPreviewCard, type PreviewData } from "../shared/ChatPreviewCard";
 
 type StarmapNode = {
@@ -45,6 +56,7 @@ type StarmapPayload = {
     minZ: number;
     maxZ: number;
   };
+  embeddedCount: number;
   stats: {
     pointCount: number;
     clusterCount: number;
@@ -52,6 +64,12 @@ type StarmapPayload = {
     projection: "umap";
   };
 };
+
+interface EmbeddingQueueStatus {
+  pending: number;
+  processing: number;
+  failed: number;
+}
 
 function hasWebGL(): boolean {
   try {
@@ -73,12 +91,18 @@ function colorForCluster(clusterId: number): THREE.Color {
 
 interface StarmapCanvasProps {
   points: StarmapNode[];
+  animationPlaying: boolean;
   onHover: (node: StarmapNode | null, x: number, y: number) => void;
   onSelect: (node: StarmapNode | null) => void;
 }
 
-function StarmapCanvas({ points, onHover, onSelect }: StarmapCanvasProps) {
+function StarmapCanvas({ points, animationPlaying, onHover, onSelect }: StarmapCanvasProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const animationPlayingRef = useRef(animationPlaying);
+
+  useEffect(() => {
+    animationPlayingRef.current = animationPlaying;
+  }, [animationPlaying]);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -225,7 +249,9 @@ function StarmapCanvas({ points, onHover, onSelect }: StarmapCanvasProps) {
 
     let raf = 0;
     const animate = () => {
-      cloud.rotation.y += 0.0008;
+      if (animationPlayingRef.current) {
+        cloud.rotation.y += 0.0008;
+      }
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
@@ -271,6 +297,11 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
   const [hoverPreviewLoading, setHoverPreviewLoading] = useState(false);
   const [metaConfig, setMetaConfig] = useState<MetadataAIConfig | null>(null);
   const [starmapConfig, setStarmapConfig] = useState<StarmapConfig | null>(null);
+  const [queueStatus, setQueueStatus] = useState<EmbeddingQueueStatus | null>(null);
+  const [animationPlaying, setAnimationPlaying] = useState(true);
+  const [showParamsModal, setShowParamsModal] = useState(false);
+  const [draftConfig, setDraftConfig] = useState<StarmapConfig | null>(null);
+  const [savingParams, setSavingParams] = useState(false);
   const webglAvailable = useMemo(() => hasWebGL(), []);
   const previewCacheRef = useRef<Map<string, PreviewData>>(new Map());
 
@@ -285,7 +316,11 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
       ]);
 
       if (metaRes?.success) setMetaConfig(metaRes.data as MetadataAIConfig);
-      if (starmapRes?.success) setStarmapConfig(starmapRes.data as StarmapConfig);
+      if (starmapRes?.success) {
+        const cfg = starmapRes.data as StarmapConfig;
+        setStarmapConfig(cfg);
+        setDraftConfig(cfg);
+      }
 
       if (!metaRes?.success || !(metaRes.data as MetadataAIConfig).enabled) return;
       if (!starmapRes?.success || !(starmapRes.data as StarmapConfig).enabled) return;
@@ -307,6 +342,58 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadQueueStatus = useCallback(async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({
+        action: "getStarmapEmbeddingQueueStatus",
+      } as BackgroundRequest);
+      if (res?.success && res.data) {
+        setQueueStatus(res.data as EmbeddingQueueStatus);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!starmapConfig?.enabled) return;
+    loadQueueStatus();
+    const timer = setInterval(() => {
+      loadQueueStatus();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [starmapConfig?.enabled, loadQueueStatus]);
+
+  const persistStarmapConfig = useCallback(
+    async (patch: Partial<StarmapConfig>, options?: { recompute?: boolean }) => {
+      setSavingParams(true);
+      try {
+        const res = await chrome.runtime.sendMessage({
+          action: "setStarmapConfig",
+          config: patch,
+        } as BackgroundRequest);
+        if (!res?.success) {
+          throw new Error(res?.error || "Failed to save starmap settings");
+        }
+
+        const next = { ...(starmapConfig || ({} as StarmapConfig)), ...patch } as StarmapConfig;
+        setStarmapConfig(next);
+        setDraftConfig(next);
+
+        if (options?.recompute) {
+          await load();
+        } else {
+          await loadQueueStatus();
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSavingParams(false);
+      }
+    },
+    [load, loadQueueStatus, starmapConfig],
+  );
 
   const handleHover = useCallback((node: StarmapNode | null, x: number, y: number) => {
     setHovered(node);
@@ -430,13 +517,187 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
           <h3 className="text-lg font-semibold">Constellation</h3>
           <p className="text-xs text-muted-foreground">
             {payload?.stats.pointCount ?? 0} chats · {payload?.stats.clusterCount ?? 0} clusters ·{" "}
-            {payload?.stats.durationMs ?? 0}ms
+            {payload?.stats.durationMs ?? 0}ms · queued{" "}
+            {(queueStatus?.pending ?? 0) + (queueStatus?.processing ?? 0)} · not shown{" "}
+            {Math.max(0, (payload?.embeddedCount ?? 0) - (payload?.points.length ?? 0))}
           </p>
         </div>
-        <Button variant="outline" onClick={load}>
-          Recompute
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            title={animationPlaying ? "Pause animation" : "Play animation"}
+            onClick={() => setAnimationPlaying((prev) => !prev)}
+          >
+            <Icon icon={animationPlaying ? ICONS.pause : ICONS.play} svgClass="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Recompute layout"
+            onClick={load}
+            disabled={loading}
+          >
+            <Icon icon={ICONS.refresh} svgClass="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Starmap parameters"
+            onClick={() => setShowParamsModal(true)}
+            disabled={!starmapConfig}
+          >
+            <Icon icon={ICONS.settings} svgClass="w-4 h-4" />
+          </Button>
+        </div>
       </div>
+
+      <Dialog open={showParamsModal} onOpenChange={setShowParamsModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Starmap Parameters</DialogTitle>
+            <DialogDescription>
+              Tune UMAP and clustering settings. Apply now to recompute immediately, or save as
+              default for next runs.
+            </DialogDescription>
+          </DialogHeader>
+
+          {draftConfig && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="starmap-neighbors">UMAP Neighbors</Label>
+                <Input
+                  id="starmap-neighbors"
+                  type="number"
+                  min={2}
+                  max={200}
+                  value={draftConfig.umapNeighbors}
+                  onChange={(e) =>
+                    setDraftConfig((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            umapNeighbors: Number((e.target as HTMLInputElement).value || 15),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="starmap-min-dist">UMAP Min Dist</Label>
+                <Input
+                  id="starmap-min-dist"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  max={1}
+                  value={draftConfig.umapMinDist}
+                  onChange={(e) =>
+                    setDraftConfig((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            umapMinDist: Number((e.target as HTMLInputElement).value || 0.1),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="starmap-seed">UMAP Seed</Label>
+                <Input
+                  id="starmap-seed"
+                  type="number"
+                  value={draftConfig.umapSeed}
+                  onChange={(e) =>
+                    setDraftConfig((prev) =>
+                      prev
+                        ? { ...prev, umapSeed: Number((e.target as HTMLInputElement).value || 42) }
+                        : prev,
+                    )
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="starmap-cluster-mode">Cluster Mode</Label>
+                <select
+                  id="starmap-cluster-mode"
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={draftConfig.clusterMode}
+                  onChange={(e) =>
+                    setDraftConfig((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            clusterMode: (e.target as HTMLSelectElement).value as "auto" | "manual",
+                          }
+                        : prev,
+                    )
+                  }
+                >
+                  <option value="auto">Auto</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </div>
+
+              {draftConfig.clusterMode === "manual" && (
+                <div className="space-y-2">
+                  <Label htmlFor="starmap-cluster-k">Cluster K</Label>
+                  <Input
+                    id="starmap-cluster-k"
+                    type="number"
+                    min={1}
+                    max={256}
+                    value={draftConfig.clusterK}
+                    onChange={(e) =>
+                      setDraftConfig((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              clusterK: Number((e.target as HTMLInputElement).value || 1),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowParamsModal(false)}>
+              Close
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!draftConfig || savingParams}
+              onClick={() => {
+                if (!draftConfig) return;
+                void persistStarmapConfig(draftConfig, { recompute: false });
+              }}
+            >
+              Save as default
+            </Button>
+            <Button
+              disabled={!draftConfig || savingParams}
+              onClick={() => {
+                if (!draftConfig) return;
+                void persistStarmapConfig(draftConfig, { recompute: true }).then(() => {
+                  setShowParamsModal(false);
+                });
+              }}
+            >
+              Apply now
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {points.length === 0 ? (
         <Card>
@@ -448,7 +709,12 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
           </CardHeader>
         </Card>
       ) : (
-        <StarmapCanvas points={points} onHover={handleHover} onSelect={handleSelect} />
+        <StarmapCanvas
+          points={points}
+          animationPlaying={animationPlaying}
+          onHover={handleHover}
+          onSelect={handleSelect}
+        />
       )}
 
       {selected && (

@@ -441,6 +441,18 @@ export async function processEmbeddingQueueTick(): Promise<void> {
   ]);
 
   if (!metadataConfig.enabled || !hasEmbeddingPipelineEnabled(starmapConfig)) {
+    // Ensure no item remains stuck in processing while paused/disabled.
+    const processingItems = await db.embeddingQueue.where("status").equals("processing").toArray();
+    if (processingItems.length > 0) {
+      const now = Date.now();
+      for (const item of processingItems) {
+        await db.embeddingQueue.update(item.chatId, {
+          status: "pending",
+          addedAt: now,
+        });
+      }
+    }
+
     await syncMetadataQueueAlarms();
     return;
   }
@@ -484,6 +496,15 @@ export async function processEmbeddingQueueTick(): Promise<void> {
       `[MetadataService] Embedding generation failed for ${item.chatId} (attempt ${retries})`,
       err,
     );
+  }
+
+  const [nextMetadataConfig, nextStarmapConfig] = await Promise.all([
+    getMetadataAIConfig(),
+    getStarmapConfig(),
+  ]);
+  if (!nextMetadataConfig.enabled || !hasEmbeddingPipelineEnabled(nextStarmapConfig)) {
+    await chrome.alarms.clear(EMBEDDING_PROCESS_ALARM);
+    return;
   }
 
   const remaining = await db.embeddingQueue.where("status").equals("pending").count();
@@ -609,6 +630,29 @@ export async function rebuildAllEmbeddings(): Promise<number> {
     await scheduleEmbeddingProcessTick();
   }
   return queued;
+}
+
+/**
+ * Hard-pause embedding processing immediately:
+ * - clear embedding alarms
+ * - move in-flight processing items back to pending
+ */
+export async function pauseEmbeddingQueue(): Promise<void> {
+  const db = getDB();
+  const processingItems = await db.embeddingQueue.where("status").equals("processing").toArray();
+
+  if (processingItems.length > 0) {
+    const now = Date.now();
+    for (const item of processingItems) {
+      await db.embeddingQueue.update(item.chatId, {
+        status: "pending",
+        addedAt: now,
+      });
+    }
+  }
+
+  await chrome.alarms.clear(EMBEDDING_PROCESS_ALARM);
+  await chrome.alarms.clear(EMBEDDING_REFRESH_ALARM);
 }
 
 // ─── AI Generation ────────────────────────────────────────────────────────────

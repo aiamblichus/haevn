@@ -8,6 +8,7 @@ import {
   getEmbeddingQueueStatus,
   getQueueItem,
   getQueueStatus,
+  pauseEmbeddingQueue,
   queueEmbeddingGeneration,
   rebuildAllEmbeddings,
   resetFailedQueueItem,
@@ -141,6 +142,12 @@ export async function handleSetStarmapConfig(
     }
 
     await setStarmapConfig(message.config);
+
+    const nextStarmapConfig = await getStarmapConfig();
+    if (!nextStarmapConfig.enabled || !nextStarmapConfig.embeddingsEnabled) {
+      await pauseEmbeddingQueue();
+    }
+
     await syncMetadataQueueAlarms();
     sendResponse({ success: true });
   } catch (err) {
@@ -216,11 +223,14 @@ export async function handleGetStarmapData(
       })
       .filter((n): n is NonNullable<typeof n> => n !== null);
 
+    const embeddedCount = await getDB().chatEmbeddings.count();
+
     sendResponse({
       success: true,
       data: {
         points: nodes,
         bounds: layout.bounds,
+        embeddedCount,
         stats: {
           ...layout.stats,
           pointCount: nodes.length,
