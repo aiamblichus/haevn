@@ -22,6 +22,7 @@ import { Header } from "./components/Layout/Header";
 import { Sidebar } from "./components/Layout/Sidebar";
 import { ManifestoView } from "./components/ManifestoView/ManifestoView";
 import { MetadataModal } from "./components/MetadataModal";
+import { GoToChatModal } from "./components/Modals/GoToChatModal";
 import { ImportModal } from "./components/Modals/ImportModal";
 import { ProvidersView } from "./components/ProvidersView/ProvidersView";
 import { StatusContext } from "./context/StatusContext";
@@ -70,6 +71,7 @@ const App = () => {
   const [isExportModalOpen, setExportModalOpen] = useState(false);
   const [exportModalIds, setExportModalIds] = useState<string[] | null>(null);
   const [isImportModalOpen, setImportModalOpen] = useState(false);
+  const [isGoToChatModalOpen, setGoToChatModalOpen] = useState(false);
   const [importProviderFilter, setImportProviderFilter] = useState<string | null>(null);
   const [openableById, setOpenableById] = useState<Record<string, boolean>>({});
   const [chatPage, setChatPage] = useState(1);
@@ -493,6 +495,38 @@ const App = () => {
     loadChats();
   }, [loadChats]);
 
+  // Archive shortcut: press "g" to open go-to-chat modal
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (activeView !== "archive") return;
+      if (isGoToChatModalOpen) return;
+      if (event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.repeat) return;
+      if (event.key.toLowerCase() !== "g") return;
+
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tagName = target.tagName;
+        if (
+          target.isContentEditable ||
+          tagName === "INPUT" ||
+          tagName === "TEXTAREA" ||
+          tagName === "SELECT" ||
+          target.getAttribute("role") === "textbox"
+        ) {
+          return;
+        }
+      }
+
+      event.preventDefault();
+      setGoToChatModalOpen(true);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [activeView, isGoToChatModalOpen]);
+
   const handleToggleSelect = (id: string, isChecked: boolean) => {
     const newSelectedIds = new Set(selectedIds);
     if (isChecked) newSelectedIds.add(id);
@@ -724,6 +758,13 @@ const App = () => {
     loadChats();
   }, [selectedIds, loadChats]);
 
+  const handleGoToChat = useCallback(
+    async (chatId: string) => {
+      await openChatInViewer(chatId);
+    },
+    [openChatInViewer],
+  );
+
   return (
     <StatusContext.Provider value={{ text: statusText, color: statusColor, setStatus }}>
       <div className="flex h-screen bg-background">
@@ -817,6 +858,11 @@ const App = () => {
         onOpenChange={setImportModalOpen}
         importProviderFilter={importProviderFilter}
         onLoadChats={loadChats}
+      />
+      <GoToChatModal
+        open={isGoToChatModalOpen}
+        onOpenChange={setGoToChatModalOpen}
+        onConfirm={handleGoToChat}
       />
       {metadataModalChatId && (
         <MetadataModal
