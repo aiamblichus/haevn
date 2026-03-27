@@ -77,6 +77,71 @@ type ParsedQuery = {
   terms: string[];
 };
 
+type ScopedSearchQuery = {
+  idFilter?: string;
+  textQuery: string;
+};
+
+function parseScopedSearchQuery(query: string): ScopedSearchQuery {
+  const raw = (query || "").trim();
+  if (!raw) return { textQuery: "" };
+
+  let idFilter: string | undefined;
+  const textQuery = raw
+    .replace(/(^|\s)id:("[^"]+"|\S+)/i, (_match, prefix: string, value: string) => {
+      const cleaned = value.replace(/^"|"$/g, "").trim();
+      if (cleaned) idFilter = cleaned;
+      return prefix ? " " : "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { idFilter, textQuery };
+}
+
+function chatIdMatchesFilter(chatId: string | undefined, idFilter: string | undefined): boolean {
+  if (!idFilter) return true;
+  if (!chatId) return false;
+  return chatId.toLowerCase().startsWith(idFilter.toLowerCase());
+}
+
+async function findChatsByIdFilter(
+  idFilter: string,
+  options: { filterProvider?: string; limit?: number } = {},
+): Promise<Chat[]> {
+  const { filterProvider, limit = 1000 } = options;
+
+  const chats = await getDB()
+    .chats.where("deleted")
+    .equals(0)
+    .filter((chat) => {
+      if (!chatIdMatchesFilter(chat.id, idFilter)) return false;
+      if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider)
+        return false;
+      return true;
+    })
+    .limit(limit)
+    .toArray();
+
+  return chats;
+}
+
+function buildIdSearchResult(chat: Chat): SearchResult {
+  const safeChatId = chat.id || "";
+  return {
+    chatId: safeChatId,
+    chatTitle: chat.title || "Untitled",
+    source: chat.source,
+    messageId: chat.currentId,
+    messageContent: safeChatId,
+    messageSnippet: `Matched chat ID: {{HIGHLIGHT}}${safeChatId}{{/HIGHLIGHT}}`,
+    messageRole: "assistant",
+    messageTimestamp: chat.timestamp,
+    model: chat.models?.[0],
+    params: chat.params,
+  };
+}
+
 /**
  * Parse a search query into phrases (from "quoted" segments) and individual terms.
  * Strips Lunr operators and de-duplicates terms.
@@ -324,16 +389,25 @@ export namespace SearchService {
   export async function searchChats(query: string): Promise<string[]> {
     if (!query || !query.trim()) return [];
     try {
+      const { idFilter, textQuery } = parseScopedSearchQuery(query);
+
+      if (idFilter && !textQuery) {
+        const chats = await findChatsByIdFilter(idFilter);
+        return chats.map((chat) => chat.id).filter((id): id is string => !!id);
+      }
+
       await _ensureWorkerReady();
       const requestId = `search_${Date.now()}_${Math.random()}`;
       // Basic search without hydration returns IDs (string[])
+      const workerQuery = textQuery || query;
       const results = await _sendWorkerMessage({
         type: "search",
-        query,
+        query: workerQuery,
         requestId,
       });
       if (Array.isArray(results)) {
-        return results as string[];
+        const ids = results as string[];
+        return idFilter ? ids.filter((id) => chatIdMatchesFilter(id, idFilter)) : ids;
       }
       return [];
     } catch (error) {
@@ -351,12 +425,21 @@ export namespace SearchService {
     query: string,
     chatId: string,
   ): Promise<SearchResult[]> {
-    const q = (query || "").trim();
-    if (!q || !chatId) return [];
+    const scoped = parseScopedSearchQuery(query);
+    const q = scoped.textQuery;
+    if (!query?.trim() || !chatId) return [];
 
     try {
       const chat = await getDB().chats.get(chatId);
       if (!chat) return [];
+
+      if (scoped.idFilter && !chatIdMatchesFilter(chat.id, scoped.idFilter)) {
+        return [];
+      }
+
+      if (!q) {
+        return [buildIdSearchResult(chat)];
+      }
 
       const parsed = parseSearchQuery(q);
       const matches = findAllMatchingMessages(chat, parsed);
@@ -430,8 +513,12 @@ export namespace SearchService {
       contextChars,
     } = options;
 
+    const scoped = parseScopedSearchQuery(query);
+
     log.info(`[SearchService] searchChatsStreaming called:`, {
       query,
+      textQuery: scoped.textQuery,
+      idFilter: scoped.idFilter,
       maxChatsToScan,
       filterProvider,
     });
@@ -449,7 +536,7 @@ export namespace SearchService {
       let totalResults = 0;
       let chatsScanned = 0; // Worker handles this, but we can track results count
 
-      const finish = () => {
+      const finish = (wasLimited = false) => {
         if (cancelled) return;
         const durationMs = performance.now() - startTime;
         log.info(`[SearchService] Search finished:`, {
@@ -461,9 +548,44 @@ export namespace SearchService {
           totalResults,
           chatsScanned,
           durationMs,
-          wasLimited: false,
+          wasLimited,
         });
       };
+
+      // ID-only mode: return matching chat(s) directly without full-text matching.
+      if (scoped.idFilter && !scoped.textQuery) {
+        fireAndForget(
+          (async () => {
+            try {
+              const chats = await findChatsByIdFilter(scoped.idFilter as string, {
+                filterProvider,
+                limit: maxChatsToScan,
+              });
+              if (cancelled) return;
+
+              const results = chats
+                .filter((chat) => !!chat.id)
+                .map((chat) => buildIdSearchResult(chat));
+              totalResults = results.length;
+              chatsScanned = results.length;
+
+              if (results.length > 0) {
+                onResults(results);
+              }
+
+              finish(chats.length >= maxChatsToScan);
+            } catch (err) {
+              log.error(`[SearchService] Error during ID-only search:`, {
+                query,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              if (onError) onError(err instanceof Error ? err : new Error(String(err)));
+            }
+          })(),
+          "Streaming ID-only search operation",
+        );
+        return;
+      }
 
       // Use fireAndForget to start the search without blocking
       fireAndForget(
@@ -471,7 +593,7 @@ export namespace SearchService {
           "search",
           {
             type: "search",
-            query,
+            query: scoped.textQuery || query,
             requestId,
             maxResults: maxChatsToScan,
             filterProvider,
@@ -484,7 +606,13 @@ export namespace SearchService {
               if (cancelled) return;
 
               // The worker now returns SearchResult[] when hydrate: true
-              const results = chunk.results as SearchResult[];
+              let results = chunk.results as SearchResult[];
+
+              if (scoped.idFilter) {
+                results = results.filter((result) =>
+                  chatIdMatchesFilter(result.chatId, scoped.idFilter),
+                );
+              }
 
               if (results.length > 0) {
                 totalResults += results.length;

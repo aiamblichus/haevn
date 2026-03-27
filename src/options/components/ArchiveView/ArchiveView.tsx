@@ -231,7 +231,7 @@ export const ArchiveView = ({
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
-              placeholder="Search conversations (title and content)..."
+              placeholder="Search conversations…"
               className="w-full pr-10"
             />
             {searchQuery && (
