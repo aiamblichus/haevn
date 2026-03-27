@@ -10,12 +10,14 @@ export const Header = ({ activeView }: HeaderProps) => {
     archive: "ARCHIVE",
     manifesto: "MANIFESTO",
     providers: "PROVIDERS",
+    starmap: "STARMAP",
     settings: "SETTINGS",
   };
   const icons: Record<string, string> = {
     archive: "🌊",
     manifesto: "📜",
     providers: "👁️",
+    starmap: "✨",
     settings: "✨",
   };
   return (

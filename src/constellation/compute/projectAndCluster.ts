@@ -1,3 +1,4 @@
+import { UMAP } from "umap-js";
 import { computeBounds, normalizePointsToUnitCube } from "../core/normalize";
 import type {
   ConstellationLayoutParams,
@@ -18,41 +19,48 @@ function seededRandom(seed: number): () => number {
   };
 }
 
-function buildProjectionAxes(dim: number, seed: number): [number[], number[], number[]] {
-  const rnd = seededRandom(seed);
-  const axisX = new Array<number>(dim);
-  const axisY = new Array<number>(dim);
-  const axisZ = new Array<number>(dim);
-
-  for (let i = 0; i < dim; i++) {
-    axisX[i] = rnd() * 2 - 1;
-    axisY[i] = rnd() * 2 - 1;
-    axisZ[i] = rnd() * 2 - 1;
+function assertVectorShape(vectors: ConstellationVector[]): void {
+  if (vectors.length === 0) return;
+  const dim = vectors[0].vector.length;
+  if (dim === 0) {
+    throw new Error("Embedding vectors must be non-empty");
   }
 
-  return [axisX, axisY, axisZ];
+  for (const row of vectors) {
+    if (row.vector.length !== dim) {
+      throw new Error("Embedding vectors must all have the same dimensionality");
+    }
+  }
 }
 
-function dot(a: number[], b: number[]): number {
-  const n = Math.min(a.length, b.length);
-  let s = 0;
-  for (let i = 0; i < n; i++) s += a[i] * b[i];
-  return s;
-}
-
-/**
- * Placeholder UMAP adapter for the first implementation slice.
- * We preserve the UMAP-facing API but use deterministic random projection until
- * we wire an actual UMAP dependency in the next pass.
- */
 function projectTo3D(
   vectors: ConstellationVector[],
   params: ConstellationLayoutParams,
 ): number[][] {
   if (vectors.length === 0) return [];
-  const dim = vectors[0].vector.length;
-  const [ax, ay, az] = buildProjectionAxes(dim, params.umapSeed);
-  return vectors.map((v) => [dot(v.vector, ax), dot(v.vector, ay), dot(v.vector, az)]);
+  if (vectors.length === 1) return [[0, 0, 0]];
+  if (vectors.length === 2)
+    return [
+      [-1, 0, 0],
+      [1, 0, 0],
+    ];
+
+  const minDist = clamp(params.umapMinDist, 0.0001, 0.99);
+  const nNeighbors = clamp(params.umapNeighbors, 2, vectors.length - 1);
+
+  const umap = new UMAP({
+    nComponents: 3,
+    nNeighbors,
+    minDist,
+    random: seededRandom(params.umapSeed),
+  });
+
+  const embedding = umap.fit(vectors.map((v) => v.vector));
+  if (!Array.isArray(embedding) || embedding.length !== vectors.length) {
+    throw new Error("UMAP failed to produce a valid embedding");
+  }
+
+  return embedding;
 }
 
 function squaredDistance3(a: number[], b: number[]): number {
@@ -141,6 +149,8 @@ export function computeConstellationLayout(
       stats: { pointCount: 0, clusterCount: 0, durationMs: 0, projection: "umap" },
     };
   }
+
+  assertVectorShape(vectors);
 
   const projected = projectTo3D(vectors, params);
   const k = params.clusterMode === "manual" ? params.clusterK : chooseAutoK(projected.length);

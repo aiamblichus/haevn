@@ -318,7 +318,8 @@ export type BackgroundRequest =
   | { action: "getStarmapConfig" }
   | { action: "setStarmapConfig"; config: Partial<StarmapConfig> }
   | { action: "getStarmapEmbeddingQueueStatus" }
-  | { action: "rebuildAllStarmapEmbeddings" };
+  | { action: "rebuildAllStarmapEmbeddings" }
+  | { action: "getStarmapData" };
 
 // ======================
 // Background Response Messages

@@ -92,6 +92,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
     metadataHandlers.handleGetStarmapEmbeddingQueueStatus as HandlerFunction,
   rebuildAllStarmapEmbeddings:
     metadataHandlers.handleRebuildAllStarmapEmbeddings as HandlerFunction,
+  getStarmapData: metadataHandlers.handleGetStarmapData as HandlerFunction,
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
   getMetadataQueueItem: metadataHandlers.handleGetMetadataQueueItem as HandlerFunction,

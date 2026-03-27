@@ -25,6 +25,7 @@ import { MetadataModal } from "./components/MetadataModal";
 import { GoToChatModal } from "./components/Modals/GoToChatModal";
 import { ImportModal } from "./components/Modals/ImportModal";
 import { ProvidersView } from "./components/ProvidersView/ProvidersView";
+import { StarmapView } from "./components/StarmapView/StarmapView";
 import { StatusContext } from "./context/StatusContext";
 import { useApi } from "./hooks/useApi";
 import { SettingsView } from "./settings";
@@ -792,6 +793,8 @@ const App = () => {
               <SettingsView />
             ) : activeView === "manifesto" ? (
               <ManifestoView />
+            ) : activeView === "starmap" ? (
+              <StarmapView onOpenChatInViewer={openChatInViewer} />
             ) : (
               <ArchiveView
                 displayedChats={displayedChats}

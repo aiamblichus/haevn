@@ -19,6 +19,7 @@ import {
   setMetadataAIConfig,
   setStarmapConfig,
 } from "../../services/settingsService";
+import { computeStarmapLayoutFromEmbeddings } from "../../services/starmapService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
 
@@ -170,6 +171,64 @@ export async function handleRebuildAllStarmapEmbeddings(
     sendResponse({ success: true, data: { queued } });
   } catch (err) {
     log.error("[MetadataHandlers] rebuildAllStarmapEmbeddings failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleGetStarmapData(
+  _message: Extract<BackgroundRequest, { action: "getStarmapData" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const layout = await computeStarmapLayoutFromEmbeddings();
+    const chatIds = layout.points.map((p) => p.chatId);
+
+    const [chats, metadataMap] = await Promise.all([
+      getDB().chats.bulkGet(chatIds),
+      MetadataRepository.getMany(chatIds),
+    ]);
+
+    const chatById = new Map<string, (typeof chats)[number]>();
+    for (const chat of chats) {
+      if (chat?.id) chatById.set(chat.id, chat);
+    }
+
+    const nodes = layout.points
+      .map((point) => {
+        const chat = chatById.get(point.chatId);
+        if (!chat) return null;
+        const meta = metadataMap.get(point.chatId) ?? null;
+        return {
+          ...point,
+          source: chat.source,
+          title: chat.title,
+          metaTitle: meta?.title || undefined,
+          description: meta?.description || "",
+          synopsis: meta?.synopsis || "",
+          categories: meta?.categories ?? [],
+          keywords: meta?.keywords ?? [],
+          metaSource: meta?.source || "unset",
+          generatedAt: meta?.generatedAt,
+          metadataUpdatedAt: meta?.updatedAt,
+          lastSyncedTimestamp: chat.lastSyncedTimestamp,
+          providerLastModifiedTimestamp: chat.providerLastModifiedTimestamp,
+        };
+      })
+      .filter((n): n is NonNullable<typeof n> => n !== null);
+
+    sendResponse({
+      success: true,
+      data: {
+        points: nodes,
+        bounds: layout.bounds,
+        stats: {
+          ...layout.stats,
+          pointCount: nodes.length,
+        },
+      },
+    });
+  } catch (err) {
+    log.error("[MetadataHandlers] getStarmapData failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

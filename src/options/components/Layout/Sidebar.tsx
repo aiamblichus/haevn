@@ -7,6 +7,7 @@ export const Sidebar = ({ activeView, setActiveView }: SidebarProps) => {
   const menuItems = [
     { id: "archive", label: "ARCHIVE", icon: "🌊" },
     { id: "gallery", label: "GALLERY", icon: "🖼️" },
+    { id: "starmap", label: "STARMAP", icon: "✨" },
     { id: "providers", label: "PROVIDERS", icon: "👁️" },
     { id: "settings", label: "SETTINGS", icon: "✨" },
     { id: "manifesto", label: "MANIFESTO", icon: "📜" },
