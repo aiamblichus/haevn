@@ -311,6 +311,42 @@ export type ImportWorkerResponse = (
 ) & { requestId?: string };
 
 // ======================
+// Starmap Worker Messages
+// ======================
+
+import type {
+  ConstellationBounds,
+  ConstellationLayoutParams,
+  ConstellationPoint,
+  ConstellationVector,
+} from "../constellation/core/types";
+
+export type StarmapWorkerMessage =
+  | { type: "ping"; requestId: string }
+  | {
+      type: "computeLayout";
+      requestId: string;
+      vectors: ConstellationVector[];
+      params: ConstellationLayoutParams;
+    };
+
+export type StarmapWorkerResponse =
+  | { type: "pong"; requestId: string }
+  | {
+      type: "layoutResult";
+      requestId: string;
+      points: ConstellationPoint[];
+      bounds: ConstellationBounds;
+      stats: {
+        pointCount: number;
+        clusterCount: number;
+        durationMs: number;
+        projection: "umap";
+      };
+    }
+  | { type: "error"; error: string; requestId?: string };
+
+// ======================
 // Thumbnail Worker Messages
 // ======================
 

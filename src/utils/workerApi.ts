@@ -17,6 +17,8 @@ import type {
   ImportWorkerResponse,
   SearchWorkerMessage,
   SearchWorkerResponse,
+  StarmapWorkerMessage,
+  StarmapWorkerResponse,
   StatsWorkerMessage,
   StatsWorkerResponse,
   ThumbnailWorkerMessage,
@@ -26,7 +28,14 @@ import type {
 /**
  * Supported worker types
  */
-export type WorkerType = "search" | "stats" | "thumbnail" | "bulkSync" | "bulkExport" | "import";
+export type WorkerType =
+  | "search"
+  | "stats"
+  | "thumbnail"
+  | "bulkSync"
+  | "bulkExport"
+  | "import"
+  | "starmap";
 
 /**
  * Map worker types to their message types
@@ -38,6 +47,7 @@ export type WorkerMessageMap = {
   bulkSync: BulkSyncWorkerMessage;
   bulkExport: BulkExportWorkerMessage;
   import: ImportWorkerMessage;
+  starmap: StarmapWorkerMessage;
 };
 
 /**
@@ -50,6 +60,7 @@ export type WorkerResponseMap = {
   bulkSync: BulkSyncWorkerResponse;
   bulkExport: BulkExportWorkerResponse;
   import: ImportWorkerResponse;
+  starmap: StarmapWorkerResponse;
 };
 
 /**
@@ -68,6 +79,7 @@ export type WorkerProgressMap = {
     ImportWorkerResponse,
     { type: "progress" } | { type: "saved" } | { type: "skipped" } | { type: "postProcess" }
   >;
+  starmap: never;
 };
 
 /**
@@ -119,6 +131,8 @@ function generateRequestId(
         messageType === "getMediaContent")) ||
     // Import (count operation needs response)
     (workerType === "import" && messageType === "count") ||
+    // Starmap compute
+    (workerType === "starmap" && (messageType === "computeLayout" || messageType === "ping")) ||
     // Any operation with progress callback needs tracking
     hasProgressCallback;
 
@@ -173,6 +187,7 @@ function getCompletionTypes(workerType: WorkerType): Set<string> {
     bulkSync: ["cancelled", "paused", "error"],
     bulkExport: ["complete", "cancelled", "paused", "error"],
     import: ["complete", "cancelled", "paused", "count", "error"],
+    starmap: ["layoutResult", "pong", "error"],
   };
 
   return new Set(completionMap[workerType]);

@@ -88,6 +88,7 @@
         "thumbnail.worker.js",
         "bulkExport.worker.js",
         "bulkSync.worker.js",
+        "starmap.worker.js",
         "*.js.map"
       ],
       "matches": ["<all_urls>"]

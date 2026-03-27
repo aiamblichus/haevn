@@ -23,6 +23,8 @@ import type {
   ImportWorkerResponse,
   SearchWorkerMessage,
   SearchWorkerResponse,
+  StarmapWorkerMessage,
+  StarmapWorkerResponse,
   StatsWorkerMessage,
   StatsWorkerResponse,
   ThumbnailWorkerMessage,
@@ -46,6 +48,7 @@ let bulkExportWorker: Worker | null = null;
 let bulkSyncWorker: Worker | null = null;
 let thumbnailWorker: Worker | null = null;
 let importWorker: Worker | null = null;
+let starmapWorker: Worker | null = null;
 
 // Pending worker requests (for request/response pattern)
 const pendingWorkerRequests = new Map<
@@ -393,18 +396,40 @@ function initImportWorker(): Worker {
   return importWorker;
 }
 
+function initStarmapWorker(): Worker {
+  if (starmapWorker) {
+    return starmapWorker;
+  }
+
+  const workerUrl = chrome.runtime.getURL("starmap.worker.js");
+  starmapWorker = new Worker(workerUrl);
+
+  starmapWorker.onmessage = (event: MessageEvent<StarmapWorkerResponse>) => {
+    handleWorkerMessage("starmap", event.data);
+  };
+
+  starmapWorker.onerror = (error) => {
+    log.error("[Offscreen] Starmap worker error:", error);
+    starmapWorker = null;
+  };
+
+  log.info("[Offscreen] Starmap worker initialized");
+  return starmapWorker;
+}
+
 /**
  * Handle messages from workers and route back to service worker
  */
 function handleWorkerMessage(
-  workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import",
+  workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import" | "starmap",
   data:
     | SearchWorkerResponse
     | StatsWorkerResponse
     | BulkExportWorkerResponse
     | BulkSyncWorkerResponse
     | ThumbnailWorkerResponse
-    | ImportWorkerResponse,
+    | ImportWorkerResponse
+    | StarmapWorkerResponse,
 ): void {
   // If this is a response with a requestId, resolve the pending request
   const requestId =
@@ -528,7 +553,8 @@ function postMessageWithTransfer(
     | BulkExportWorkerMessage
     | BulkSyncWorkerMessage
     | ThumbnailWorkerMessage
-    | ImportWorkerMessage,
+    | ImportWorkerMessage
+    | StarmapWorkerMessage,
   transferList?: Transferable[],
 ): void {
   if (transferList && transferList.length > 0) {
@@ -539,14 +565,15 @@ function postMessageWithTransfer(
 }
 
 async function routeToWorker(
-  workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import",
+  workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import" | "starmap",
   message:
     | SearchWorkerMessage
     | StatsWorkerMessage
     | BulkExportWorkerMessage
     | BulkSyncWorkerMessage
     | ThumbnailWorkerMessage
-    | ImportWorkerMessage,
+    | ImportWorkerMessage
+    | StarmapWorkerMessage,
   transferList?: Transferable[],
 ): Promise<unknown> {
   let worker: Worker | null = null;
@@ -583,6 +610,9 @@ async function routeToWorker(
       break;
     case "import":
       worker = initImportWorker();
+      break;
+    case "starmap":
+      worker = initStarmapWorker();
       break;
   }
 
@@ -653,6 +683,9 @@ async function routeToWorker(
         case "import":
           postMessageWithTransfer(worker, message as ImportWorkerMessage, transferList);
           break;
+        case "starmap":
+          postMessageWithTransfer(worker, message as StarmapWorkerMessage, transferList);
+          break;
       }
 
       // Timeout after 30 seconds
@@ -706,6 +739,9 @@ async function routeToWorker(
       case "import":
         postMessageWithTransfer(worker, message as ImportWorkerMessage, transferList);
         break;
+      case "starmap":
+        postMessageWithTransfer(worker, message as StarmapWorkerMessage, transferList);
+        break;
     }
     return undefined;
   }
@@ -734,7 +770,8 @@ async function handleWorkerRequest(message: OffscreenWorkerRequest): Promise<Off
     | BulkExportWorkerMessage
     | BulkSyncWorkerMessage
     | ThumbnailWorkerMessage
-    | ImportWorkerMessage = {
+    | ImportWorkerMessage
+    | StarmapWorkerMessage = {
     ...data, // Spread existing data properties first
     type: operation as string, // Override type with operation
     ...(requestId ? { requestId } : {}), // Add requestId if present
@@ -744,7 +781,8 @@ async function handleWorkerRequest(message: OffscreenWorkerRequest): Promise<Off
     | BulkExportWorkerMessage
     | BulkSyncWorkerMessage
     | ThumbnailWorkerMessage
-    | ImportWorkerMessage;
+    | ImportWorkerMessage
+    | StarmapWorkerMessage;
 
   log.info(`[Offscreen] Constructed worker message:`, {
     workerType,

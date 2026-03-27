@@ -37,6 +37,8 @@ import type {
   ImportWorkerResponse,
   SearchWorkerMessage,
   SearchWorkerResponse,
+  StarmapWorkerMessage,
+  StarmapWorkerResponse,
   StatsWorkerMessage,
   StatsWorkerResponse,
   ThumbnailWorkerMessage,
@@ -480,7 +482,14 @@ export type OffscreenRequest =
   | { type: "revokeBlobUrl"; url: string }
   | {
       type: "workerRequest";
-      workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import";
+      workerType:
+        | "search"
+        | "stats"
+        | "bulkExport"
+        | "bulkSync"
+        | "thumbnail"
+        | "import"
+        | "starmap";
       operation: string;
       data:
         | SearchWorkerMessage
@@ -488,7 +497,8 @@ export type OffscreenRequest =
         | BulkExportWorkerMessage
         | BulkSyncWorkerMessage
         | ThumbnailWorkerMessage
-        | ImportWorkerMessage;
+        | ImportWorkerMessage
+        | StarmapWorkerMessage;
       requestId?: string;
     };
 
@@ -536,14 +546,22 @@ export type OffscreenEvent =
   | { type: "offscreenIframeNavigated"; iframeId: string; url: string }
   | {
       type: "workerMessage";
-      workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import";
+      workerType:
+        | "search"
+        | "stats"
+        | "bulkExport"
+        | "bulkSync"
+        | "thumbnail"
+        | "import"
+        | "starmap";
       data:
         | SearchWorkerResponse
         | StatsWorkerResponse
         | BulkExportWorkerResponse
         | BulkSyncWorkerResponse
         | ThumbnailWorkerResponse
-        | ImportWorkerResponse;
+        | ImportWorkerResponse
+        | StarmapWorkerResponse;
     };
 
 // ======================
