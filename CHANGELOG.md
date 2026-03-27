@@ -2,6 +2,11 @@
 
 ## [v1.2.1] - 2026-03-27
 
+- Initial release
+
+
+## [v1.2.1] - 2026-03-27
+
 ### Added
 
 - Archive search result actions now include a direct "Edit metadata" shortcut.
