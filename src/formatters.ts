@@ -146,7 +146,7 @@ export function extractAttachmentsFromChat(chat: Chat, messageIds?: string[]): A
                   // Binary attachment
                   attachments.push({
                     content: c as BinaryContent,
-                    mediaType: c.media_type,
+                    mediaType: inferMediaTypeFromBinary(c as BinaryContent),
                     messageId: msgId,
                     partIndex: partIndex++,
                     isUserContent: true,
@@ -169,9 +169,18 @@ export function extractAttachmentsFromChat(chat: Chat, messageIds?: string[]): A
           const c = anyPart.content;
           if (c && typeof c !== "string") {
             if (c.kind === "binary") {
+              const partKind = anyPart.part_kind;
+              const hint = partKind.startsWith("image")
+                ? "image"
+                : partKind.startsWith("video")
+                  ? "video"
+                  : partKind.startsWith("audio")
+                    ? "audio"
+                    : "document";
+
               attachments.push({
                 content: c as BinaryContent,
-                mediaType: c.media_type,
+                mediaType: inferMediaTypeFromBinary(c as BinaryContent, hint),
                 messageId: msgId,
                 partIndex: partIndex++,
                 isUserContent: false,
@@ -203,6 +212,41 @@ function inferMediaTypeFromUrl(content: ImageUrl | VideoUrl | AudioUrl | Documen
   if (content.kind === "audio-url") return "audio/mpeg";
   if (content.kind === "document-url") return "application/pdf";
   return "application/octet-stream";
+}
+
+function inferMediaTypeFromBinary(
+  content: BinaryContent,
+  hint?: "image" | "video" | "audio" | "document",
+): string {
+  const declared = content.media_type?.toLowerCase() || "";
+  if (declared && declared !== "application/octet-stream" && declared !== "binary/octet-stream") {
+    return content.media_type;
+  }
+
+  // For OPFS-backed content, infer from file extension as a fallback.
+  const dataRef = content.data || "";
+  const ext = dataRef.split("?")[0].split("#")[0].split(".").pop()?.toLowerCase();
+
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "mp4") return "video/mp4";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "mp3") return "audio/mpeg";
+  if (ext === "wav") return "audio/wav";
+  if (ext === "ogg") return "audio/ogg";
+  if (ext === "pdf") return "application/pdf";
+
+  // Last-resort fallback: infer from semantic part kind when available.
+  if (hint === "image") return "image/jpeg";
+  if (hint === "video") return "video/mp4";
+  if (hint === "audio") return "audio/mpeg";
+  if (hint === "document") return "application/pdf";
+
+  return content.media_type || "application/octet-stream";
 }
 
 /**

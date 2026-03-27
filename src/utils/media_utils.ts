@@ -36,6 +36,22 @@ interface BlobFetchResult {
   contentType: string;
 }
 
+function isGenericBinaryMimeType(mimeType: string | undefined | null): boolean {
+  if (!mimeType) return true;
+  const normalized = mimeType.toLowerCase().split(";")[0].trim();
+  return normalized === "application/octet-stream" || normalized === "binary/octet-stream";
+}
+
+function resolvePreferredMimeType(
+  detectedMimeType: string | undefined | null,
+  fallbackMimeType: string,
+): string {
+  if (isGenericBinaryMimeType(detectedMimeType)) {
+    return fallbackMimeType;
+  }
+  return detectedMimeType || fallbackMimeType;
+}
+
 function normalizeAssetUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   // Gemini/Google image URLs sometimes arrive with trailing punctuation from text extraction.
@@ -426,7 +442,7 @@ export async function processExternalAssets(
               throw new Error(response.error || "Content script fetch failed");
             }
 
-            finalContentType = response.contentType || contentType;
+            finalContentType = resolvePreferredMimeType(response.contentType, contentType);
             // Convert base64 back to ArrayBuffer for uniform processing
             const binaryString = atob(response.base64);
             const len = binaryString.length;
@@ -446,8 +462,11 @@ export async function processExternalAssets(
             if (!response.ok) {
               throw new Error(`Failed to fetch file: ${response.statusText} for url ${assetUrl}`);
             }
-            // Use the content type from the response header if available, otherwise use the one from asset
-            finalContentType = response.headers.get("content-type") || contentType;
+            // Prefer server-declared content type, but ignore generic octet-stream and keep the source hint.
+            finalContentType = resolvePreferredMimeType(
+              response.headers.get("content-type"),
+              contentType,
+            );
             if (logPrefix) {
               log.info(`${logPrefix} Reading arrayBuffer for: ${assetUrl}`);
             }

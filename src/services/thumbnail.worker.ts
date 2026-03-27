@@ -1,6 +1,7 @@
 // Thumbnail Worker - Offloads image processing to prevent blocking the service worker
 import Dexie from "dexie";
 import { type AttachmentInfo, extractAttachmentsFromChat } from "../formatters";
+import type { Chat, ChatMessage } from "../model/haevn_model";
 import type {
   GalleryMediaItem,
   MediaRoleFilter,
@@ -162,6 +163,33 @@ function getContentUrl(attachment: AttachmentInfo): string {
   return "";
 }
 
+async function hydrateChatMessages(chat: Chat): Promise<Chat> {
+  if (!chat.id) return chat;
+
+  const hasEmbeddedMessages = Boolean(chat.messages && Object.keys(chat.messages).length > 0);
+
+  // Prefer normalized messages table when available (DB v17+).
+  const storedRows = await db.chatMessages.where("chatId").equals(chat.id).toArray();
+  if (storedRows.length === 0) {
+    return chat;
+  }
+
+  // If chat already embeds full message map, keep it to avoid unnecessary reconstruction.
+  if (hasEmbeddedMessages && Object.keys(chat.messages).length >= storedRows.length) {
+    return chat;
+  }
+
+  const hydratedMessages: Record<string, ChatMessage> = {};
+  for (const row of storedRows) {
+    hydratedMessages[row.id] = row;
+  }
+
+  return {
+    ...chat,
+    messages: hydratedMessages,
+  };
+}
+
 /**
  * Generate thumbnails for a single chat
  */
@@ -176,8 +204,9 @@ async function generateThumbnailsForChat(
       return { count: 0, thumbnails: [] };
     }
 
-    // Extract all attachments
-    const attachments = extractAttachmentsFromChat(chat);
+    // Extract all attachments (supports both embedded chat.messages and normalized chatMessages table)
+    const hydratedChat = await hydrateChatMessages(chat);
+    const attachments = extractAttachmentsFromChat(hydratedChat);
 
     // Filter to images and videos only
     const mediaAttachments = attachments.filter(
@@ -340,8 +369,9 @@ async function findChatsWithMissingThumbnails(): Promise<string[]> {
       // Skip if chat has no ID (shouldn't happen, but TypeScript safety)
       if (!chat.id) continue;
 
-      // Extract attachments
-      const attachments = extractAttachmentsFromChat(chat);
+      // Extract attachments (supports both embedded chat.messages and normalized chatMessages table)
+      const hydratedChat = await hydrateChatMessages(chat);
+      const attachments = extractAttachmentsFromChat(hydratedChat);
       const mediaAttachments = attachments.filter(
         (a) => a.mediaType.startsWith("image/") || a.mediaType.startsWith("video/"),
       );
