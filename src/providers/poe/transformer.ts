@@ -79,28 +79,54 @@ async function createChat(poeData: PoeConversationData): Promise<Chat> {
   for (let i = 0; i < realMessages.length; i++) {
     const msg = realMessages[i];
     const messageId = messageIds[i];
+    const isAssistant = msg.author !== "human";
 
-    if (msg.attachments.length === 0) {
+    // Poe sometimes carries image URLs in markdown text even when `attachments` is empty.
+    // We parse those URLs so image-only replies still survive provider schema changes.
+    const markdownImageUrls = extractInlineImageUrlsFromMarkdown(msg.text || "");
+
+    // Build attachment list from both structured attachments and markdown-extracted URLs.
+    const assetMap = new Map<string, UrlAsset>();
+    for (const att of msg.attachments) {
+      const url = att.url || att.file?.url;
+      if (!url) continue;
+      assetMap.set(url, {
+        url,
+        type: att.file?.mimeType,
+        name: att.name,
+      });
+    }
+    for (const url of markdownImageUrls) {
+      if (!assetMap.has(url)) {
+        assetMap.set(url, {
+          url,
+          // Best effort default; processExternalAssets can refine from response headers.
+          type: "image/jpeg",
+        });
+      }
+    }
+    const assets = [...assetMap.values()];
+
+    if (assets.length === 0) {
       messageAttachments.set(i, { content: [], inlineUrls: [] });
       continue;
     }
 
-    // Collect inline attachment URLs for assistant messages (to strip from text later)
-    // We collect BOTH att.url AND att.file.url because the markdown might reference either.
-    // Poe's image generation bots often embed the file.url in the markdown text.
-    const isAssistant = msg.author !== "human";
+    // Collect inline URLs for assistant messages (used to strip inline markdown after media extraction).
     const inlineUrls: string[] = [];
     if (isAssistant) {
       for (const att of msg.attachments) {
-        if (att.isInline) {
-          if (att.url) inlineUrls.push(att.url);
-          if (att.file?.url && att.file.url !== att.url) inlineUrls.push(att.file.url);
-        }
+        if (!att.isInline) continue;
+        if (att.url) inlineUrls.push(att.url);
+        if (att.file?.url && att.file.url !== att.url) inlineUrls.push(att.file.url);
       }
+      inlineUrls.push(...markdownImageUrls);
     }
 
+    const dedupedInlineUrls = [...new Set(inlineUrls)];
+
     // Debug: log attachment URLs vs what's in the message text
-    if (isAssistant && msg.attachments.length > 0) {
+    if (isAssistant && assets.length > 0) {
       log.debug(`[Poe Transformer] Attachment debug for message ${i}:`, {
         textPreview: msg.text.substring(0, 300),
         attachments: msg.attachments.map((att) => ({
@@ -108,19 +134,11 @@ async function createChat(poeData: PoeConversationData): Promise<Chat> {
           url: att.url,
           fileUrl: att.file?.url,
         })),
-        collectedInlineUrls: inlineUrls,
+        markdownImageUrls,
+        resolvedAssetUrls: assets.map((asset) => asset.url),
+        collectedInlineUrls: dedupedInlineUrls,
       });
     }
-
-    // Map to generic UrlAsset format for the shared utility
-    // Use att.url if available, otherwise fall back to att.file.url
-    const assets: UrlAsset[] = msg.attachments
-      .filter((att) => Boolean(att.url || att.file?.url))
-      .map((att) => ({
-        url: att.url || att.file.url,
-        type: att.file.mimeType,
-        name: att.name,
-      }));
 
     log.info(
       `[Poe Transformer] Downloading ${assets.length} attachments for message ${i + 1}/${realMessages.length}`,
@@ -134,7 +152,7 @@ async function createChat(poeData: PoeConversationData): Promise<Chat> {
       messageId,
     });
 
-    messageAttachments.set(i, { content: downloadedContent, inlineUrls });
+    messageAttachments.set(i, { content: downloadedContent, inlineUrls: dedupedInlineUrls });
   }
 
   log.info(`[Poe Transformer] Finished downloading attachments for all messages`);
@@ -300,6 +318,39 @@ function createAssistantMessage(
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+/**
+ * Extract inline image URLs from markdown text.
+ *
+ * Supports:
+ * 1) Direct image markdown: ![alt](https://...)
+ * 2) Reference-style definitions used by Poe: [refId]: https://...
+ */
+function extractInlineImageUrlsFromMarkdown(text: string): string[] {
+  if (!text) return [];
+
+  const urls = new Set<string>();
+
+  // Pattern 1: direct inline markdown image URLs
+  const directPattern = /!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g;
+  let directMatch: RegExpExecArray | null;
+  directMatch = directPattern.exec(text);
+  while (directMatch !== null) {
+    urls.add(directMatch[1]);
+    directMatch = directPattern.exec(text);
+  }
+
+  // Pattern 2: reference-style markdown definitions
+  const refDefPattern = /^\[[^\]]+\]:\s*(https?:\/\/\S+)\s*$/gm;
+  let refMatch: RegExpExecArray | null;
+  refMatch = refDefPattern.exec(text);
+  while (refMatch !== null) {
+    urls.add(refMatch[1]);
+    refMatch = refDefPattern.exec(text);
+  }
+
+  return [...urls];
+}
 
 /**
  * Strip inline image markdown references from text.
