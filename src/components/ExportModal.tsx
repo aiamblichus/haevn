@@ -283,7 +283,7 @@ export const ExportModal = ({
                     <div className="text-sm font-medium text-slate-700">
                       Downloaded Files ({progress.downloadedFiles.length})
                     </div>
-                    <div className="max-h-48 overflow-y-auto border rounded-md p-2 bg-slate-50 dark:bg-slate-900">
+                    <div className="max-h-48 overflow-y-auto border rounded-md p-2 bg-slate-900">
                       <ul className="space-y-1 text-xs font-mono">
                         {progress.downloadedFiles.map((filename) => (
                           <li key={filename} className="text-muted-foreground">

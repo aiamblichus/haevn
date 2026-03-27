@@ -68,9 +68,7 @@ export const ProviderCard = ({
               <span>{Math.round(syncState.progress)}%</span>
             </div>
             {syncState.failedCount !== undefined && syncState.failedCount > 0 && (
-              <div className="text-xs text-red-600 dark:text-red-400">
-                {syncState.failedCount} failed
-              </div>
+              <div className="text-xs text-red-400">{syncState.failedCount} failed</div>
             )}
             {onCancelSync && (
               <Button variant="destructive" size="sm" className="w-full" onClick={onCancelSync}>
