@@ -32,6 +32,7 @@ export function formatBranchAsJson(
     title: chat.title,
     platform: chat.source,
     timestamp: chat.timestamp,
+    system: !skipSystem ? chat.system : undefined,
     branch: {
       path: branchPath.map((id) => getMessageRef(refs, id)),
       messageCount: messages.length,

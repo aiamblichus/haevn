@@ -74,6 +74,13 @@ export function formatBranchAsMarkdown(
     lines.push("");
   }
 
+  if (!skipSystem && chat.system?.trim()) {
+    lines.push("## SYSTEM");
+    lines.push("");
+    lines.push(chat.system.trim());
+    lines.push("");
+  }
+
   // Messages
   for (const message of rendered) {
     const role = getMessageRole(message);
