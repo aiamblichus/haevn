@@ -16,10 +16,21 @@ import type {
 } from "./model/haevn_model";
 import { log } from "./utils/logger";
 
+export type ExporterId = "haevn_zip";
+
 export interface ExportOptions {
   includeMetadata?: boolean;
   includeTimestamps?: boolean;
+  /**
+   * Legacy content format hint.
+   * Current extension export pipeline only supports JSON-backed HAEVN ZIP exports.
+   * Kept for compatibility with viewer markdown copy/export helpers.
+   */
   format: "json" | "markdown";
+  /**
+   * Export plugin identifier. Defaults to "haevn_zip" when omitted.
+   */
+  exporterId?: ExporterId;
   messageIds?: string[]; // Optional: limit export to specific messages in order
 }
 

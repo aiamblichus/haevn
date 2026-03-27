@@ -9,6 +9,7 @@ import {
   resumeBulkExport,
   startBulkExport,
 } from "../bulkExport/bulkExport";
+import { getExporter, normalizeExportOptions } from "../export/exporters";
 import { handleFileDownload } from "../utils/fileDownload";
 
 export async function handleExportSyncedChat(
@@ -16,17 +17,13 @@ export async function handleExportSyncedChat(
   sendResponse: (response: BackgroundResponse) => void,
 ): Promise<void> {
   try {
-    const options: ExportOptions = message.options || {
-      format: "json",
-      includeMetadata: true,
-      includeTimestamps: true,
-    };
-    if (options.format !== "json") {
-      log.warn(`[ExportHandler] Unsupported format requested. Falling back to JSON.`, {
-        format: options.format,
-      });
-      options.format = "json";
+    const options: ExportOptions = normalizeExportOptions(message.options);
+    const exporter = getExporter(options.exporterId || "haevn_zip");
+
+    if (exporter.id !== "haevn_zip") {
+      throw new Error(`Exporter not implemented yet: ${exporter.id}`);
     }
+
     await startBulkExport([message.chatId], options);
     sendResponse({ success: true, message: "Bulk export started" });
   } catch (err: unknown) {
@@ -51,16 +48,11 @@ export async function handleStartBulkExport(
 ): Promise<void> {
   try {
     const chatIds: string[] = message.chatIds || [];
-    const options: ExportOptions = message.options || {
-      format: "json",
-      includeMetadata: true,
-      includeTimestamps: true,
-    };
-    if (options.format !== "json") {
-      log.warn(`[ExportHandler] Unsupported bulk export format. Falling back to JSON.`, {
-        format: options.format,
-      });
-      options.format = "json";
+    const options: ExportOptions = normalizeExportOptions(message.options);
+    const exporter = getExporter(options.exporterId || "haevn_zip");
+
+    if (exporter.id !== "haevn_zip") {
+      throw new Error(`Exporter not implemented yet: ${exporter.id}`);
     }
 
     await startBulkExport(chatIds, options);

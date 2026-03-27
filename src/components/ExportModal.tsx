@@ -229,7 +229,7 @@ export const ExportModal = ({
               <DialogHeader>
                 <DialogTitle>Export</DialogTitle>
                 <DialogDescription>
-                  {exportModalIds.length} chat(s) will be exported.
+                  {exportModalIds.length} chat(s) will be exported as a HAEVN archive (.zip).
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>

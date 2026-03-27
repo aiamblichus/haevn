@@ -1292,6 +1292,7 @@ const App = () => {
 
   const [isExportOpen, setIsExportOpen] = useState(false);
   const exportOptions: ExportOptions = {
+    exporterId: "haevn_zip",
     format: "json",
     includeMetadata: true,
     includeTimestamps: true,

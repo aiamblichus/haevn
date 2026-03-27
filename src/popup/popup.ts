@@ -645,6 +645,7 @@ async function handleExport(): Promise<void> {
       action: "exportSyncedChat",
       chatId: currentChatId,
       options: {
+        exporterId: "haevn_zip",
         format: "json",
         includeMetadata: true,
         includeTimestamps: true,
@@ -706,6 +707,7 @@ async function handleExportAll(): Promise<void> {
 
     // Get export options - use selected format from dropdown, fallback to storage
     const exportOptions = {
+      exporterId: "haevn_zip",
       format: "json",
       includeMetadata: true,
       includeTimestamps: true,

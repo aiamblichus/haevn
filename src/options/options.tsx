@@ -64,6 +64,7 @@ const App = () => {
   const [sortBy, setSortBy] = useState<SortKey>("lastSyncedTimestamp");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const exportOptions: ExportOptions = {
+    exporterId: "haevn_zip",
     format: "json",
     includeMetadata: true,
     includeTimestamps: true,
