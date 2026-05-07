@@ -12,6 +12,14 @@ import type {
 import type { SearchWorkerMessage } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
+import { buildSearchResultsForChat } from "./searchTextMatch";
+import {
+  buildLunrQueryPlan,
+  buildRelaxedPrefixQuery,
+  type PhraseConstraint,
+  queryNeedsExactPhrasePath,
+} from "./searchWorkerQuery";
 
 // --- Configuration ---
 const SEGMENT_SIZE = 200; // Chats per segment
@@ -26,11 +34,6 @@ interface SearchDoc {
   title: string;
   content: string;
 }
-
-type ParsedQuery = {
-  phrases: string[];
-  terms: string[];
-};
 
 // [start, length, messageId, role]
 type SourceMapEntry = [number, number, string, "user" | "assistant"];
@@ -215,54 +218,17 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
   };
 }
 
-function parseSearchQuery(query: string): ParsedQuery {
-  const phrases: string[] = [];
-  const quoteRegex = /"([^"]+)"/g;
-  let match: RegExpExecArray | null;
-  let lastIndex = 0;
-  const remainderParts: string[] = [];
-
-  match = quoteRegex.exec(query);
-  while (match !== null) {
-    const pre = query.slice(lastIndex, match.index).trim();
-    if (pre) remainderParts.push(pre);
-
-    const phrase = match[1].trim();
-    if (phrase) phrases.push(phrase);
-    lastIndex = quoteRegex.lastIndex;
-    match = quoteRegex.exec(query);
-  }
-
-  const tail = query.slice(lastIndex).trim();
-  if (tail) remainderParts.push(tail);
-
-  const cleaned = remainderParts.join(" ").replace(/[+\-~*^:"()]/g, " ");
-  const seen = new Set<string>();
-  const terms: string[] = [];
-
-  for (const t of cleaned.split(/\s+/)) {
-    const trimmed = t.trim();
-    if (trimmed && !seen.has(trimmed.toLowerCase())) {
-      seen.add(trimmed.toLowerCase());
-      terms.push(trimmed);
-    }
-  }
-
-  return { phrases, terms };
-}
-
 function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
   const hay = text.toLowerCase();
 
   if (parsed.phrases.length > 0) {
-    const phraseHit = parsed.phrases.some((p) => hay.includes(p.toLowerCase()));
+    const phraseHit = parsed.phrases.some((p) => hay.includes(p));
     if (!phraseHit) return false;
   }
 
   if (parsed.terms.length > 0) {
     const termHit = parsed.terms.some((t) => {
-      const needle = t.toLowerCase();
-      return hay.includes(needle) || hay.split(/\W+/).some((token) => token.startsWith(needle));
+      return hay.includes(t) || hay.split(/\W+/).some((token) => token.startsWith(t));
     });
     if (!termHit) return false;
   }
@@ -830,9 +796,40 @@ function verifyPhrase(
 
 // --- performSearch ---
 
+async function filterResultsByTextPhrases(
+  results: LunrResult[],
+  phraseConstraints: PhraseConstraint[],
+): Promise<LunrResult[]> {
+  if (results.length === 0 || phraseConstraints.length === 0) {
+    return results;
+  }
+
+  const chatIds = Array.from(new Set(results.map((result) => result.ref)));
+  const chats = await attachMessages(
+    (await db.chats.bulkGet(chatIds)).filter((chat): chat is Chat => !!chat),
+  );
+  const searchableTextByChatId = new Map<string, string>();
+
+  for (const chat of chats) {
+    const data = extractTextAndMap(chat);
+    if (!data) continue;
+    searchableTextByChatId.set(data.doc.id, normalizeSearchText(data.doc.content));
+  }
+
+  return results.filter((result) => {
+    const searchableText = searchableTextByChatId.get(result.ref);
+    if (!searchableText) return false;
+
+    return phraseConstraints.every((constraint) =>
+      searchableText.includes(constraint.normalizedPhrase),
+    );
+  });
+}
+
 async function performSearch(
   query: string,
   hydrate: boolean = false,
+  options: { exactTextFilter?: boolean } = {},
 ): Promise<string[] | LunrResult[]> {
   if (!query) return [];
 
@@ -856,60 +853,17 @@ async function performSearch(
 
   if (segments.size === 0) await loadSegments();
 
-  // 1. Parse Query for Phrases
-  let finalQuery = query;
-  const phraseConstraints: string[][] = [];
-  const quoteRegex = /"([^"]+)"/g;
-  let match: RegExpExecArray | null;
+  // 1. Normalize the query path before handing it to Lunr.
+  const { finalQuery, hasPhrases, phraseConstraints } = buildLunrQueryPlan(query);
+  const metadataPhraseConstraints = phraseConstraints.filter(
+    (constraint) => !constraint.requiresTextVerification,
+  );
+  const textPhraseConstraints = phraseConstraints.filter(
+    (constraint) => constraint.requiresTextVerification,
+  );
 
-  const parts: string[] = [];
-  let lastIndex = 0;
-  let hasPhrases = false;
-
-  // Pipeline for filtering stop words from the query string construction
-  // (We don't want to add +of to the Lunr query if 'of' is not in the index)
-  const stopWordPipeline = new lunr.Pipeline();
-  stopWordPipeline.add(lunr.trimmer, lunr.stopWordFilter);
-
-  // Clone query to avoid infinite loop with exec
-  match = quoteRegex.exec(query);
-  while (match !== null) {
-    hasPhrases = true;
-    // Text before quote
-    const pre = query.slice(lastIndex, match.index).trim();
-    if (pre) parts.push(pre);
-
-    const phrase = match[1].trim();
-    if (phrase) {
-      const terms = phrase.split(/\s+/);
-      phraseConstraints.push(terms); // Keep raw terms for gap check
-
-      // Filter stop words for the mandatory query terms
-      const filteredTerms = terms.filter((t) => {
-        const res = stopWordPipeline.run([new lunr.Token(t)]);
-        return res.length > 0;
-      });
-
-      if (filteredTerms.length > 0) {
-        // Convert to strict AND query terms
-        parts.push(filteredTerms.map((t) => `+${t}`).join(" "));
-      }
-    }
-    lastIndex = quoteRegex.lastIndex;
-    match = quoteRegex.exec(query);
-  }
-  const remainder = query.slice(lastIndex).trim();
-  if (remainder) parts.push(remainder);
-
-  if (hasPhrases) {
-    finalQuery = parts.join(" ");
-  } else if (!/[+\-~*^"]/.test(query)) {
-    // No operators or quotes — default to AND
-    finalQuery = query
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((t) => `+${t}`)
-      .join(" ");
+  if (!finalQuery.trim()) {
+    return [];
   }
 
   const runSegmentSearch = (queryText: string): LunrResult[] => {
@@ -919,8 +873,12 @@ async function performSearch(
         const results = seg.index.search(queryText) as LunrResult[];
         const filtered = hasPhrases
           ? results.filter((r) =>
-              phraseConstraints.every((p) =>
-                verifyPhrase(r.matchData, p, (seg.index as LunrIndexWithPipeline).pipeline),
+              metadataPhraseConstraints.every((constraint) =>
+                verifyPhrase(
+                  r.matchData,
+                  constraint.terms,
+                  (seg.index as LunrIndexWithPipeline).pipeline,
+                ),
               ),
             )
           : results;
@@ -937,13 +895,9 @@ async function performSearch(
 
   // Relaxed fallback: if strict query returns nothing, retry with prefix matching (OR semantics).
   if (rawResults.length === 0 && !hasPhrases) {
-    const relaxedTerms = query
-      .split(/\s+/)
-      .map((t) => t.trim().replace(/[+\-~*^:"()]/g, ""))
-      .filter((t) => t.length >= 3)
-      .map((t) => `${t.toLowerCase()}*`);
-    if (relaxedTerms.length > 0) {
-      rawResults = runSegmentSearch(relaxedTerms.join(" "));
+    const relaxedQuery = buildRelaxedPrefixQuery(query);
+    if (relaxedQuery) {
+      rawResults = runSegmentSearch(relaxedQuery);
     }
   }
 
@@ -956,7 +910,12 @@ async function performSearch(
     }
   }
 
-  const sortedResults = Array.from(uniqueMap.values()).sort((a, b) => b.score - a.score);
+  let sortedResults = Array.from(uniqueMap.values()).sort((a, b) => b.score - a.score);
+
+  const shouldApplyExactTextFilter = options.exactTextFilter ?? false;
+  if (textPhraseConstraints.length > 0 && shouldApplyExactTextFilter) {
+    sortedResults = await filterResultsByTextPhrases(sortedResults, textPhraseConstraints);
+  }
 
   if (!hydrate) {
     return sortedResults.map((r) => r.ref);
@@ -998,8 +957,11 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       // maxResults is used to limit total hydration
       const maxResults = msg.maxResults || 1000;
       const parsedQuery = parseSearchQuery(msg.query);
+      const needsExactPhraseHydration = queryNeedsExactPhrasePath(msg.query);
 
-      const results = await performSearch(msg.query, hydrate);
+      const results = await performSearch(msg.query, hydrate, {
+        exactTextFilter: !hydrate && needsExactPhraseHydration,
+      });
 
       const CHUNK = hydrate ? 10 : 50; // Smaller chunks for hydrated data
 
@@ -1042,24 +1004,24 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
             const r = lunrResults[i];
             const chatId = r.ref;
 
-            // 1. Fetch Chat
             const chat = await loadChatWithMessages(chatId);
             if (chat) {
               if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
                 continue;
               }
-              // 2. Extract Positions
-              const positions = collectMatchPositions(r.matchData);
-              // 3. Generate Snippets
-              // Optimization: Pre-calculate map if possible, but extractTextAndMap is fast
-              const snippets = generateSnippets(chat, [], positions, snippetRadius); // Pass empty map, function generates it
 
-              const filteredSnippets = snippets.filter((snippet) =>
-                messageMatchesQuery(snippet.messageContent, parsedQuery),
-              );
+              const snippets = needsExactPhraseHydration
+                ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
+                : generateSnippets(
+                    chat,
+                    [],
+                    collectMatchPositions(r.matchData),
+                    snippetRadius,
+                  ).filter((snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery));
 
-              currentChunk.push(...filteredSnippets);
-              sentCount += filteredSnippets.length; // Count actual results (snippets)
+              const limitedSnippets = snippets.slice(0, Math.max(0, maxResults - sentCount));
+              currentChunk.push(...limitedSnippets);
+              sentCount += limitedSnippets.length;
             }
 
             // Flush chunk

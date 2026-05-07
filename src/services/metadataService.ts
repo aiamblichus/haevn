@@ -23,6 +23,7 @@ const METADATA_QUEUE_PERIOD_MINUTES = 5;
 const EMBEDDING_QUEUE_PERIOD_MINUTES = 5;
 const METADATA_MAX_RETRIES = 3;
 const EMBEDDING_MAX_RETRIES = 3;
+const EMBEDDING_BATCH_SIZE = 10;
 const METADATA_MAX_COMPLETION_TOKENS = 2000;
 const METADATA_MAX_INPUT_TOKENS = 5000;
 const METADATA_EST_CHARS_PER_TOKEN = 4;
@@ -457,45 +458,85 @@ export async function processEmbeddingQueueTick(): Promise<void> {
     return;
   }
 
-  const item = (await db.embeddingQueue.where("status").equals("pending").sortBy("addedAt"))[0];
-  if (!item) {
+  const pendingItems = await db.embeddingQueue.where("status").equals("pending").sortBy("addedAt");
+  const items = pendingItems.slice(0, EMBEDDING_BATCH_SIZE);
+  if (items.length === 0) {
     await chrome.alarms.clear(EMBEDDING_PROCESS_ALARM);
     return;
   }
 
-  const metadata = await MetadataRepository.get(item.chatId);
-  if (!hasMeaningfulMetadata(metadata)) {
-    await dequeueEmbeddingGeneration(item.chatId);
-    const remaining = await db.embeddingQueue.where("status").equals("pending").count();
-    if (remaining > 0) await scheduleEmbeddingProcessTick();
-    return;
+  const now = Date.now();
+  for (const item of items) {
+    await db.embeddingQueue.update(item.chatId, {
+      status: "processing",
+      lastAttemptAt: now,
+    });
   }
 
-  await db.embeddingQueue.update(item.chatId, {
-    status: "processing",
-    lastAttemptAt: Date.now(),
-  });
+  const chatIds = items.map((item) => item.chatId);
+  const metadataMap = await MetadataRepository.getMany(chatIds);
+
+  const valid = items
+    .map((item) => {
+      const metadata = metadataMap.get(item.chatId) ?? null;
+      return { item, metadata };
+    })
+    .filter((entry) => hasMeaningfulMetadata(entry.metadata));
+
+  const skipped = items.filter((item) => !valid.some((entry) => entry.item.chatId === item.chatId));
+  for (const item of skipped) {
+    await dequeueEmbeddingGeneration(item.chatId);
+  }
 
   try {
-    await generateEmbeddingForChat(item.chatId);
-    await dequeueEmbeddingGeneration(item.chatId);
+    if (valid.length > 0) {
+      const byChatId = new Map<string, ChatMetadataRecord>();
+      for (const entry of valid) {
+        byChatId.set(entry.item.chatId, entry.metadata as ChatMetadataRecord);
+      }
+
+      const batch = await generateEmbeddingsForMetadataBatch(
+        valid.map((entry) => ({
+          chatId: entry.item.chatId,
+          metadata: entry.metadata as ChatMetadataRecord,
+        })),
+      );
+
+      for (const { chatId, vector } of batch.rows) {
+        const metadata = byChatId.get(chatId);
+        if (!metadata) continue;
+
+        await db.chatEmbeddings.put({
+          chatId,
+          vector,
+          vectorDim: vector.length,
+          model: batch.model,
+          endpointHash: batch.endpointHash,
+          inputFingerprint: buildEmbeddingInputFingerprint(metadata),
+          updatedAt: Date.now(),
+        });
+        await dequeueEmbeddingGeneration(chatId);
+      }
+    }
   } catch (err) {
-    const retries = item.retries + 1;
-    const terminal = retries >= EMBEDDING_MAX_RETRIES;
-    const errMsg = err instanceof Error ? err.message : String(err);
+    for (const entry of valid) {
+      const retries = entry.item.retries + 1;
+      const terminal = retries >= EMBEDDING_MAX_RETRIES;
+      const errMsg = err instanceof Error ? err.message : String(err);
 
-    await db.embeddingQueue.update(item.chatId, {
-      status: terminal ? "failed" : "pending",
-      retries,
-      error: errMsg,
-      lastAttemptAt: Date.now(),
-      addedAt: terminal ? item.addedAt : Date.now(),
-    });
+      await db.embeddingQueue.update(entry.item.chatId, {
+        status: terminal ? "failed" : "pending",
+        retries,
+        error: errMsg,
+        lastAttemptAt: Date.now(),
+        addedAt: terminal ? entry.item.addedAt : Date.now(),
+      });
 
-    log.warn(
-      `[MetadataService] Embedding generation failed for ${item.chatId} (attempt ${retries})`,
-      err,
-    );
+      log.warn(
+        `[MetadataService] Embedding generation failed for ${entry.item.chatId} (attempt ${retries})`,
+        err,
+      );
+    }
   }
 
   const [nextMetadataConfig, nextStarmapConfig] = await Promise.all([
@@ -679,7 +720,7 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   // by limiting conversation chars and re-fitting once using real prompt overhead.
   let conversationText = buildConversationText(chat, messages, METADATA_MAX_CONVERSATION_CHARS);
   let prompt = createPromptWithSchema(
-    `Analyze the following AI conversation and extract structured metadata for it. You will be an excerpt from the chat with several significant messages inside <chat-to-analyze> tags. You should format your analysis using JSON ONLY as described below the chat.\n\n${conversationText}`,
+    `Analyze the following AI conversation and extract structured metadata for it. You will be given an excerpt from the chat with several significant messages inside <chat-to-analyze> tags. You should format your analysis using JSON ONLY as described below the chat.\n\n${conversationText}`,
     schema,
   );
 
@@ -747,6 +788,42 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 }
 
 export async function generateEmbeddingForChat(chatId: string): Promise<ChatEmbeddingRecord> {
+  const metadata = await MetadataRepository.get(chatId);
+  if (!hasMeaningfulMetadata(metadata)) {
+    throw new Error(`Chat ${chatId} has no meaningful metadata`);
+  }
+
+  const result = await generateEmbeddingsForMetadataBatch([{ chatId, metadata }]);
+  const first = result.rows[0];
+  if (!first) {
+    throw new Error(`Embedding generation returned no vector for ${chatId}`);
+  }
+
+  const record: ChatEmbeddingRecord = {
+    chatId,
+    vector: first.vector,
+    vectorDim: first.vector.length,
+    model: result.model,
+    endpointHash: result.endpointHash,
+    inputFingerprint: buildEmbeddingInputFingerprint(metadata),
+    updatedAt: Date.now(),
+  };
+
+  await getDB().chatEmbeddings.put(record);
+  return record;
+}
+
+async function generateEmbeddingsForMetadataBatch(
+  items: Array<{ chatId: string; metadata: ChatMetadataRecord }>,
+): Promise<{
+  model: string;
+  endpointHash: string;
+  rows: Array<{ chatId: string; vector: number[] }>;
+}> {
+  if (items.length === 0) {
+    return { model: "", endpointHash: "", rows: [] };
+  }
+
   const [metadataConfig, starmapConfig] = await Promise.all([
     getMetadataAIConfig(),
     getStarmapConfig(),
@@ -764,26 +841,23 @@ export async function generateEmbeddingForChat(chatId: string): Promise<ChatEmbe
   const model = (starmapConfig.embeddingModel || "").trim();
   if (!model) throw new Error("Starmap embedding model is not configured");
 
-  const metadata = await MetadataRepository.get(chatId);
-  if (!hasMeaningfulMetadata(metadata)) {
-    throw new Error(`Chat ${chatId} has no meaningful metadata`);
+  const inputs = items.map((item) => buildEmbeddingInput(item.metadata));
+  const vectors = await callEmbeddingLLMBatch(
+    normalizedUrl,
+    starmapConfig.embeddingApiKey,
+    model,
+    inputs,
+  );
+
+  if (vectors.length !== items.length) {
+    throw new Error(`Embedding API returned ${vectors.length} vectors for ${items.length} inputs`);
   }
 
-  const input = buildEmbeddingInput(metadata);
-  const vector = await callEmbeddingLLM(normalizedUrl, starmapConfig.embeddingApiKey, model, input);
-
-  const record: ChatEmbeddingRecord = {
-    chatId,
-    vector,
-    vectorDim: vector.length,
+  return {
     model,
     endpointHash: hashString(normalizedUrl),
-    inputFingerprint: buildEmbeddingInputFingerprint(metadata),
-    updatedAt: Date.now(),
+    rows: items.map((item, idx) => ({ chatId: item.chatId, vector: vectors[idx] })),
   };
-
-  await getDB().chatEmbeddings.put(record);
-  return record;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1131,12 +1205,14 @@ function hashString(value: string): string {
   }
 }
 
-async function callEmbeddingLLM(
+async function callEmbeddingLLMBatch(
   url: string,
   apiKey: string,
   model: string,
-  input: string,
-): Promise<number[]> {
+  inputs: string[],
+): Promise<number[][]> {
+  if (inputs.length === 0) return [];
+
   const endpoint = `${normalizeBaseUrl(url)}/embeddings`;
   const response = await fetch(endpoint, {
     method: "POST",
@@ -1144,7 +1220,7 @@ async function callEmbeddingLLM(
       "Content-Type": "application/json",
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
-    body: JSON.stringify({ model, input }),
+    body: JSON.stringify({ model, input: inputs }),
   });
 
   if (!response.ok) {
@@ -1152,17 +1228,29 @@ async function callEmbeddingLLM(
     throw new Error(`Embedding API error ${response.status}: ${text.slice(0, 200)}`);
   }
 
-  const data = (await response.json()) as { data?: Array<{ embedding?: number[] }> };
-  const embedding = data.data?.[0]?.embedding;
-  if (!Array.isArray(embedding) || embedding.length === 0) {
-    throw new Error("Embedding API response contained no embedding vector");
+  const data = (await response.json()) as {
+    data?: Array<{ embedding?: number[]; index?: number }>;
+  };
+  const rows = Array.isArray(data.data) ? data.data : [];
+  if (rows.length === 0) {
+    throw new Error("Embedding API response contained no embedding vectors");
   }
 
-  if (embedding.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
-    throw new Error("Embedding API response contained invalid vector values");
+  const sorted = [...rows].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const vectors: number[][] = [];
+
+  for (const row of sorted) {
+    const embedding = row.embedding;
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      throw new Error("Embedding API response contained empty embedding vector");
+    }
+    if (embedding.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+      throw new Error("Embedding API response contained invalid vector values");
+    }
+    vectors.push(embedding);
   }
 
-  return embedding;
+  return vectors;
 }
 
 async function callLLM(

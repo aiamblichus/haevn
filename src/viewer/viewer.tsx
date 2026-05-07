@@ -1384,7 +1384,7 @@ const App = () => {
         };
         const resp = await chrome.runtime.sendMessage(request);
         if (!resp?.success) {
-          throw new Error("error" in resp ? resp.error : "Chat not found");
+          throw new Error(resp && "error" in resp ? resp.error : resp == null ? "No response from background" : "Chat not found");
         }
         if (!("data" in resp) || !resp.data) {
           throw new Error("Chat not found");
