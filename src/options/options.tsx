@@ -133,7 +133,13 @@ const App = () => {
       };
       const resp = await chrome.runtime.sendMessage(request);
       if (!resp?.success) {
-        throw new Error(resp && "error" in resp ? resp.error : resp == null ? "No response from background" : "Failed");
+        throw new Error(
+          resp && "error" in resp
+            ? resp.error
+            : resp == null
+              ? "No response from background"
+              : "Failed",
+        );
       }
       if ("data" in resp && "total" in resp) {
         const chats = (resp.data || []) as ChatMeta[];

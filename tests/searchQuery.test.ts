@@ -57,6 +57,8 @@ describe("search query normalization", () => {
   });
 
   it("normalizes searchable text for exact phrase verification", () => {
-    expect(normalizeSearchText("Dear   Gemini,\nThis is a test")).toBe("dear gemini, this is a test");
+    expect(normalizeSearchText("Dear   Gemini,\nThis is a test")).toBe(
+      "dear gemini, this is a test",
+    );
   });
 });

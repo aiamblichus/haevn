@@ -64,9 +64,7 @@ describe("buildSearchResultsForChat", () => {
     expect(results).toHaveLength(1);
     expect(results[0].messageContent).toContain("Dear Eliezer");
     expect(results[0].messageSnippet.toLowerCase()).toContain("{{highlight}}dear{{/highlight}}");
-    expect(results[0].messageSnippet.toLowerCase()).toContain(
-      "{{highlight}}eliezer{{/highlight}}",
-    );
+    expect(results[0].messageSnippet.toLowerCase()).toContain("{{highlight}}eliezer{{/highlight}}");
   });
 
   it("requires the full phrase, not just the surviving non-stopword token", () => {

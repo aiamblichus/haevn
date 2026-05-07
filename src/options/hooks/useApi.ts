@@ -17,7 +17,13 @@ export const useApi = () => {
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
         if (!resp?.success || !resp.data)
-          throw new Error(resp && "error" in resp ? resp.error : resp == null ? "No response from background" : "Not found");
+          throw new Error(
+            resp && "error" in resp
+              ? resp.error
+              : resp == null
+                ? "No response from background"
+                : "Not found",
+          );
         const chat = resp.data as Chat;
         const url = buildChatUrl(chat.source, chat.sourceId);
         if (!url) {
@@ -31,7 +37,13 @@ export const useApi = () => {
         };
         const syncResp = (await chrome.runtime.sendMessage(syncRequest)) as BackgroundResponse;
         if (!syncResp?.success)
-          throw new Error(syncResp && "error" in syncResp ? syncResp.error : syncResp == null ? "No response from background" : "Sync failed");
+          throw new Error(
+            syncResp && "error" in syncResp
+              ? syncResp.error
+              : syncResp == null
+                ? "No response from background"
+                : "Sync failed",
+          );
         setStatus("Chat synced.", "ok");
         return true;
       } catch (e: unknown) {
@@ -65,7 +77,13 @@ export const useApi = () => {
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
         if (!resp?.success || !resp.data)
-          throw new Error(resp && "error" in resp ? resp.error : resp == null ? "No response from background" : "Chat not found");
+          throw new Error(
+            resp && "error" in resp
+              ? resp.error
+              : resp == null
+                ? "No response from background"
+                : "Chat not found",
+          );
         const chat = resp.data as Chat;
         let url = buildChatUrl(chat.source, chat.sourceId);
         if (!url && chat.source?.includes("openwebui")) {
