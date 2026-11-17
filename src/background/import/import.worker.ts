@@ -60,7 +60,7 @@ import type {
   ExportManifestMediaEntry,
 } from "../../services/exportManifest";
 import { getExtensionFromMimeType } from "../../services/mediaStorage";
-import { validateAndNormalizeChat } from "../../utils/jsonImporter";
+import { sha256Hex, validateAndNormalizeChat } from "../../utils/jsonImporter";
 import { createWritableStream } from "../../utils/opfs";
 import { createZipReader, readEntryText } from "../../utils/zipReader";
 
@@ -676,7 +676,7 @@ async function processImport(
               try {
                 const text = await readEntryText(entry);
                 const json = JSON.parse(text);
-                const chat = validateAndNormalizeChat(json);
+                const chat = validateAndNormalizeChat(json, await sha256Hex(text));
 
                 // Rewrite media references if we have locally restored media for this chat
                 // We create a lookup for this specific chat from the global manifest
