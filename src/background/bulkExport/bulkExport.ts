@@ -247,6 +247,96 @@ async function handleWorkerMessage(message: BulkExportWorkerResponse): Promise<v
   }
 }
 
+// Chrome reports bytes only on a DownloadItem (from chrome.downloads.search), never on a
+// DownloadDelta, so a download's progress is read by polling its item.
+const DOWNLOAD_POLL_MS = 500;
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function searchDownloads(downloadId: number): Promise<chrome.downloads.DownloadItem[]> {
+  return new Promise((resolve, reject) => {
+    chrome.downloads.search({ id: downloadId }, (items) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(items);
+    });
+  });
+}
+
+/** Chrome has received bytes for the download. */
+export function isDownloadEstablished(
+  item: Pick<chrome.downloads.DownloadItem, "bytesReceived">,
+): boolean {
+  return item.bytesReceived > 0;
+}
+
+/** The download is complete or has failed. A missing record has nothing left to wait for. */
+export function isDownloadSettled(
+  item: Pick<chrome.downloads.DownloadItem, "state"> | undefined,
+): boolean {
+  return item === undefined || item.state !== "in_progress";
+}
+
+/**
+ * Resolves true once the download is established, or false if no bytes arrive in timeoutMs.
+ * A state change in onChanged counts at once; until then the item is polled for bytes.
+ */
+export function waitForDownloadEstablished(
+  downloadId: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    let finished = false;
+    const finish = (established: boolean) => {
+      if (finished) return;
+      finished = true;
+      chrome.downloads.onChanged.removeListener(listener);
+      resolve(established);
+    };
+    const listener = (delta: chrome.downloads.DownloadDelta) => {
+      if (delta.id === downloadId && delta.state) finish(true);
+    };
+    chrome.downloads.onChanged.addListener(listener);
+    const poll = async () => {
+      while (!finished) {
+        try {
+          const [item] = await searchDownloads(downloadId);
+          if (item && isDownloadEstablished(item)) {
+            finish(true);
+            return;
+          }
+        } catch (error) {
+          log.warn("[BulkExport] Download search failed, retrying:", error);
+        }
+        if (Date.now() >= deadline) {
+          finish(false);
+          return;
+        }
+        await pause(DOWNLOAD_POLL_MS);
+      }
+    };
+    fireAndForget(poll(), "Poll download progress");
+  });
+}
+
+/** Resolves once the download is complete or has failed; a failed search is retried. */
+export async function waitForDownloadSettled(downloadId: number): Promise<void> {
+  for (;;) {
+    try {
+      const [item] = await searchDownloads(downloadId);
+      if (isDownloadSettled(item)) return;
+    } catch (error) {
+      log.warn("[BulkExport] Download search failed, retrying:", error);
+    }
+    await pause(DOWNLOAD_POLL_MS);
+  }
+}
+
 async function downloadExportZip(exportState: {
   exportId: string;
   zipPath: string;
@@ -255,33 +345,9 @@ async function downloadExportZip(exportState: {
     exportId: exportState.exportId,
     zipPath: exportState.zipPath,
   });
-  const waitForDownloadEstablished = (downloadId: number, timeoutMs: number): Promise<boolean> =>
-    new Promise((resolve) => {
-      let timeoutId: number | undefined;
-      const cleanup = () => {
-        if (timeoutId !== undefined) {
-          clearTimeout(timeoutId);
-        }
-        chrome.downloads.onChanged.removeListener(listener);
-      };
-      const listener = (delta: chrome.downloads.DownloadDelta) => {
-        if (delta.id !== downloadId) return;
-        const state = delta.state?.current;
-        if (state) {
-          cleanup();
-          resolve(true);
-        }
-      };
-      chrome.downloads.onChanged.addListener(listener);
-      timeoutId = self.setTimeout(() => {
-        cleanup();
-        resolve(false);
-      }, timeoutMs);
-    });
 
   let blobUrl: string | null = null;
   let downloadId: number | null = null;
-  let downloadEstablished = false;
   try {
     log.info(`[BulkExport] Creating blob URL from offscreen...`);
     const zipBlobUrl = await createBlobUrlFromOffscreen(exportState.zipPath);
@@ -312,20 +378,19 @@ async function downloadExportZip(exportState: {
         },
       );
     });
-    downloadEstablished = await waitForDownloadEstablished(downloadId, 10_000);
-    if (!downloadEstablished) {
+    const established = await waitForDownloadEstablished(downloadId, 10_000);
+    if (!established) {
       log.warn(`[BulkExport] Download did not report progress before timeout.`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
     log.info(`[BulkExport] Download requested.`);
   } catch (error) {
     log.error(`[BulkExport] downloadExportZip error:`, error);
     throw error;
   } finally {
     if (blobUrl) {
-      if (!downloadEstablished && downloadId !== null) {
-        await waitForDownloadEstablished(downloadId, 10_000);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Revoking earlier would cut off a zip that Chrome is still reading.
+      if (downloadId !== null) {
+        await waitForDownloadSettled(downloadId);
       }
       log.info(`[BulkExport] Revoking blob URL...`);
       try {

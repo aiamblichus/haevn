@@ -79,7 +79,6 @@ await haevnDebug.send("getSyncedChatsMetadata", { offset: 0, limit: 50 });
 await haevnDebug.send("getSyncedChatContent", { chatId: "abc123" });
 await haevnDebug.send("deleteSyncedChats", { chatIds: ["id1", "id2"] });
 await haevnDebug.send("existsChat", { chatId: "abc123" });
-await haevnDebug.send("checkForChanges", { chatId: "abc123" });
 await haevnDebug.send("checkCurrentChatSynced");
 await haevnDebug.send("getProviderStats", { providerName: "claude" });
 ```

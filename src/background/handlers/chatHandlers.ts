@@ -92,21 +92,6 @@ export async function handleExistsChat(
   }
 }
 
-export async function handleCheckForChanges(
-  message: Extract<BackgroundRequest, { action: "checkForChanges" }>,
-  sendResponse: (response: BackgroundResponse) => void,
-): Promise<void> {
-  try {
-    await SyncService.performCheckForChanges(message.chatId);
-    sendResponse({ success: true });
-  } catch (err: unknown) {
-    sendResponse({
-      success: false,
-      error: err instanceof Error ? err.message : "Check failed",
-    });
-  }
-}
-
 export async function handleGetProviderStats(
   message: Extract<BackgroundRequest, { action: "getProviderStats" }>,
   sendResponse: (response: BackgroundResponse) => void,

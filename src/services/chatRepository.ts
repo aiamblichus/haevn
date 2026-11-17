@@ -671,23 +671,4 @@ export namespace ChatRepository {
     const chats = await getDB().chats.where("deletedAt").below(threshold).toArray();
     return chats.filter((c): c is Chat & { id: string } => !!c.id).map((c) => c.id);
   }
-
-  /**
-   * Placeholder for the change detection method. Details in Phase 3.
-   * @param chatId Optional: if provided, checks only this specific chat.
-   */
-  export async function performCheckForChanges(chatId?: string): Promise<void> {
-    // Implementation will be in Phase 3
-    log.warn(`performCheckForChanges called for ${chatId || "all chats"}. (Not yet implemented)`);
-    // For now, just mark all as 'synced' for initial testing of metadata display
-    if (!chatId) {
-      const allChats = await getDB().chats.toArray();
-      await getDB().chats.bulkPut(allChats.map((c) => ({ ...c, syncStatus: "synced" })));
-    } else {
-      const chat = await getDB().chats.get(chatId);
-      if (chat) {
-        await getDB().chats.put({ ...chat, syncStatus: "synced" });
-      }
-    }
-  }
 }
