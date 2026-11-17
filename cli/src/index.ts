@@ -33,11 +33,6 @@ const mainCommand = defineCommand({
     description: "CLI tool for searching and accessing HAEVN chat archives",
   },
   args: {
-    file: {
-      type: "string",
-      alias: "F",
-      description: "Path to exported HAEVN archive JSON file",
-    },
     verbose: {
       type: "boolean",
       alias: "V",
@@ -61,11 +56,6 @@ const mainCommand = defineCommand({
     // Configure logging
     if (args.verbose) {
       consola.level = 5; // Debug
-    }
-
-    // Store file path for subcommands
-    if (args.file) {
-      ctx.data.dataFile = args.file;
     }
   },
 });
