@@ -1,5 +1,5 @@
-// Offscreen Document - Manages iframe for DOM extraction and Web Workers
-// This document creates an iframe pointing to external URLs and manages Web Workers.
+// Offscreen Document - Manages Web Workers
+// This document hosts the Web Workers.
 // The service worker handles content script injection and message passing.
 //
 // Three-Tier Architecture:
@@ -8,12 +8,7 @@
 // Offscreen documents can create Workers (service workers cannot), so this acts as
 // the Worker Host tier, routing messages between service worker and workers.
 
-import type {
-  OffscreenEvent,
-  OffscreenIframeInfo,
-  OffscreenRequest,
-  OffscreenResponse,
-} from "../types/messaging";
+import type { OffscreenEvent, OffscreenRequest, OffscreenResponse } from "../types/messaging";
 import type {
   BulkExportWorkerMessage,
   BulkExportWorkerResponse,
@@ -38,9 +33,6 @@ type OffscreenWorkerRequest = Extract<OffscreenRequest, { type: "workerRequest" 
 
 log.info("[Offscreen] Offscreen document loaded");
 
-let currentIframe: HTMLIFrameElement | null = null;
-let iframeReady = false;
-
 // Worker management
 let searchWorker: Worker | null = null;
 let statsWorker: Worker | null = null;
@@ -55,60 +47,6 @@ const pendingWorkerRequests = new Map<
   string,
   { resolve: (value: unknown) => void; reject: (error: unknown) => void }
 >();
-
-/**
- * Create a new iframe pointing to the target URL
- */
-function createIframe(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // Remove existing iframe if present
-    if (currentIframe) {
-      currentIframe.remove();
-      currentIframe = null;
-      iframeReady = false;
-    }
-
-    // Create new iframe
-    const iframe = document.createElement("iframe");
-    iframe.src = url;
-    iframe.id = `haevn-extractor-iframe-${Date.now()}`;
-    iframe.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      border: none;
-    `;
-
-    // Wait for iframe to load
-    iframe.onload = () => {
-      log.info(`[Offscreen] Iframe loaded: ${url}`);
-      currentIframe = iframe;
-      iframeReady = true;
-
-      // Notify service worker that iframe is ready
-      const event: OffscreenEvent = {
-        type: "offscreenIframeReady",
-        iframeId: iframe.id,
-        url: url,
-      };
-      chrome.runtime.sendMessage(event).catch((err) => {
-        log.warn("[Offscreen] Failed to notify service worker:", err);
-      });
-
-      resolve();
-    };
-
-    iframe.onerror = (error) => {
-      log.error(`[Offscreen] Iframe load error for ${url}:`, error);
-      iframeReady = false;
-      reject(new Error(`Failed to load iframe: ${url}`));
-    };
-
-    document.body.appendChild(iframe);
-  });
-}
 
 /**
  * Capture a frame from a video to use as a thumbnail
@@ -176,60 +114,6 @@ async function captureVideoFrame(
       reject(new Error("Failed to load video"));
     };
   });
-}
-
-/**
- * Navigate existing iframe to a new URL
- */
-function navigateIframe(url: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!currentIframe) {
-      reject(new Error("No iframe exists"));
-      return;
-    }
-
-    iframeReady = false;
-    if (!currentIframe) {
-      reject(new Error("No iframe available for navigation"));
-      return;
-    }
-    const iframeId = currentIframe.id;
-    currentIframe.onload = () => {
-      log.info(`[Offscreen] Iframe navigated to: ${url}`);
-      iframeReady = true;
-
-      // Notify service worker that iframe navigated
-      const event: OffscreenEvent = {
-        type: "offscreenIframeNavigated",
-        iframeId,
-        url: url,
-      };
-      chrome.runtime.sendMessage(event).catch((err) => {
-        log.warn("[Offscreen] Failed to notify service worker:", err);
-      });
-
-      resolve();
-    };
-
-    currentIframe.onerror = (error) => {
-      log.error(`[Offscreen] Iframe navigation error for ${url}:`, error);
-      iframeReady = false;
-      reject(new Error(`Failed to navigate iframe: ${url}`));
-    };
-
-    currentIframe.src = url;
-  });
-}
-
-/**
- * Get current iframe information
- */
-function getIframeInfo(): OffscreenIframeInfo {
-  return {
-    iframeId: currentIframe?.id || null,
-    url: currentIframe?.src || null,
-    ready: iframeReady,
-  };
 }
 
 // ============================================================================
@@ -913,58 +797,9 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
     return true;
   }
 
-  if (request.type === "createIframe") {
-    createIframe(request.url)
-      .then(() => {
-        const response: OffscreenResponse = {
-          success: true,
-          iframeInfo: getIframeInfo(),
-        };
-        sendResponse(response);
-      })
-      .catch((error) => {
-        const response: OffscreenResponse = {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        sendResponse(response);
-      });
-    return true; // async response
-  }
-
-  if (request.type === "navigateIframe") {
-    navigateIframe(request.url)
-      .then(() => {
-        const response: OffscreenResponse = {
-          success: true,
-          iframeInfo: getIframeInfo(),
-        };
-        sendResponse(response);
-      })
-      .catch((error) => {
-        const response: OffscreenResponse = {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        sendResponse(response);
-      });
-    return true; // async response
-  }
-
-  if (request.type === "getIframeInfo") {
-    const response: OffscreenResponse = {
-      success: true,
-      iframeInfo: getIframeInfo(),
-    };
-    sendResponse(response);
-    return true;
-  }
-
   if (request.type === "ping") {
     const response: OffscreenResponse = {
       success: true,
-      ready: iframeReady,
-      iframeInfo: getIframeInfo(),
     };
     sendResponse(response);
     return true;
