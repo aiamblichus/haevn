@@ -32,6 +32,7 @@ interface ImportJobState {
   processedChats: number;
   savedChats: number;
   skippedChats: number;
+  errorChats: number;
   processedMedia?: number;
   totalMedia?: number;
   bytesWritten?: number;
@@ -253,6 +254,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
           total: response.total,
           saved: state.savedChats,
           skipped: state.skippedChats,
+          errors: state.errorChats,
           status: response.status,
           phase: response.phase,
           processedMedia: state.processedMedia,
@@ -282,6 +284,18 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
         break;
       }
 
+      case "failed": {
+        state.errorChats++;
+        state.lastUpdateTime = Date.now();
+        await saveImportJobState(state);
+        // A chat that failed to parse or save; kept apart from skipped duplicates
+        log.warn(
+          `[ImportOrchestrator] Chat failed: ${response.chatId || "unknown"}`,
+          `Reason: ${response.reason || "Unknown"}`,
+        );
+        break;
+      }
+
       case "postProcess": {
         // Handle post-processing in background (don't block worker)
         handlePostProcess(response.chatId, response.result, response.isNewChat).catch((err) => {
@@ -296,6 +310,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
         state.processedChats = response.processed;
         state.savedChats = response.saved;
         state.skippedChats = response.skipped;
+        state.errorChats = response.errors;
         state.lastUpdateTime = Date.now();
         await saveImportJobState(state);
         fireAndForget(
@@ -314,6 +329,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
           total: state.totalChats,
           saved: response.saved,
           skipped: response.skipped,
+          errors: response.errors,
           status: "Finalizing index...",
           phase: "index",
           processedMedia: state.processedMedia,
@@ -333,6 +349,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
           processed: response.processed,
           saved: response.saved,
           skipped: response.skipped,
+          errors: response.errors,
         });
 
         // Clear state after a delay
@@ -408,6 +425,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
           processed: state.processedChats,
           saved: state.savedChats,
           skipped: state.skippedChats,
+          errors: state.errorChats,
         });
 
         // Clear state after a delay
@@ -468,6 +486,7 @@ export async function startImportJob(
       processedChats: 0,
       savedChats: 0,
       skippedChats: 0,
+      errorChats: 0,
       processedMedia: 0,
       totalMedia: 0,
       bytesWritten: 0,

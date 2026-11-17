@@ -611,6 +611,24 @@ export namespace ChatRepository {
         log.warn("Failed to delete metadata records for hard-deleted chats", e);
       }
 
+      try {
+        await db.chatEmbeddings.bulkDelete(chatIds);
+      } catch (e) {
+        log.warn("Failed to delete chatEmbeddings for hard-deleted chats", e);
+      }
+
+      try {
+        await db.metadataQueue.bulkDelete(chatIds);
+      } catch (e) {
+        log.warn("Failed to delete metadataQueue rows for hard-deleted chats", e);
+      }
+
+      try {
+        await db.embeddingQueue.bulkDelete(chatIds);
+      } catch (e) {
+        log.warn("Failed to delete embeddingQueue rows for hard-deleted chats", e);
+      }
+
       await db.chats.bulkDelete(chatIds);
       log.info(`Hard-deleted chats: ${chatIds.join(", ")}`);
 

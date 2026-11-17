@@ -133,6 +133,7 @@ export const ImportModal = ({
             total?: number;
             saved?: number;
             skipped?: number;
+            errors?: number;
             status?: string;
             phase?: "counting" | "manifest" | "chats" | "media" | "index";
             processedMedia?: number;
@@ -145,7 +146,7 @@ export const ImportModal = ({
             processed: progressEvent.processed || 0,
             saved: progressEvent.saved || 0,
             skipped: progressEvent.skipped || 0,
-            errors: 0, // TODO: track errors separately
+            errors: progressEvent.errors || 0,
             phase: progressEvent.phase,
             processedMedia: progressEvent.processedMedia || 0,
             totalMedia: progressEvent.totalMedia || 0,
@@ -159,9 +160,13 @@ export const ImportModal = ({
           const completeEvent = event as BackgroundEvent & {
             saved?: number;
             skipped?: number;
+            errors?: number;
           };
-          const { saved, skipped } = completeEvent;
-          setStatus(`Import complete. Saved ${saved || 0}, skipped ${skipped || 0}.`, "ok");
+          const { saved, skipped, errors } = completeEvent;
+          setStatus(
+            `Import complete. Saved ${saved || 0}, skipped ${skipped || 0}, errors ${errors || 0}.`,
+            errors ? "warn" : "ok",
+          );
           fireAndForget(cleanupStagedFile(), "Cleanup staged file after import completion");
           setImportRunning(false);
           onLoadChats();

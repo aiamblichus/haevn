@@ -53,6 +53,8 @@ function generateId(): string {
 // ─── Server factory ───────────────────────────────────────────────────────────
 
 export interface DaemonServer {
+  /** The port actually bound; differs from the configured one when that was 0. */
+  port: number;
   stop(): Promise<void>;
 }
 
@@ -64,6 +66,15 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
 
   /** In-flight requests waiting for a response from the extension. */
   const pending = new Map<string, PendingRequest>();
+
+  /** Reject every in-flight request. Only the extension socket's requests are ever pending. */
+  function failPending(message: string): void {
+    for (const [id, req] of pending) {
+      pending.delete(id);
+      clearTimeout(req.timer);
+      req.reject(new Error(message));
+    }
+  }
 
   // ── HTTP server ─────────────────────────────────────────────────────────────
 
@@ -116,6 +127,14 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
           return;
         }
         authenticated = true;
+        if (extensionSocket && extensionSocket !== ws) {
+          // A newer extension replaces the old one. Nobody can answer the old socket's
+          // requests now, so fail them here, once, and close the old socket with a reason;
+          // its close event then finds it is no longer the extension's socket.
+          const replaced = extensionSocket;
+          failPending("Extension reconnected while processing your request.");
+          replaced.close(4002, "Replaced by a newer extension connection");
+        }
         extensionSocket = ws;
         ws.send(JSON.stringify({ type: "authOk" }));
         process.stderr.write("[haevn daemon] Extension connected\n");
@@ -137,16 +156,12 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
     });
 
     ws.on("close", () => {
-      if (authenticated) {
-        process.stderr.write("[haevn daemon] Extension disconnected\n");
-        if (extensionSocket === ws) extensionSocket = null;
-      }
-      // Fail any in-flight requests
-      for (const [id, req] of pending) {
-        pending.delete(id);
-        clearTimeout(req.timer);
-        req.reject(new Error("Extension disconnected while processing your request."));
-      }
+      // Only the extension's own socket owns the pending requests. A stray socket that
+      // opens and closes, or a replaced one, must not fail a request the extension is answering.
+      if (extensionSocket !== ws) return;
+      extensionSocket = null;
+      process.stderr.write("[haevn daemon] Extension disconnected\n");
+      failPending("Extension disconnected while processing your request.");
     });
 
     ws.on("error", () => {
@@ -221,7 +236,9 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
     server.listen(port, "127.0.0.1", resolve);
   });
 
-  process.stderr.write(`[haevn daemon] Listening on http://localhost:${port}\n`);
+  const address = server.address();
+  const boundPort = typeof address === "object" && address !== null ? address.port : port;
+  process.stderr.write(`[haevn daemon] Listening on http://localhost:${boundPort}\n`);
 
   // ── Graceful shutdown ───────────────────────────────────────────────────────
 
@@ -231,7 +248,7 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
-  return { stop };
+  return { port: boundPort, stop };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

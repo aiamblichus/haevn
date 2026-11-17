@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -48,10 +48,11 @@ jobs:
       - name: Install CLI dependencies
         run: pnpm -C cli install --frozen-lockfile
 
-      - name: Lint and typecheck CLI
+      - name: Lint, typecheck and test CLI
         run: |
           pnpm -C cli run lint
           pnpm -C cli run typecheck
+          pnpm -C cli test
 
       - name: Build extension
         run: pnpm run build

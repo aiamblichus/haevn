@@ -22,7 +22,7 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | The lane's memory | `gnomon note list --dir-prefix /project/haevn/workstreams` |
 | The working agreement (worktrees, branches, merges) | `gnomon read /studio/dev/skills/dev-workflow` |
 
-The KB is being bootstrapped (HVN-1). Until `/project/haevn/architecture/` exists, the old maps in `charter/` (gitignored, local to one machine, last written 2026-01-30) are a source, not the truth: they predate the CLI daemon, metadata, starmap, the exporter registry and the Codex and Pi providers. `charter/` and `planning/` will be deleted once their content is in the KB.
+The project's maps, backlog and design history live only in the KB; there is no `charter/` or `planning/` any more (removed 2026-11-17, HVN-6). Brand assets are in `assets/brand/`.
 
 ## Knowledge and identity
 
@@ -49,14 +49,15 @@ pnpm run lint                # biome, src/ only
 pnpm run build               # the extension, into dist/
 pnpm -C cli run typecheck    # when cli/ changed
 pnpm -C cli run lint         # when cli/ changed
+pnpm -C cli test             # when cli/ changed
 ```
 
 Known gaps, each with a ticket rather than a workaround:
 
 - The root has no typecheck in the gate. `npx tsc --noEmit` reports errors today, most from a `jsx` setting that disagrees with the esbuild build; esbuild does not type-check, so CI cannot see them.
-- The CLI has no tests.
+- The CLI's tests are few (`pnpm -C cli test`, HVN-11).
 
-CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint and typecheck, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
 
 ## Commits and releases
 
@@ -69,7 +70,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 
 - Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
 - `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
-- Gitignored and local-only: `charter/`, `planning/`, `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
+- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
 - Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
 
 ---

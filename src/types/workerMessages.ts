@@ -273,8 +273,14 @@ export type ImportWorkerResponse = (
       result: SaveChatResult;
     }
   | {
-      // Chat skipped (already exists, error, etc.)
+      // Chat skipped: already in the archive and not overwritten
       type: "skipped";
+      chatId?: string;
+      reason: string;
+    }
+  | {
+      // Chat that could not be parsed or saved; counted apart from skipped
+      type: "failed";
       chatId?: string;
       reason: string;
     }
@@ -290,6 +296,7 @@ export type ImportWorkerResponse = (
       processed: number;
       saved: number;
       skipped: number;
+      errors: number;
     }
   | {
       type: "error";
