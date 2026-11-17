@@ -20,7 +20,10 @@
 import type { BulkSyncOptions, BulkSyncState } from "../background/bulkSync/types";
 import type { ExportOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
+import type { ClaudeCodeRawExtraction } from "../providers/claudecode/model";
+import type { CodexRawExtraction } from "../providers/codex/model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
+import type { PiRawExtraction } from "../providers/pi/model";
 import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
 import type { MetadataAIConfig, StarmapConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
@@ -121,7 +124,11 @@ export type AllProviderRawData =
   | Record<string, unknown> // Generic object for most providers
   | { conversation: unknown; assets?: unknown } // ChatGPT
   | { chat: unknown } // OpenWebUI
-  | DeepseekConversationData;
+  | DeepseekConversationData
+  // The three importers' raw extractions are interfaces, so the Record arm above does not cover them
+  | ClaudeCodeRawExtraction
+  | CodexRawExtraction
+  | PiRawExtraction;
 
 // ======================
 // Background Request Messages

@@ -104,7 +104,15 @@ type WsExporterId = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
 interface WsExportOptions {
   includeMedia?: boolean;
   exporterId?: WsExporterId;
-  format?: "json" | "markdown" | "md" | "pi" | "jsonl" | "haevn_json" | "haevn_markdown";
+  format?:
+    | "json"
+    | "markdown"
+    | "md"
+    | "pi"
+    | "jsonl"
+    | "haevn_json"
+    | "haevn_markdown"
+    | "pi_session_jsonl";
 }
 
 type WsImportFormat = "claude_code" | "codex" | "pi" | "haevn_json" | "markdown";
@@ -496,6 +504,7 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleGenerateMetadata(id, req);
       default: {
         const _exhaustive: never = req;
+        void _exhaustive;
         return { id, success: false, error: `Unknown action`, code: "UNKNOWN_ACTION" };
       }
     }
