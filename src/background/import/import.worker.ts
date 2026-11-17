@@ -8,16 +8,6 @@
 
 import type { Chat } from "../../model/haevn_model";
 
-// Helper interface for dynamic import content that may have media properties
-interface ImportContentWithMedia {
-  media_type?: string;
-  kind?: string;
-  content?: {
-    media_type?: string;
-  };
-  [key: string]: unknown;
-}
-
 import * as ChatPersistence from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
 import * as MetadataRepository from "../../services/metadataRepository";
@@ -63,6 +53,7 @@ import { getExtensionFromMimeType } from "../../services/mediaStorage";
 import { sha256Hex, validateAndNormalizeChat } from "../../utils/jsonImporter";
 import { createWritableStream } from "../../utils/opfs";
 import { createZipReader, readEntryText } from "../../utils/zipReader";
+import { rewriteChatMediaRefs } from "./rewriteMediaRefs";
 
 // Worker state
 interface WorkerState {
@@ -137,82 +128,6 @@ type ImportProgressPayload = {
   totalBytes?: number;
   requestId?: string;
 };
-
-/**
- * Rewrites media references in a chat object to point to local OPFS paths.
- * Used when importing HAEVN exports to ensure images/files are linked to
- * the restored media in OPFS instead of original external URLs.
- */
-function rewriteChatMediaRefs(chat: Chat, mediaMap: Map<string, Map<string, Map<number, string>>>) {
-  // Skip if no media for this chat
-  if (!chat.id || !mediaMap.has(chat.id)) return;
-
-  const chatMedia = mediaMap.get(chat.id);
-  if (!chatMedia) return;
-
-  for (const [msgId, chatMsg] of Object.entries(chat.messages)) {
-    const msgMedia = chatMedia.get(msgId);
-    if (!msgMedia) continue;
-
-    for (const modelMsg of chatMsg.message) {
-      let attachmentCounter = 0;
-      if (modelMsg.kind === "request") {
-        for (const part of modelMsg.parts) {
-          if (part.part_kind === "user-prompt" && Array.isArray(part.content)) {
-            for (let i = 0; i < part.content.length; i++) {
-              const c = part.content[i];
-              if (typeof c !== "string" && c !== null) {
-                const currentIndex = attachmentCounter++;
-                const localPath = msgMedia.get(currentIndex);
-                if (localPath) {
-                  // Rewrite UserContent to BinaryContent
-                  const contentWithMedia = c as ImportContentWithMedia;
-                  const mediaType =
-                    contentWithMedia.media_type ||
-                    (contentWithMedia.kind?.startsWith("image")
-                      ? "image/jpeg"
-                      : "application/octet-stream");
-                  part.content[i] = {
-                    kind: "binary",
-                    data: localPath,
-                    media_type: mediaType,
-                    identifier: localPath,
-                  };
-                }
-              }
-            }
-          }
-        }
-      } else {
-        for (const part of modelMsg.parts) {
-          if (
-            part.part_kind.endsWith("-response") &&
-            part.part_kind !== "text" &&
-            part.part_kind !== "thinking"
-          ) {
-            const currentIndex = attachmentCounter++;
-            const localPath = msgMedia.get(currentIndex);
-            if (localPath) {
-              // Rewrite to binary part
-              const mediaPart = part as ImportContentWithMedia & { part_kind: string };
-              const mediaType =
-                mediaPart.content?.media_type ||
-                (mediaPart.part_kind === "image-response"
-                  ? "image/jpeg"
-                  : "application/octet-stream");
-              mediaPart.content = {
-                kind: "binary",
-                data: localPath,
-                media_type: mediaType,
-                identifier: localPath,
-              };
-            }
-          }
-        }
-      }
-    }
-  }
-}
 
 function sendProgress(payload: ImportProgressPayload): void {
   self.postMessage({
