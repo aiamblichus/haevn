@@ -748,6 +748,7 @@ export type BackgroundEvent =
       total: number;
       saved?: number;
       skipped?: number;
+      errors?: number;
       status?: string;
       phase?: "counting" | "manifest" | "chats" | "media" | "index";
       processedMedia?: number;
@@ -760,6 +761,7 @@ export type BackgroundEvent =
       processed: number;
       saved: number;
       skipped: number;
+      errors: number;
     }
   | {
       action: "importFailed";
@@ -773,6 +775,7 @@ export type BackgroundEvent =
       processed?: number;
       saved?: number;
       skipped?: number;
+      errors?: number;
     }
   | {
       action: "searchStreamingStarted";
