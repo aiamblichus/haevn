@@ -25,11 +25,7 @@ import {
   setBulkExportState,
 } from "../state";
 import { safeSendMessage } from "../utils/messageUtils";
-import {
-  createBlobUrlFromOffscreen,
-  ensureOffscreenDocument,
-  revokeBlobUrlFromOffscreen,
-} from "../utils/offscreenUtils";
+import { createBlobUrlFromOffscreen, revokeBlobUrlFromOffscreen } from "../utils/offscreenUtils";
 // Removed downloadManager import - using chrome.downloads.download directly
 import type { BulkExportState } from "./types";
 
@@ -271,8 +267,7 @@ async function downloadExportZip(exportState: {
       const listener = (delta: chrome.downloads.DownloadDelta) => {
         if (delta.id !== downloadId) return;
         const state = delta.state?.current;
-        const bytesReceived = delta.bytesReceived?.current ?? 0;
-        if (state || bytesReceived > 0) {
+        if (state) {
           cleanup();
           resolve(true);
         }
@@ -289,14 +284,15 @@ async function downloadExportZip(exportState: {
   let downloadEstablished = false;
   try {
     log.info(`[BulkExport] Creating blob URL from offscreen...`);
-    blobUrl = await createBlobUrlFromOffscreen(exportState.zipPath);
-    log.info(`[BulkExport] Got blob URL:`, { blobUrl: `${blobUrl.substring(0, 50)}...` });
+    const zipBlobUrl = await createBlobUrlFromOffscreen(exportState.zipPath);
+    blobUrl = zipBlobUrl;
+    log.info(`[BulkExport] Got blob URL:`, { blobUrl: `${zipBlobUrl.substring(0, 50)}...` });
     const filename = `haevn_export_${exportState.exportId}.zip`;
     log.info(`[BulkExport] Starting download with filename:`, { filename });
     downloadId = await new Promise<number>((resolve, reject) => {
       chrome.downloads.download(
         {
-          url: blobUrl,
+          url: zipBlobUrl,
           filename,
           saveAs: false,
         },

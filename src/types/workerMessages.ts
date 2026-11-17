@@ -103,6 +103,7 @@ export type BulkExportWorkerMessage = (
       type: "browserApiResponse";
       requestId: string;
       success: boolean;
+      result?: unknown;
       error?: string;
     }
 ) & { requestId?: string };
