@@ -226,9 +226,8 @@ export async function sendWorkerRequest<T extends WorkerType>(
   );
 
   // Add requestId to the message object if needed (offscreen document expects it in the message)
-  const messageWithRequestId = requestId
-    ? ({ ...message, requestId } as WorkerMessageMap[T])
-    : message;
+  // (Object.assign rather than a spread: spreading the generic message union is too complex for tsc)
+  const messageWithRequestId = requestId ? Object.assign({}, message, { requestId }) : message;
 
   // Fire-and-forget mode: send and resolve immediately
   if (!expectResponse && !onProgress) {
@@ -239,7 +238,7 @@ export async function sendWorkerRequest<T extends WorkerType>(
       data: messageWithRequestId,
       requestId,
     });
-    return Promise.resolve();
+    return undefined;
   }
 
   // Progress callback mode: register listener and handle completion
@@ -350,7 +349,7 @@ export async function sendWorkerRequest<T extends WorkerType>(
 
         // Extract result from worker response
         // The offscreen document wraps the worker's response in result
-        if (response.result) {
+        if ("result" in response && response.result) {
           resolve(response.result as WorkerResponseMap[T]);
         } else {
           // Fire-and-forget operations return undefined, but we need to resolve with a valid response

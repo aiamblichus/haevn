@@ -50,9 +50,9 @@ async function _sendStatsWorkerMessage(
     const response = await sendWorkerRequest("stats", fullMessage);
 
     // Extract count or stats array from worker response
-    if (response.type === "providerStatsResult" && typeof response.count === "number") {
+    if (response?.type === "providerStatsResult" && typeof response.count === "number") {
       return response.count;
-    } else if (response.type === "allProviderStatsResult" && response.stats) {
+    } else if (response?.type === "allProviderStatsResult" && response.stats) {
       return response.stats;
     } else {
       throw new Error("Unexpected response type from stats worker");
