@@ -13,7 +13,11 @@
 
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type { Chat, SearchResult } from "../model/haevn_model";
-import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
+import type {
+  SearchIndexRebuildStatus,
+  SearchWorkerMessage,
+  SearchWorkerResponse,
+} from "../types/workerMessages";
 import { fireAndForget } from "../utils/error_utils";
 import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
@@ -213,6 +217,8 @@ export namespace SearchService {
         chatsScanned: number;
         durationMs: number;
         wasLimited: boolean;
+        /** Set when the index was being rebuilt: the search did not run, so 0 results means nothing. */
+        indexRebuilding?: SearchIndexRebuildStatus;
       }) => void;
       onError?: (error: Error) => void;
       streamBatchSize?: number;
@@ -253,6 +259,7 @@ export namespace SearchService {
 
       let totalResults = 0;
       let chatsScanned = 0; // Worker handles this, but we can track results count
+      let indexRebuilding: SearchIndexRebuildStatus | undefined;
 
       const finish = (wasLimited = false) => {
         if (cancelled) return;
@@ -267,6 +274,7 @@ export namespace SearchService {
           chatsScanned,
           durationMs,
           wasLimited,
+          ...(indexRebuilding ? { indexRebuilding } : {}),
         });
       };
 
@@ -321,6 +329,8 @@ export namespace SearchService {
           {
             onProgress: (chunk) => {
               if (cancelled) return;
+
+              if (chunk.indexRebuilding) indexRebuilding = chunk.indexRebuilding;
 
               // The worker now returns SearchResult[] when hydrate: true
               let results = chunk.results as SearchResult[];

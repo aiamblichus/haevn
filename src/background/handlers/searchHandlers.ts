@@ -52,12 +52,17 @@ export async function handleSearchChats(
         });
         allResults.push(...batch);
       },
-      onComplete: () => {
+      onComplete: (stats) => {
         log.info(`[SearchHandler] Search complete (handleSearchChats):`, {
           query,
           totalResults: allResults.length,
+          indexRebuilding: stats.indexRebuilding,
         });
-        sendResponse({ success: true, results: allResults });
+        sendResponse({
+          success: true,
+          results: allResults,
+          ...(stats.indexRebuilding ? { indexRebuilding: stats.indexRebuilding } : {}),
+        });
       },
       onError: (error) => {
         log.error(`[SearchHandler] Search error (handleSearchChats):`, {

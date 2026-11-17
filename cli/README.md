@@ -53,6 +53,8 @@ Options:
 - `--after <date>` - Only messages after date (YYYY-MM-DD)
 - `--before <date>` - Only messages before date
 
+While the extension rebuilds its search index (after a bulk sync or an import, including `haevn import`), `search` exits 1 with "Search index is rebuilding (N%). Try again shortly." rather than returning no results.
+
 #### Search Syntax
 
 HAEVN search is **term-based by default**.

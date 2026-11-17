@@ -13,6 +13,7 @@ import { poeProvider } from "../providers/poe/provider";
 import { registerProvider } from "../providers/provider";
 import { qwenProvider } from "../providers/qwen/provider";
 import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../types/messaging";
+import type { SearchIndexRebuildStatus } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import "./debug";
 import { ExportModal } from "../components/ExportModal";
@@ -57,6 +58,10 @@ const App = () => {
   const [totalChats, setTotalChats] = useState(0);
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  // Set when the last search found the index being rebuilt: it did not run, so it found nothing.
+  const [searchIndexRebuild, setSearchIndexRebuild] = useState<SearchIndexRebuildStatus | null>(
+    null,
+  );
   const [selectedIds, setSelectedIds] = useState(new Set<string>());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterProvider, setFilterProvider] = useState("all");
@@ -343,12 +348,20 @@ const App = () => {
                 wasLimited: event.wasLimited,
               });
               setIsSearching(false);
-              setStatus(
-                `Found ${event.totalResults} results in ${event.durationMs.toFixed(0)}ms (scanned ${
-                  event.chatsScanned
-                } chats)`,
-                "ok",
-              );
+              setSearchIndexRebuild(event.indexRebuilding ?? null);
+              if (event.indexRebuilding) {
+                setStatus(
+                  `Search index is rebuilding (${event.indexRebuilding.percentage}%). Search again when it finishes.`,
+                  "warn",
+                );
+              } else {
+                setStatus(
+                  `Found ${event.totalResults} results in ${event.durationMs.toFixed(0)}ms (scanned ${
+                    event.chatsScanned
+                  } chats)`,
+                  "ok",
+                );
+              }
             } else {
               log.warn(`[Options] Received completion for different query:`, {
                 receivedQuery: event.query,
@@ -368,6 +381,7 @@ const App = () => {
               });
               setIsSearching(false);
               setSearchResults([]);
+              setSearchIndexRebuild(null);
               setStatus(`Search failed: ${event.error}`, "error");
             } else {
               log.warn(`[Options] Received failure for different query:`, {
@@ -408,6 +422,7 @@ const App = () => {
       log.debug("[Options] Search query cleared, resetting search state");
       setSearchResults(null);
       setIsSearching(false);
+      setSearchIndexRebuild(null);
       setExpandedChats(new Set());
       setLoadingExpandedChats(new Set());
       searchResultIds.current.clear();
@@ -434,6 +449,7 @@ const App = () => {
 
     // Clear previous results
     setSearchResults([]);
+    setSearchIndexRebuild(null);
     searchResultIds.current.clear();
     setIsSearching(true);
 
@@ -810,6 +826,7 @@ const App = () => {
                 setSearchQuery={setSearchQuery}
                 setSearchResults={setSearchResults}
                 isSearching={isSearching}
+                searchIndexRebuild={searchIndexRebuild}
                 selectedIds={selectedIds}
                 filterProvider={filterProvider}
                 setFilterProvider={setFilterProvider}
