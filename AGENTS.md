@@ -54,7 +54,7 @@ pnpm -C cli test             # when cli/ changed
 
 Known gaps, each with a ticket rather than a workaround:
 
-- The root has no typecheck in the gate. `npx tsc --noEmit` reports errors today, most from a `jsx` setting that disagrees with the esbuild build; esbuild does not type-check, so CI cannot see them.
+- The root has no typecheck in the gate yet. `npx tsc --noEmit --jsx react-jsx` is clean; plain `npx tsc --noEmit` still reports errors in the TSX files, because `tsconfig.json` says `"jsx": "react"` while esbuild builds with the automatic runtime (HVN-8, then HVN-46 puts `pnpm run typecheck` in CI). Until then, run the `--jsx react-jsx` form by hand.
 - The CLI's tests are few (`pnpm -C cli test`, HVN-11).
 
 CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
