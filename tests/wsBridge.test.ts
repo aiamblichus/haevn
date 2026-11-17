@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const searchChatsStreaming = vi.hoisted(() => vi.fn());
 const getCliSettings = vi.hoisted(() => vi.fn());
@@ -65,6 +65,17 @@ class FakeWebSocket {
 }
 
 const alarms = { create: vi.fn(), clear: vi.fn(async () => true) };
+// chrome.storage.session, which keeps the bridge's "gave up" across service worker restarts
+let sessionStore: Record<string, unknown> = {};
+const sessionStorage = {
+  get: async (key: string) => (key in sessionStore ? { [key]: sessionStore[key] } : {}),
+  set: async (items: Record<string, unknown>) => {
+    Object.assign(sessionStore, items);
+  },
+  remove: async (key: string) => {
+    delete sessionStore[key];
+  },
+};
 
 type Bridge = typeof import("../src/background/wsBridge");
 
@@ -84,13 +95,14 @@ function latest(): FakeWebSocket {
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
+  sessionStore = {};
   searchChatsStreaming.mockReset();
   alarms.create.mockClear();
   alarms.clear.mockClear();
   getCliSettings.mockReset();
   getCliSettings.mockResolvedValue({ enabled: true, port: 5517, apiKey: "key" });
   vi.stubGlobal("WebSocket", FakeWebSocket);
-  vi.stubGlobal("chrome", { alarms });
+  vi.stubGlobal("chrome", { alarms, storage: { session: sessionStorage } });
 });
 
 describe("the bridge answering a search after a failed index rebuild (HVN-50)", () => {
@@ -143,5 +155,117 @@ describe("the bridge answering a search after a failed index rebuild (HVN-50)", 
     const reply = await answerFor({}, [{ chatId: "c1", messageId: "m1" }]);
 
     expect(reply).toMatchObject({ id: "r1", success: true });
+  });
+});
+
+describe("the bridge after the daemon closes it (HVN-44)", () => {
+  async function connectedBridge(): Promise<{ bridge: Bridge; socket: FakeWebSocket }> {
+    const bridge = await loadBridge();
+    await bridge.applyWsBridgeSettings();
+    const socket = latest();
+    socket.accept();
+    return { bridge, socket };
+  }
+
+  /** Let timers and the promises they start run, as time passes. */
+  async function pass(ms: number): Promise<void> {
+    await vi.advanceTimersByTimeAsync(ms);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reconnects after an ordinary close, with a growing delay", async () => {
+    const { socket } = await connectedBridge();
+
+    socket.drop(1006);
+    expect(sockets()).toHaveLength(1);
+    await pass(2_000);
+    expect(sockets()).toHaveLength(2);
+
+    latest().drop(1006);
+    await pass(2_000);
+    expect(sockets()).toHaveLength(2); // the second wait is longer
+    await pass(2_000);
+    expect(sockets()).toHaveLength(3);
+  });
+
+  for (const [code, name] of [
+    [4002, "replaced by a newer extension connection"],
+    [4001, "rejected key"],
+  ] as const) {
+    it(`stops for good on close ${code} (${name}): no timer, no alarm, no new socket`, async () => {
+      const { bridge, socket } = await connectedBridge();
+
+      socket.drop(code);
+      await pass(0);
+
+      expect(alarms.clear).toHaveBeenCalledWith(bridge.WS_RECONNECT_ALARM);
+      expect(vi.getTimerCount()).toBe(0);
+      await pass(120_000);
+      expect(sockets()).toHaveLength(1);
+
+      // An alarm that was already in flight finds nothing to do.
+      alarms.create.mockClear();
+      bridge.handleWsReconnectAlarm();
+      await pass(60_000);
+      expect(sockets()).toHaveLength(1);
+      expect(alarms.create).not.toHaveBeenCalled();
+    });
+  }
+
+  it("stops on an authError frame, without waiting for the close code", async () => {
+    const { bridge, socket } = await connectedBridge();
+
+    socket.receive({ type: "authError", message: "Invalid API key" });
+    socket.drop(1005); // what a client-initiated close can report instead of 4001
+    await pass(120_000);
+
+    expect(sockets()).toHaveLength(1);
+    expect(alarms.clear).toHaveBeenCalledWith(bridge.WS_RECONNECT_ALARM);
+  });
+
+  it("resumes when the settings are reset (enable, port or key changed)", async () => {
+    const { bridge, socket } = await connectedBridge();
+    socket.drop(4002);
+    await pass(0);
+
+    await bridge.resetWsBridge();
+
+    expect(sockets()).toHaveLength(2);
+    expect(alarms.create).toHaveBeenCalled();
+    latest().accept();
+    latest().drop(1006); // and it is an ordinary bridge again: this one reconnects
+    await pass(2_000);
+    expect(sockets()).toHaveLength(3);
+  });
+
+  it("stays stopped across a service worker restart, and resumes on reset", async () => {
+    const { socket } = await connectedBridge();
+    socket.drop(4002);
+    await pass(0);
+
+    const restarted = await loadBridge(); // a new module: the in-memory state is gone
+    await restarted.applyWsBridgeSettings();
+    expect(sockets()).toHaveLength(1);
+
+    await restarted.resetWsBridge();
+    expect(sockets()).toHaveLength(2);
+  });
+
+  it("is not stopped by a restart when the bridge never gave up", async () => {
+    const { socket } = await connectedBridge();
+    socket.drop(1006);
+    await pass(0);
+
+    const restarted = await loadBridge();
+    await restarted.applyWsBridgeSettings();
+
+    expect(sockets().length).toBeGreaterThan(1);
   });
 });

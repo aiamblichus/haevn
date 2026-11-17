@@ -16,7 +16,7 @@
  *
  * Daemon responds:
  *   ← { "type": "authOk" }             (proceed)
- *   ← { "type": "authError", "message": "…" }  (close + retry later)
+ *   ← { "type": "authError", "message": "…" }  (the key is wrong: stop, see below)
  *
  * Normal operation – daemon forwards CLI requests verbatim:
  *   ← { "id": "…", "action": "search", "query": "…", … }
@@ -26,6 +26,11 @@
  *
  * Keepalive – while the SW is alive an in-process timer sends pings every 20 s.
  * A chrome.alarm fires every 30 s to wake a dormant SW and reconnect if needed.
+ *
+ * Two closes are final, because reconnecting cannot help and would only repeat them: the daemon
+ * rejecting the key (4001) and a newer extension connection replacing this one (4002; two
+ * extensions sharing a key would otherwise replace each other for ever). The bridge then stops
+ * (no alarm, no timers) until the user enables it or changes a setting. See wsBridgeClose.ts.
  */
 
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
@@ -50,6 +55,7 @@ import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
+import { terminalCloseReason, WS_REASON_UNAUTHORIZED } from "./wsBridgeClose";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
@@ -256,6 +262,38 @@ let authenticated = false;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
+/** Why the bridge gave up (a final close, see wsBridgeClose.ts); null while it should connect. */
+let haltedReason: string | null = null;
+let haltedLoaded = false;
+
+/**
+ * The stop outlives a service worker restart (it would otherwise reconnect the moment the
+ * worker woke) but not the browser session, so a restarted browser tries again.
+ */
+const HALTED_STORAGE_KEY = "haevn.cli.bridgeHalted";
+
+async function loadHalted(): Promise<void> {
+  if (haltedLoaded) return;
+  haltedLoaded = true;
+  try {
+    const stored = await chrome.storage.session.get(HALTED_STORAGE_KEY);
+    const reason = stored?.[HALTED_STORAGE_KEY];
+    if (typeof reason === "string") haltedReason = reason;
+  } catch {
+    // No session storage: the stop lasts as long as this service worker.
+  }
+}
+
+async function setHalted(reason: string | null): Promise<void> {
+  haltedReason = reason;
+  haltedLoaded = true;
+  try {
+    if (reason === null) await chrome.storage.session.remove(HALTED_STORAGE_KEY);
+    else await chrome.storage.session.set({ [HALTED_STORAGE_KEY]: reason });
+  } catch {
+    // See loadHalted.
+  }
+}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -282,10 +320,11 @@ export function handleWsReconnectAlarm(): void {
 }
 
 /**
- * Drop the current connection and reconnect with fresh settings.
- * Called after the port or API key changes in Settings.
+ * Drop the current connection and reconnect with fresh settings, also after the bridge gave up.
+ * Called after the port, the API key or the switch changes in Settings.
  */
 export async function resetWsBridge(): Promise<void> {
+  await setHalted(null); // an explicit change of settings is a reason to try again
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -313,6 +352,9 @@ export async function applyWsBridgeSettings(): Promise<void> {
     stopWsBridge();
     return;
   }
+
+  await loadHalted();
+  if (haltedReason !== null) return; // gave up; only resetWsBridge resumes
 
   chrome.alarms.create(WS_RECONNECT_ALARM, {
     periodInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
@@ -403,15 +445,32 @@ async function connect(): Promise<void> {
     log.debug("[WsBridge] Socket error (daemon may not be running)");
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event: CloseEvent) => {
     const wasAuth = authenticated;
     socket = null;
     authenticated = false;
     if (wasAuth) {
       log.info("[WsBridge] Disconnected from daemon");
     }
+    const reason = terminalCloseReason(event.code);
+    if (reason !== null) {
+      haltWsBridge(reason);
+      return;
+    }
     scheduleReconnect();
   };
+}
+
+/**
+ * Stop for good until settings change: no reconnect timer, no alarm, no pings. The warning is
+ * the only trace (the settings page shows no bridge status).
+ */
+function haltWsBridge(reason: string): void {
+  log.warn(
+    `[WsBridge] Bridge stopped: ${reason}. It will not reconnect until the bridge is switched on again or the port or API key is changed in Settings.`,
+  );
+  stopWsBridge();
+  void setHalted(reason);
 }
 
 function scheduleReconnect(): void {
@@ -438,7 +497,8 @@ function handleIncoming(msg: WsIncoming, _apiKey: string): void {
     }
     if (msg.type === "authError") {
       log.warn("[WsBridge] Auth rejected by daemon:", msg.message);
-      socket?.close();
+      // The daemon follows with close code 4001, but a client-initiated close can race it.
+      haltWsBridge(WS_REASON_UNAUTHORIZED);
       return;
     }
     // Unknown control frame — ignore.
