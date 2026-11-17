@@ -9,7 +9,11 @@ import type {
   ThinkingPart,
   UserPromptPart,
 } from "../model/haevn_model";
-import type { SearchIndexRebuildStatus, SearchWorkerMessage } from "../types/workerMessages";
+import type {
+  SearchIndexIncompleteStatus,
+  SearchIndexRebuildStatus,
+  SearchWorkerMessage,
+} from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
 import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
@@ -136,6 +140,21 @@ let rebuildTimer: number | undefined;
 const docCache: Map<string, SearchDoc> = new Map(); // Only for active segment
 let bulkMode = false;
 let rebuildState: IndexRebuildState | null = null;
+// The run that is rebuilding now (every pass of it), so a second request can join it.
+let rebuildRun: Promise<RebuildOutcome> | null = null;
+// Set by a request that arrives during a run: the run goes once more, so chats written after
+// the running pass read its `count()` are indexed (HVN-50).
+let rebuildAgain = false;
+// Set when the last rebuild pass failed; the index is then part-built until a rebuild succeeds.
+let rebuildFailure: string | null = null;
+// A failed pass is retried by `init` once per worker lifetime, so a failure that never goes away
+// costs one more full read per browser session, not one per service worker wake.
+let failureRetried = false;
+
+interface RebuildOutcome {
+  /** Why the last pass failed; absent when it succeeded. */
+  error?: string;
+}
 
 // --- Helper: Text Extraction & Mapping ---
 
@@ -330,6 +349,8 @@ async function loadSegments(): Promise<void> {
  * If there is a mismatch, it triggers a rebuild.
  */
 async function checkIndexConsistency(): Promise<void> {
+  // A rebuild running is the cure this check would start; its segments are empty or part-built.
+  if (rebuildRun) return;
   try {
     const actualChatCount = await db.chats.count();
     const indexedDocCount = Array.from(segments.values()).reduce(
@@ -341,13 +362,24 @@ async function checkIndexConsistency(): Promise<void> {
       `[SearchWorker] Consistency check: ${indexedDocCount} indexed docs, ${actualChatCount} chats in DB`,
     );
 
-    // If more than 5% mismatch or any missing docs, trigger a background rebuild
-    if (indexedDocCount < actualChatCount) {
+    // Missing docs, or a rebuild that failed and left the index part-built: rebuild in the background
+    if (rebuildFailure !== null || indexedDocCount < actualChatCount) {
+      if (rebuildFailure !== null) {
+        if (failureRetried) {
+          log.warn(
+            `[SearchWorker] Index is incomplete (${indexedDocCount}/${actualChatCount}); the retry after the last rebuild failure (${rebuildFailure}) was used. Not rebuilding again until the worker restarts or a rebuild is requested.`,
+          );
+          return;
+        }
+        failureRetried = true;
+      }
       log.warn(
-        `[SearchWorker] Index is incomplete (${indexedDocCount}/${actualChatCount}). Triggering self-healing rebuild...`,
+        `[SearchWorker] Index is incomplete (${indexedDocCount}/${actualChatCount}${
+          rebuildFailure !== null ? `, last rebuild failed: ${rebuildFailure}` : ""
+        }). Triggering self-healing rebuild...`,
       );
-      // Fire and forget build to not block the init response
-      rebuildAll(true).catch((e) => log.error("[SearchWorker] Background rebuild failed", e));
+      // Fire and forget build to not block the init response (rebuildAll does not reject)
+      void rebuildAll(true);
     }
   } catch (e) {
     log.error("[SearchWorker] Consistency check failed", e);
@@ -444,8 +476,14 @@ function rebuildActiveSegment(seg: Segment) {
 
 const debounceTimers = new Map<string, number>();
 
+function clearDebounceTimers() {
+  for (const timer of debounceTimers.values()) clearTimeout(timer);
+  debounceTimers.clear();
+}
+
 function scheduleDebouncedRebuild(seg: Segment) {
-  if (bulkMode) return;
+  // A rebuild replaces every segment; a timer on an old one would persist it over the new ones.
+  if (bulkMode || rebuildRun) return;
   if (debounceTimers.has(seg.id)) clearTimeout(debounceTimers.get(seg.id));
   const timer = setTimeout(() => {
     rebuildActiveSegment(seg);
@@ -454,32 +492,65 @@ function scheduleDebouncedRebuild(seg: Segment) {
   debounceTimers.set(seg.id, timer);
 }
 
-async function persistSegment(seg: Segment) {
+/** Write a segment to storage; rejects when the write fails (a rebuild counts that as failing). */
+async function writeSegment(seg: Segment) {
   if (!seg.index) return;
+  await db.lunrIndex.put({
+    id: seg.id,
+    index: seg.index.toJSON(),
+    meta: {
+      docIds: Array.from(seg.docIds),
+      timestamp: Date.now(),
+    },
+  });
+  log.info(`[SearchWorker] Persisted segment ${seg.id}`);
+}
+
+/** Write a segment outside a rebuild: a failure is logged, the in-memory index stays whole. */
+async function persistSegment(seg: Segment) {
   try {
-    await db.lunrIndex.put({
-      id: seg.id,
-      index: seg.index.toJSON(),
-      meta: {
-        docIds: Array.from(seg.docIds),
-        timestamp: Date.now(),
-      },
-    });
-    log.info(`[SearchWorker] Persisted segment ${seg.id}`);
+    await writeSegment(seg);
   } catch (e) {
     log.error(`[SearchWorker] Failed to save segment ${seg.id}`, e);
   }
 }
 
-async function rebuildAll(emitProgress = false) {
-  // Check if rebuild is already in progress
-  if (rebuildState?.isRebuilding) {
-    log.warn("[SearchWorker] Rebuild already in progress");
-    return;
+/**
+ * Rebuild the whole index. Never rejects: the outcome says whether the last pass failed.
+ * A request that arrives while a rebuild runs joins it and makes it run once more, so what it
+ * was asked to include is read by a pass that starts after the request.
+ */
+function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
+  if (rebuildRun) {
+    log.warn("[SearchWorker] Rebuild already in progress; it will run again when it ends");
+    rebuildAgain = true;
+    return rebuildRun;
   }
 
-  // Mark the rebuild before the first await: from here until `finally` the index is not
-  // searchable, and a search must say so instead of answering from a half-built index.
+  // Marked before the first await (the run is entered synchronously): from here until the run
+  // ends the index is not searchable, and a search must say so instead of answering from a
+  // half-built index.
+  const run = (async (): Promise<RebuildOutcome> => {
+    try {
+      let outcome: RebuildOutcome;
+      do {
+        rebuildAgain = false;
+        outcome = await rebuildPass(emitProgress);
+      } while (rebuildAgain);
+      return outcome;
+    } finally {
+      rebuildState = null;
+      rebuildRun = null;
+    }
+  })();
+  rebuildRun = run;
+  return run;
+}
+
+async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
+  rebuildFailure = null;
+  clearDebounceTimers();
+
   const chunkSize = 1000; // Process 1000 chats per chunk
   rebuildState = {
     totalChats: 0,
@@ -494,6 +565,10 @@ async function rebuildAll(emitProgress = false) {
   activeSegmentId = "segment_0";
 
   try {
+    // Storage follows the pass: segments of the old index would otherwise outlive a failed pass
+    // and make a restarted worker count a full index and skip the rebuild. A pass that dies
+    // leaves a short index, which the next init rebuilds.
+    await db.lunrIndex.clear();
     const count = await db.chats.count();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
@@ -523,7 +598,7 @@ async function rebuildAll(emitProgress = false) {
             currentSeg.docIds.add(data.doc.id);
             if (currentSeg.docIds.size >= SEGMENT_SIZE && currentSeg.builder) {
               currentSeg.index = currentSeg.builder.build();
-              await persistSegment(currentSeg);
+              await writeSegment(currentSeg);
               currentSeg.builder = undefined;
               const nextId = `segment_${segments.size}`;
               currentSeg = createNewSegment(nextId);
@@ -562,7 +637,7 @@ async function rebuildAll(emitProgress = false) {
     // Finalize last segment
     if (currentSeg.builder) {
       currentSeg.index = currentSeg.builder.build();
-      await persistSegment(currentSeg);
+      await writeSegment(currentSeg);
       const lastIds = Array.from(currentSeg.docIds);
       if (lastIds.length > 0) {
         const chats = await attachMessages(
@@ -586,10 +661,13 @@ async function rebuildAll(emitProgress = false) {
     if (emitProgress) {
       self.postMessage({ type: "initProgress", processed: count, total: count, phase: "complete" });
     }
+    failureRetried = false; // the next failure gets its retry
+    return {};
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
-  } finally {
-    rebuildState = null;
+    // The segments were cleared at the start and are part-built now: say so until a rebuild succeeds.
+    rebuildFailure = e instanceof Error ? e.message : String(e);
+    return { error: rebuildFailure };
   }
 }
 
@@ -848,6 +926,14 @@ function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
   };
 }
 
+/**
+ * Set on the last chunk of every search answered after a failed rebuild: the index is
+ * part-built, so a short or empty answer may be missing chats.
+ */
+function currentIndexIncomplete(): { indexIncomplete: SearchIndexIncompleteStatus } | undefined {
+  return rebuildFailure === null ? undefined : { indexIncomplete: { error: rebuildFailure } };
+}
+
 async function performSearch(
   query: string,
   hydrate: boolean = false,
@@ -941,9 +1027,13 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
   try {
     if (msg.type === "init") {
-      await loadSegments();
-      // Perform background consistency check
-      checkIndexConsistency();
+      // Mid-rebuild the segments are the rebuild's own: loading the stored ones would replace
+      // them, and the check would see an empty index and ask for another pass.
+      if (!rebuildRun) await loadSegments();
+      // The consistency check reads the chat count and, if the index is short or the last
+      // rebuild failed, starts a rebuild (not awaited). Answer init after that, so a search
+      // sent on the heels of it is told about the rebuild instead of searching a short index.
+      await checkIndexConsistency();
       self.postMessage({ type: "initComplete", success: true });
       return;
     }
@@ -968,6 +1058,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         return;
       }
 
+      const incomplete = currentIndexIncomplete();
       const hydrate = msg.hydrate === true;
       const filterProvider =
         typeof msg.filterProvider === "string" ? msg.filterProvider : undefined;
@@ -992,6 +1083,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           requestId: msg.requestId,
           results: [],
           done: true,
+          ...incomplete,
         });
       } else {
         let sentCount = 0;
@@ -1003,6 +1095,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
             requestId: msg.requestId,
             results: chunk,
             done,
+            ...(done ? incomplete : {}),
           });
         };
 
@@ -1058,8 +1151,13 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "rebuild") {
-      await rebuildAll(true); // emitProgress = true
-      self.postMessage({ type: "bulkComplete", success: true }); // Reusing bulkComplete for now as a generic completion signal
+      const outcome = await rebuildAll(true); // emitProgress = true
+      // Reusing bulkComplete for now as a generic completion signal
+      self.postMessage(
+        outcome.error === undefined
+          ? { type: "bulkComplete", success: true }
+          : { type: "bulkComplete", success: false, error: outcome.error },
+      );
       return;
     }
 

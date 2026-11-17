@@ -135,8 +135,9 @@ export async function handleSetCliEnabled(
 ): Promise<void> {
   try {
     await setCliEnabled(message.enabled);
-    const { applyWsBridgeSettings } = await import("../wsBridge");
-    await applyWsBridgeSettings();
+    // Reset, not apply: switching the bridge on again is how the user resumes one that gave up.
+    const { resetWsBridge } = await import("../wsBridge");
+    await resetWsBridge();
     sendResponse({ success: true });
   } catch (err: unknown) {
     sendResponse({

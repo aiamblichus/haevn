@@ -57,11 +57,13 @@ export async function handleSearchChats(
           query,
           totalResults: allResults.length,
           indexRebuilding: stats.indexRebuilding,
+          indexIncomplete: stats.indexIncomplete,
         });
         sendResponse({
           success: true,
           results: allResults,
           ...(stats.indexRebuilding ? { indexRebuilding: stats.indexRebuilding } : {}),
+          ...(stats.indexIncomplete ? { indexIncomplete: stats.indexIncomplete } : {}),
         });
       },
       onError: (error) => {

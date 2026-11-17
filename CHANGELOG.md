@@ -20,6 +20,9 @@
 
 ### Fixed
 
+- A failed search-index rebuild is no longer silent: search says the index is incomplete, and reloading the extension rebuilds it; a rebuild can no longer be corrupted by a pending index write or a second rebuild request.
+- The CLI bridge stops reconnecting when another extension takes over the daemon connection, and retries slowly after a rejected key.
+- Exports release the file only after Chrome has finished downloading it.
 - ChatGPT and Open WebUI imports from the archive page now reach search (the bulk-indexing step failed silently).
 - Deleted chats no longer appear in search or on the starmap.
 - Hard delete removes a chat's embeddings and queue rows.

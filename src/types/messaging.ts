@@ -27,7 +27,7 @@ import type { PiRawExtraction } from "../providers/pi/model";
 import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
 import type { MetadataAIConfig, StarmapConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
-import type { SearchIndexRebuildStatus } from "./workerMessages";
+import type { SearchIndexIncompleteStatus, SearchIndexRebuildStatus } from "./workerMessages";
 
 export type { ChatMetadataRecord, MetadataAIConfig, MetadataQueueRecord, StarmapConfig };
 
@@ -356,7 +356,12 @@ export type BackgroundResponse =
   | { success: true; count: number }
   | { success: true; total: number; data: unknown[] }
   | { success: true; total: number; items: unknown[] } // Gallery media response
-  | { success: true; results: unknown[]; indexRebuilding?: SearchIndexRebuildStatus }
+  | {
+      success: true;
+      results: unknown[];
+      indexRebuilding?: SearchIndexRebuildStatus;
+      indexIncomplete?: SearchIndexIncompleteStatus;
+    }
   | { success: true; downloadId?: number; filename?: string }
   | {
       success: true;
@@ -774,6 +779,8 @@ export type BackgroundEvent =
       wasLimited: boolean;
       /** Set when the index was being rebuilt: the search did not run. */
       indexRebuilding?: SearchIndexRebuildStatus;
+      /** Set when the last rebuild failed: the search ran on a part-built index. */
+      indexIncomplete?: SearchIndexIncompleteStatus;
     }
   | {
       action: "searchStreamingFailed";

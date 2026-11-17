@@ -13,7 +13,10 @@ import { poeProvider } from "../providers/poe/provider";
 import { registerProvider } from "../providers/provider";
 import { qwenProvider } from "../providers/qwen/provider";
 import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../types/messaging";
-import type { SearchIndexRebuildStatus } from "../types/workerMessages";
+import type {
+  SearchIndexIncompleteStatus,
+  SearchIndexRebuildStatus,
+} from "../types/workerMessages";
 import { log } from "../utils/logger";
 import "./debug";
 import { ExportModal } from "../components/ExportModal";
@@ -62,6 +65,9 @@ const App = () => {
   const [searchIndexRebuild, setSearchIndexRebuild] = useState<SearchIndexRebuildStatus | null>(
     null,
   );
+  // Set when the last index rebuild failed: the search ran, on an index that may miss chats.
+  const [searchIndexIncomplete, setSearchIndexIncomplete] =
+    useState<SearchIndexIncompleteStatus | null>(null);
   const [selectedIds, setSelectedIds] = useState(new Set<string>());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterProvider, setFilterProvider] = useState("all");
@@ -349,9 +355,15 @@ const App = () => {
               });
               setIsSearching(false);
               setSearchIndexRebuild(event.indexRebuilding ?? null);
+              setSearchIndexIncomplete(event.indexIncomplete ?? null);
               if (event.indexRebuilding) {
                 setStatus(
                   `Search index is rebuilding (${event.indexRebuilding.percentage}%). Search again when it finishes.`,
+                  "warn",
+                );
+              } else if (event.indexIncomplete) {
+                setStatus(
+                  `Found ${event.totalResults} results, but the search index is incomplete (the last rebuild failed). Some chats may be missing.`,
                   "warn",
                 );
               } else {
@@ -382,6 +394,7 @@ const App = () => {
               setIsSearching(false);
               setSearchResults([]);
               setSearchIndexRebuild(null);
+              setSearchIndexIncomplete(null);
               setStatus(`Search failed: ${event.error}`, "error");
             } else {
               log.warn(`[Options] Received failure for different query:`, {
@@ -423,6 +436,7 @@ const App = () => {
       setSearchResults(null);
       setIsSearching(false);
       setSearchIndexRebuild(null);
+      setSearchIndexIncomplete(null);
       setExpandedChats(new Set());
       setLoadingExpandedChats(new Set());
       searchResultIds.current.clear();
@@ -450,6 +464,7 @@ const App = () => {
     // Clear previous results
     setSearchResults([]);
     setSearchIndexRebuild(null);
+    setSearchIndexIncomplete(null);
     searchResultIds.current.clear();
     setIsSearching(true);
 
@@ -827,6 +842,7 @@ const App = () => {
                 setSearchResults={setSearchResults}
                 isSearching={isSearching}
                 searchIndexRebuild={searchIndexRebuild}
+                searchIndexIncomplete={searchIndexIncomplete}
                 selectedIds={selectedIds}
                 filterProvider={filterProvider}
                 setFilterProvider={setFilterProvider}

@@ -16,7 +16,7 @@
  *
  * Daemon responds:
  *   ← { "type": "authOk" }             (proceed)
- *   ← { "type": "authError", "message": "…" }  (close + retry later)
+ *   ← { "type": "authError", "message": "…" }  (the key is wrong: stop, see below)
  *
  * Normal operation – daemon forwards CLI requests verbatim:
  *   ← { "id": "…", "action": "search", "query": "…", … }
@@ -26,6 +26,13 @@
  *
  * Keepalive – while the SW is alive an in-process timer sends pings every 20 s.
  * A chrome.alarm fires every 30 s to wake a dormant SW and reconnect if needed.
+ *
+ * Two closes get special treatment (see wsBridgeClose.ts). A newer extension connection
+ * replacing this one (4002) is final: two extensions sharing a key would otherwise replace each
+ * other for ever, so the bridge stops (no alarm, no timers) until the user enables it or changes
+ * a setting. A rejected key (4001) is retried slowly (30 s, doubling to 5 min, while the service
+ * worker stays awake; the backoff is in memory, so after the worker idles out the 30 s alarm
+ * retries at the base rate), because the fix is usually a daemon restart the extension cannot see.
  */
 
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
@@ -42,11 +49,20 @@ import { generateForChat } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
-import type { SearchIndexRebuildStatus } from "../types/workerMessages";
+import type {
+  SearchIndexIncompleteStatus,
+  SearchIndexRebuildStatus,
+} from "../types/workerMessages";
 import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
+import {
+  isKeyRejected,
+  rejectedRetryDelayMs,
+  terminalCloseReason,
+  WS_REASON_UNAUTHORIZED,
+} from "./wsBridgeClose";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
@@ -255,6 +271,43 @@ let authenticated = false;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
+/** Why the bridge gave up (a final close, see wsBridgeClose.ts); null while it should connect. */
+let haltedReason: string | null = null;
+let haltedLoad: Promise<void> | null = null;
+/** After a rejected key: no connection before this time (ms since the epoch), and tries so far. */
+let retryNotBefore = 0;
+let rejectedAttempts = 0;
+
+/**
+ * The stop outlives a service worker restart (it would otherwise reconnect the moment the
+ * worker woke) but not the browser session, so a restarted browser tries again.
+ */
+const HALTED_STORAGE_KEY = "haevn.cli.bridgeHalted";
+
+/** Read the stop once per service worker; every caller waits for that one read. */
+function loadHalted(): Promise<void> {
+  haltedLoad ??= (async () => {
+    try {
+      const stored = await chrome.storage.session.get(HALTED_STORAGE_KEY);
+      const reason = stored?.[HALTED_STORAGE_KEY];
+      if (typeof reason === "string" && haltedReason === null) haltedReason = reason;
+    } catch {
+      // No session storage: the stop lasts as long as this service worker.
+    }
+  })();
+  return haltedLoad;
+}
+
+async function setHalted(reason: string | null): Promise<void> {
+  haltedReason = reason;
+  haltedLoad ??= Promise.resolve(); // what is stored no longer matters: this is newer
+  try {
+    if (reason === null) await chrome.storage.session.remove(HALTED_STORAGE_KEY);
+    else await chrome.storage.session.set({ [HALTED_STORAGE_KEY]: reason });
+  } catch {
+    // See loadHalted.
+  }
+}
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -281,10 +334,13 @@ export function handleWsReconnectAlarm(): void {
 }
 
 /**
- * Drop the current connection and reconnect with fresh settings.
- * Called after the port or API key changes in Settings.
+ * Drop the current connection and reconnect with fresh settings, also after the bridge gave up.
+ * Called after the port, the API key or the switch changes in Settings.
  */
 export async function resetWsBridge(): Promise<void> {
+  await setHalted(null); // an explicit change of settings is a reason to try again
+  retryNotBefore = 0;
+  rejectedAttempts = 0;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -313,6 +369,9 @@ export async function applyWsBridgeSettings(): Promise<void> {
     return;
   }
 
+  await loadHalted();
+  if (haltedReason !== null) return; // gave up; only resetWsBridge resumes
+
   chrome.alarms.create(WS_RECONNECT_ALARM, {
     periodInMinutes: RECONNECT_ALARM_PERIOD_MINUTES,
   });
@@ -322,6 +381,7 @@ export async function applyWsBridgeSettings(): Promise<void> {
     sendJson({ type: "ping" });
     return;
   }
+  if (Date.now() < retryNotBefore) return; // the key was rejected; wait out the slow backoff
   await connect();
 }
 
@@ -402,21 +462,56 @@ async function connect(): Promise<void> {
     log.debug("[WsBridge] Socket error (daemon may not be running)");
   };
 
-  socket.onclose = () => {
+  socket.onclose = (event: CloseEvent) => {
     const wasAuth = authenticated;
     socket = null;
     authenticated = false;
     if (wasAuth) {
       log.info("[WsBridge] Disconnected from daemon");
     }
+    const reason = terminalCloseReason(event.code);
+    if (reason !== null) {
+      haltWsBridge(reason);
+      return;
+    }
+    if (isKeyRejected(event.code)) {
+      retryAfterRejectedKey();
+      return;
+    }
     scheduleReconnect();
   };
 }
 
-function scheduleReconnect(): void {
+/**
+ * Stop for good until settings change: no reconnect timer, no alarm, no pings. The warning is
+ * the only trace (the settings page shows no bridge status).
+ */
+function haltWsBridge(reason: string): void {
+  log.warn(
+    `[WsBridge] Bridge stopped: ${reason}. It will not reconnect until the bridge is switched on again or the port or API key is changed in Settings.`,
+  );
+  stopWsBridge();
+  void setHalted(reason);
+}
+
+/**
+ * The daemon refused the key. Keep the alarm (a daemon restarted with the right key is found
+ * again) but connect no more often than the slow backoff allows; one warning per try.
+ */
+function retryAfterRejectedKey(): void {
+  const delayMs = rejectedRetryDelayMs(rejectedAttempts++);
+  retryNotBefore = Date.now() + delayMs;
+  log.warn(
+    `[WsBridge] Cannot connect: ${WS_REASON_UNAUTHORIZED}. Trying again in ${Math.round(delayMs / 1000)} s.`,
+  );
+  scheduleReconnect(delayMs);
+}
+
+function scheduleReconnect(delayOverrideMs?: number): void {
   if (reconnectTimer) return;
-  const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
-  reconnectAttempts++;
+  const delayMs =
+    delayOverrideMs ?? Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+  if (delayOverrideMs === undefined) reconnectAttempts++;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     applyWsBridgeSettings().catch((err) => {
@@ -432,12 +527,22 @@ function handleIncoming(msg: WsIncoming, _apiKey: string): void {
   if ("type" in msg) {
     if (msg.type === "authOk") {
       authenticated = true;
+      retryNotBefore = 0;
+      rejectedAttempts = 0;
       log.info("[WsBridge] Authenticated with daemon");
       return;
     }
     if (msg.type === "authError") {
-      log.warn("[WsBridge] Auth rejected by daemon:", msg.message);
-      socket?.close();
+      log.debug("[WsBridge] Auth rejected by daemon:", msg.message);
+      // The daemon follows with close code 4001, but a client-initiated close can race it:
+      // take the socket down here, so that one rejection is one try, not two.
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+        socket = null;
+        authenticated = false;
+      }
+      retryAfterRejectedKey();
       return;
     }
     // Unknown control frame — ignore.
@@ -524,9 +629,10 @@ async function handleSearch(
     return { id, success: false, error: "Query is required", code: "BAD_REQUEST" };
   }
 
-  const { results, indexRebuilding } = await new Promise<{
+  const { results, indexRebuilding, indexIncomplete } = await new Promise<{
     results: SearchResult[];
     indexRebuilding?: SearchIndexRebuildStatus;
+    indexIncomplete?: SearchIndexIncompleteStatus;
   }>((resolve, reject) => {
     const collected: SearchResult[] = [];
     SyncService.searchChatsStreaming(query, {
@@ -537,7 +643,11 @@ async function handleSearch(
       contextChars: options.contextChars,
       onResults: (batch) => collected.push(...batch),
       onComplete: (stats) =>
-        resolve({ results: collected, indexRebuilding: stats.indexRebuilding }),
+        resolve({
+          results: collected,
+          indexRebuilding: stats.indexRebuilding,
+          indexIncomplete: stats.indexIncomplete,
+        }),
       onError: reject,
     });
   });
@@ -549,6 +659,19 @@ async function handleSearch(
       success: false,
       error: `Search index is rebuilding (${indexRebuilding.percentage}%). Try again shortly.`,
       code: "INDEX_REBUILDING",
+    };
+  }
+
+  // The last rebuild failed and the index is part-built: a short or empty list may be missing
+  // chats, and a script cannot tell. Fail rather than answer.
+  if (indexIncomplete) {
+    log.warn("[WsBridge] Search refused: the index is incomplete:", indexIncomplete.error);
+    return {
+      id,
+      success: false,
+      error:
+        "Search index is incomplete: the last rebuild failed, so a search may miss chats. Reload the extension to rebuild it.",
+      code: "INDEX_INCOMPLETE",
     };
   }
 
