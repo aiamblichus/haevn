@@ -1,10 +1,4 @@
-import type {
-  Chat,
-  ChatMessage,
-  DocumentResponsePart,
-  ModelRequest,
-  ModelResponse,
-} from "../../model/haevn_model";
+import type { Chat, ChatMessage, ModelRequest, ModelResponse } from "../../model/haevn_model";
 
 interface PiSessionLine {
   type: "session";
@@ -228,7 +222,7 @@ function toAssistantContentBlocks(message: ChatMessage): Array<Record<string, un
         part.part_kind === "audio-response" ||
         part.part_kind === "document-response"
       ) {
-        const mediaPart = part as DocumentResponsePart;
+        const mediaPart = part;
         if (mediaPart.content.kind === "binary") {
           blocks.push({
             type: "text",

@@ -96,7 +96,7 @@ export interface LoggerConfig {
 
 export interface LogFilter {
   context?: string;
-  level?: string;
+  level?: "DEBUG" | "INFO" | "WARN" | "ERROR";
   since?: number;
   match?: string;
 }
@@ -367,6 +367,7 @@ export type BackgroundResponse =
     }
   | { success: true; message?: string }
   | { success: true; baseUrl?: string | null }
+  | { success: true; apiKey: string }
   | { success: true; logs: LogEntry[] }
   | { success: true; config: LoggerConfig }
   | {

@@ -216,7 +216,8 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
         log.error("[BulkSyncWorker] Unknown message type:", msg);
         self.postMessage({
           type: "error",
-          error: `Unknown message type: ${msg.type}`,
+          // msg is `never` here by the type, but this is what an unexpected message looks like
+          error: `Unknown message type: ${(msg as { type?: unknown }).type}`,
           requestId,
         });
       }
