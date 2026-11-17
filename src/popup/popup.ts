@@ -1,20 +1,13 @@
 import type { BulkSyncState } from "../background/bulkSync/types";
 import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
+import type { PlatformInfo } from "../utils/platform";
 
 log.info("HAEVN Popup loaded");
 
 interface TabInfo {
   id?: number;
   url?: string;
-}
-
-interface PlatformInfo {
-  name: string;
-  displayName: string;
-  isSupported: boolean;
-  canExportSingle: boolean;
-  canExportBulk: boolean;
 }
 
 // No export options in popup; sync-only UI

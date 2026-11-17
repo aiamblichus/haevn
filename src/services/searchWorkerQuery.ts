@@ -22,7 +22,7 @@ function createStopWordPipeline(): lunr.Pipeline {
 function keepIndexedTerm(term: string, stopWordPipeline: lunr.Pipeline): boolean {
   const normalized = normalizeSearchToken(term);
   if (!normalized) return false;
-  return stopWordPipeline.run([new lunr.Token(normalized)]).length > 0;
+  return stopWordPipeline.run([new lunr.Token(normalized, {})]).length > 0;
 }
 
 /**

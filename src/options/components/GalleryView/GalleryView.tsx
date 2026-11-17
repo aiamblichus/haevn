@@ -277,13 +277,7 @@ export const GalleryView = () => {
           <Select
             value={filterMediaType}
             onValueChange={(v) => {
-              if (
-                v === "all" ||
-                v === "image" ||
-                v === "video" ||
-                v === "audio" ||
-                v === "document"
-              ) {
+              if (v === "all" || v === "image" || v === "video") {
                 setFilterMediaType(v);
               }
             }}

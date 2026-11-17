@@ -1,9 +1,16 @@
 // Provider Interface Definitions
 // Enforces consistency across all LLM platform providers
 
+import type { ExportOptions as ExportRequestOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
 
-export interface ExportOptions {
+/**
+ * What an extractor may be handed. The content script passes the caller's export options on
+ * (every field optional here, since a sync passes none), and the Gemini and AI Studio extractors
+ * read customTitle.
+ */
+export interface ExportOptions extends Partial<ExportRequestOptions> {
+  customTitle?: string;
   includeThinking?: boolean;
   includeToolCalls?: boolean;
 }

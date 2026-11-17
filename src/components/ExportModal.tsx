@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ExporterId, ExportOptions } from "../formatters";
 import type { BackgroundEvent } from "../types/messaging";
 import { log } from "../utils/logger";

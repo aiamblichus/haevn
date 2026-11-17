@@ -133,7 +133,6 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
 const segments: Map<string, Segment> = new Map();
 let activeSegmentId: string = "segment_0";
 let rebuildTimer: number | undefined;
-let _isIndexing = false;
 const docCache: Map<string, SearchDoc> = new Map(); // Only for active segment
 let bulkMode = false;
 let rebuildState: IndexRebuildState | null = null;
@@ -452,7 +451,6 @@ function scheduleDebouncedRebuild(seg: Segment) {
     rebuildActiveSegment(seg);
     debounceTimers.delete(seg.id);
   }, REBUILD_DEBOUNCE_MS);
-  // @ts-expect-error
   debounceTimers.set(seg.id, timer);
 }
 
@@ -480,7 +478,6 @@ async function rebuildAll(emitProgress = false) {
     return;
   }
 
-  _isIndexing = true;
   segments.clear();
   docCache.clear();
   activeSegmentId = "segment_0";
@@ -521,8 +518,8 @@ async function rebuildAll(emitProgress = false) {
           if (data) {
             currentSeg.builder?.add(data.doc);
             currentSeg.docIds.add(data.doc.id);
-            if (currentSeg.docIds.size >= SEGMENT_SIZE) {
-              currentSeg.index = currentSeg.builder?.build();
+            if (currentSeg.docIds.size >= SEGMENT_SIZE && currentSeg.builder) {
+              currentSeg.index = currentSeg.builder.build();
               await persistSegment(currentSeg);
               currentSeg.builder = undefined;
               const nextId = `segment_${segments.size}`;
@@ -588,7 +585,6 @@ async function rebuildAll(emitProgress = false) {
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
   } finally {
-    _isIndexing = false;
     rebuildState = null;
   }
 }
@@ -622,16 +618,12 @@ function collectMatchPositions(matchData: LunrMatchData): [number, number][] {
  */
 function generateSnippets(
   chat: Chat,
-  map: SourceMap,
   positions: [number, number][],
   snippetRadius: number,
 ): SearchResult[] {
   const results: SearchResult[] = [];
-  const _text = map.map((_m) => "").join(""); // Wait, we don't have the full text here?
-  // We didn't store the full text in memory. We only have the chat.
-  // We need to re-extract the text segments from the Chat using the map indices?
-  // Actually, simpler: We re-run extractTextAndMap(chat) which gives us the 'doc' with full content.
-  // Optimization: extractTextAndMap is deterministic.
+  // The index keeps no full text, only the chat has it: re-run extractTextAndMap(chat), which is
+  // deterministic, to get the doc's content.
 
   const extraction = extractTextAndMap(chat);
   if (!extraction) return [];
@@ -729,7 +721,7 @@ function verifyPhrase(
     // Lunr query tokenization lowercases input before pipelines run.
     // We must mirror that here, otherwise quoted terms with capitals
     // (e.g. "Fisherman") won't match lowercase matchData keys.
-    let res = prePipeline.run([new lunr.Token(t.toLowerCase())]);
+    let res = prePipeline.run([new lunr.Token(t.toLowerCase(), {})]);
     if (res.length === 0) return null; // Stop word identified
 
     // 2. Search Pipeline (Stemmer)
@@ -1012,12 +1004,9 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
               const snippets = needsExactPhraseHydration
                 ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
-                : generateSnippets(
-                    chat,
-                    [],
-                    collectMatchPositions(r.matchData),
-                    snippetRadius,
-                  ).filter((snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery));
+                : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
+                    (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
+                  );
 
               const limitedSnippets = snippets.slice(0, Math.max(0, maxResults - sentCount));
               currentChunk.push(...limitedSnippets);

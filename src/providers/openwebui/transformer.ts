@@ -217,6 +217,7 @@ export function transformOpenWebUIToHaevn(raw: OpenWebUIRawExtraction): HAEVN.Ch
     lastSyncedTimestamp: Date.now(),
     checksum: "",
     syncStatus: "pending",
+    deleted: 0,
   };
 
   return result;

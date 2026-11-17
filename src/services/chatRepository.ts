@@ -275,7 +275,8 @@ export namespace ChatRepository {
       if (categoryFilterIds !== null) {
         const ids = categoryFilterIds;
         const inverse = categoryFilterInverse;
-        query = query.filter((c) => (inverse ? !ids.has(c.id) : ids.has(c.id)));
+        const inCategory = (id: string | undefined) => id !== undefined && ids.has(id);
+        query = query.filter((c) => (inverse ? !inCategory(c.id) : inCategory(c.id)));
       }
 
       // 1. Get accurate total count (now efficient via index)
@@ -428,7 +429,7 @@ export namespace ChatRepository {
     while (currentId && guard < 10_000) {
       branchIds.unshift(currentId);
       guard++;
-      const msg =
+      const msg: ChatMessage | undefined =
         messageDict[currentId] ||
         (await db.chatMessages.where("[chatId+id]").equals([chatId, currentId]).first());
       currentId = msg?.parentId || undefined;

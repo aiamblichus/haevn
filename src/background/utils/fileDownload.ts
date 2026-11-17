@@ -53,7 +53,8 @@ export function handleFileDownload(
 
           // Increment export count
           chrome.storage.sync.get(["exportCount"], (result) => {
-            const newCount = (result.exportCount || 0) + 1;
+            const previousCount = typeof result.exportCount === "number" ? result.exportCount : 0;
+            const newCount = previousCount + 1;
             chrome.storage.sync.set({ exportCount: newCount });
           });
 

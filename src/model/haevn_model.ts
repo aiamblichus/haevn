@@ -177,6 +177,9 @@ export interface ModelRequest {
   kind: "request";
   parts: ModelRequestPart[];
   instructions?: string;
+  // Set by the Claude Code importer, which records when the turn was written and its uuid
+  timestamp?: string; // ISO 8601 format
+  vendor_id?: string;
 }
 
 export interface ModelResponse {

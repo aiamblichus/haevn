@@ -1,4 +1,3 @@
-import { log } from "../../utils/logger";
 import type { ExportOptions, Extractor, Transformer } from "../interfaces";
 import type { Provider } from "../provider";
 import { getPoeChatData, getPoeChatIds, isPoePlatform } from "./extractor";

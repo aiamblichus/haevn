@@ -228,6 +228,11 @@ export async function convertGrokToHaevn(extraction: GrokRawExtraction): Promise
     tags: conversation.starred ? ["starred"] : [],
     timestamp: new Date(conversation.createTime).getTime(),
     providerLastModifiedTimestamp: new Date(conversation.modifyTime).getTime(),
+    lastSyncedTimestamp: Date.now(),
+    // Sync metadata: placeholders, set by SyncService.saveChat()
+    checksum: "",
+    syncStatus: "new",
+    deleted: 0,
   };
 
   log.info("[Grok Transformer] Chat created", {

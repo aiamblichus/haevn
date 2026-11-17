@@ -20,7 +20,10 @@
 import type { BulkSyncOptions, BulkSyncState } from "../background/bulkSync/types";
 import type { ExportOptions } from "../formatters";
 import type { Chat } from "../model/haevn_model";
+import type { ClaudeCodeRawExtraction } from "../providers/claudecode/model";
+import type { CodexRawExtraction } from "../providers/codex/model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
+import type { PiRawExtraction } from "../providers/pi/model";
 import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
 import type { MetadataAIConfig, StarmapConfig } from "../services/settingsService";
 import type { PlatformInfo } from "../utils/platform";
@@ -93,7 +96,7 @@ export interface LoggerConfig {
 
 export interface LogFilter {
   context?: string;
-  level?: string;
+  level?: "DEBUG" | "INFO" | "WARN" | "ERROR";
   since?: number;
   match?: string;
 }
@@ -121,7 +124,11 @@ export type AllProviderRawData =
   | Record<string, unknown> // Generic object for most providers
   | { conversation: unknown; assets?: unknown } // ChatGPT
   | { chat: unknown } // OpenWebUI
-  | DeepseekConversationData;
+  | DeepseekConversationData
+  // The three importers' raw extractions are interfaces, so the Record arm above does not cover them
+  | ClaudeCodeRawExtraction
+  | CodexRawExtraction
+  | PiRawExtraction;
 
 // ======================
 // Background Request Messages
@@ -360,6 +367,7 @@ export type BackgroundResponse =
     }
   | { success: true; message?: string }
   | { success: true; baseUrl?: string | null }
+  | { success: true; apiKey: string }
   | { success: true; logs: LogEntry[] }
   | { success: true; config: LoggerConfig }
   | {
@@ -421,7 +429,10 @@ export type ContentScriptRequest =
   | { action: "fetchQwenConversation"; chatId: string }
   | { action: "fetchDeepseekConversation"; chatId: string }
   | { action: "fetchPoeConversation"; chatId: string; baseUrl?: string }
-  | { action: "fetchBlob"; url: string; credentials?: RequestCredentials };
+  | { action: "fetchBlob"; url: string; credentials?: RequestCredentials }
+  // Sent by the ChatGPT webRequest listener when the auth/session call completes; the content
+  // script re-reads the session itself and ignores the url
+  | { action: "captureChatGPTToken"; url?: string };
 
 // ======================
 // Content Script Response Messages

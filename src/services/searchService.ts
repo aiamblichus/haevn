@@ -29,7 +29,7 @@ import { buildSearchResultsForChat } from "./searchTextMatch";
  */
 async function _sendWorkerMessage(
   message: SearchWorkerMessage,
-): Promise<SearchWorkerResponse | string[] | undefined> {
+): Promise<SearchWorkerResponse | string[] | SearchResult[] | undefined> {
   const response = await sendWorkerRequest("search", message);
 
   // For search results, extract the results array
@@ -316,7 +316,6 @@ export namespace SearchService {
             maxResults: maxChatsToScan,
             filterProvider,
             contextChars,
-            // @ts-expect-error - 'hydrate' is new, typescript might not know it yet if we didn't update types
             hydrate: true,
           },
           {

@@ -16,7 +16,7 @@ export const useApi = () => {
           chatId,
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
-        if (!resp?.success || !resp.data)
+        if (!resp?.success || !("data" in resp) || !resp.data)
           throw new Error(
             resp && "error" in resp
               ? resp.error
@@ -76,7 +76,7 @@ export const useApi = () => {
           chatId,
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
-        if (!resp?.success || !resp.data)
+        if (!resp?.success || !("data" in resp) || !resp.data)
           throw new Error(
             resp && "error" in resp
               ? resp.error

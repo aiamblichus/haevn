@@ -149,7 +149,7 @@ async function getOpenWebUIFolderHierarchy(folderId: string): Promise<OpenWebUIF
 
   while (currentFolderId) {
     try {
-      const folder = await apiGet<OpenWebUIFolderResponse>(
+      const folder: OpenWebUIFolderResponse | null = await apiGet<OpenWebUIFolderResponse>(
         `/api/v1/folders/${encodeURIComponent(currentFolderId)}`,
       );
       if (!folder) break;
@@ -164,10 +164,10 @@ async function getOpenWebUIFolderHierarchy(folderId: string): Promise<OpenWebUIF
   return hierarchy;
 }
 
-import type { ExportOptions } from "../../formatters";
+import type { ExportOptions } from "../interfaces";
 
 export async function extractOpenWebUIConversationData(
-  _options: ExportOptions,
+  _options: ExportOptions = {},
 ): Promise<OpenWebUIRawExtraction> {
   if (!isOpenWebUIPlatform()) throw new Error("Not on an Open WebUI site");
 

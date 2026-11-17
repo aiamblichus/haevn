@@ -193,6 +193,7 @@ function navigateIframe(url: string): Promise<void> {
       reject(new Error("No iframe available for navigation"));
       return;
     }
+    const iframeId = currentIframe.id;
     currentIframe.onload = () => {
       log.info(`[Offscreen] Iframe navigated to: ${url}`);
       iframeReady = true;
@@ -200,7 +201,7 @@ function navigateIframe(url: string): Promise<void> {
       // Notify service worker that iframe navigated
       const event: OffscreenEvent = {
         type: "offscreenIframeNavigated",
-        iframeId: currentIframe?.id,
+        iframeId,
         url: url,
       };
       chrome.runtime.sendMessage(event).catch((err) => {
@@ -799,23 +800,23 @@ async function handleWorkerRequest(message: OffscreenWorkerRequest): Promise<Off
 
   let transferList: Transferable[] | undefined;
 
+  // workerType says this is an import message; only its start and count arms carry a staged file
+  const importMessage =
+    workerType === "import" ? (workerMessage as ImportWorkerMessage) : undefined;
   if (
-    workerType === "import" &&
-    "stagedFilePath" in (workerMessage as ImportWorkerMessage) &&
-    typeof (workerMessage as ImportWorkerMessage).stagedFilePath === "string"
+    importMessage &&
+    (importMessage.type === "start" || importMessage.type === "count") &&
+    typeof importMessage.stagedFilePath === "string"
   ) {
-    const msg = workerMessage as ImportWorkerMessage & {
-      stagedFilePath: string;
-    };
     log.info("[Offscreen] Preparing staged file for import worker:", {
       operation,
-      stagedFilePath: msg.stagedFilePath,
+      stagedFilePath: importMessage.stagedFilePath,
     });
-    const stagedFile = await readFileFromOpfs(msg.stagedFilePath);
-    const name = msg.originalFileName || stagedFile.name || "import.zip";
-    const type = msg.originalFileType || stagedFile.type || "application/octet-stream";
-    msg.file = new File([stagedFile], name, { type });
-    delete msg.stagedFilePath;
+    const stagedFile = await readFileFromOpfs(importMessage.stagedFilePath);
+    const name = importMessage.originalFileName || stagedFile.name || "import.zip";
+    const type = importMessage.originalFileType || stagedFile.type || "application/octet-stream";
+    importMessage.file = new File([stagedFile], name, { type });
+    delete importMessage.stagedFilePath;
   }
 
   try {

@@ -73,7 +73,7 @@ async function waitForTabComplete(tabId: number, timeoutMs = 15000): Promise<voi
       reject(new Error(`Timed out waiting for helper tab ${tabId} to load`));
     }, timeoutMs);
 
-    const onUpdated = (updatedTabId: number, info: chrome.tabs.TabChangeInfo) => {
+    const onUpdated = (updatedTabId: number, info: chrome.tabs.OnUpdatedInfo) => {
       if (updatedTabId === tabId && info.status === "complete") {
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(onUpdated);
@@ -231,6 +231,13 @@ function createFallbackUrl(
   return { kind: "document-url", url } as DocumentUrl;
 }
 
+type BlobResponse = Extract<ContentScriptResponse, { base64: string }>;
+
+/** Whether a content script replied to a fetchBlob request with the blob (and not an error). */
+function isBlobResponse(response: ContentScriptResponse): response is BlobResponse {
+  return "success" in response && response.success && "base64" in response;
+}
+
 // Pending worker requests map for Browser API Bridge pattern
 const workerPendingRequests = new Map<
   string,
@@ -277,7 +284,7 @@ export function handleWorkerResponse(msg: {
  */
 export async function processExternalAssets(
   assets: UrlAsset[],
-  options: ProcessExternalAssetsOptions = {},
+  options: ProcessExternalAssetsOptions,
 ): Promise<UserContent[]> {
   const {
     timeoutMs = 10000,
@@ -344,7 +351,7 @@ export async function processExternalAssets(
                 log.info(`${logPrefix} Delegating fetch to content script (tab ${options.tabId})`);
               }
               // Service Worker Context: Direct send
-              response = (await new Promise((resolve, reject) => {
+              response = (await new Promise<unknown>((resolve, reject) => {
                 const tid = setTimeout(
                   () => reject(new Error("Content script fetch timed out")),
                   30000,
@@ -375,7 +382,7 @@ export async function processExternalAssets(
             } else {
               // Web Worker Context: Bridge request via Service Worker (CRD-003)
               const requestId = `fetch_${Date.now()}_${Math.random()}`;
-              response = (await new Promise((resolve, reject) => {
+              response = (await new Promise<unknown>((resolve, reject) => {
                 const tid = setTimeout(() => {
                   if (workerPendingRequests.has(requestId)) {
                     workerPendingRequests.delete(requestId);
@@ -413,7 +420,7 @@ export async function processExternalAssets(
               })) as ContentScriptResponse;
             }
 
-            if (!helperTabOnly && (!response.success || !("base64" in response))) {
+            if (!helperTabOnly && !isBlobResponse(response)) {
               if (isServiceWorker && isGoogleusercontentImageUrl(assetUrl)) {
                 if (logPrefix) {
                   log.warn(
@@ -438,8 +445,9 @@ export async function processExternalAssets(
               }
             }
 
-            if (!response.success || !("base64" in response)) {
-              throw new Error(response.error || "Content script fetch failed");
+            if (!isBlobResponse(response)) {
+              const reason = "error" in response ? response.error : undefined;
+              throw new Error(reason || "Content script fetch failed");
             }
 
             finalContentType = resolvePreferredMimeType(response.contentType, contentType);

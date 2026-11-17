@@ -71,7 +71,6 @@ const transformer: Transformer<ChatGPTRawExtraction> = {
 export const chatgptProvider: Provider<ChatGPTRawExtraction> = {
   name: "chatgpt",
   displayName: "ChatGPT",
-  color: "bg-green-500",
 
   extractor,
   transformer,

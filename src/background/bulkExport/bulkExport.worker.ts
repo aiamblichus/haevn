@@ -167,6 +167,10 @@ async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState)
     return;
   }
   const chatId = chat.id;
+  if (!chatId) {
+    log.warn(`[BulkExportWorker] Skipping a chat without an id (title: ${chat.title})`);
+    return;
+  }
   const chatJson = JSON.stringify(chat);
   const chatPath = buildExportChatsPath(state.exportId, chatId);
   const chatBytes = textEncoder.encode(chatJson);
@@ -174,10 +178,10 @@ async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState)
   state.totalSizeBytes += chatBytes.byteLength;
 
   await state.manifestWriter.appendChat({
-    id: chat.id,
+    id: chatId,
     source: chat.source,
     sourceId: chat.sourceId,
-    file: `chats/${chat.id}.json`,
+    file: `chats/${chatId}.json`,
   });
 
   state.providerStats[chat.source] = (state.providerStats[chat.source] || 0) + 1;

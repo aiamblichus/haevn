@@ -19,7 +19,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "types": [
-      "chrome-types"
+      "chrome"
     ],
     "jsx": "react"
   },

@@ -6,6 +6,14 @@
 
 import type { Chat } from "../model/haevn_model";
 
+/** SHA-256 of a string as lowercase hex, for the id a chat file gets when it names none. */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function validateAndNormalizeChat(raw: unknown, contentHash: string): Chat {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(

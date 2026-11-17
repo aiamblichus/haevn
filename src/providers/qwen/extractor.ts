@@ -49,7 +49,7 @@ export async function fetchQwenConversation(chatId: string): Promise<QwenChatRes
 }
 
 // Main extraction function
-import type { ExportOptions } from "../../formatters";
+import type { ExportOptions } from "../interfaces";
 
 export async function extractQwenConversationData(
   _options: ExportOptions = {},

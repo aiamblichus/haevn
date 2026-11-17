@@ -8,21 +8,14 @@ import type {
   ChatMessage,
   ModelMessage,
   ModelRequest,
+  ModelRequestPart,
   ModelResponse,
-  RequestPart,
   SystemPromptPart,
   TextPart,
   ThinkingPart,
   ToolCallPart,
-  ToolReturnPart,
-  UserPromptPart,
 } from "../../model/haevn_model";
-import type {
-  ClaudeCodeContent,
-  ClaudeCodeMessage,
-  ClaudeCodeRawExtraction,
-  ClaudeCodeUserContent,
-} from "./model";
+import type { ClaudeCodeContent, ClaudeCodeMessage, ClaudeCodeRawExtraction } from "./model";
 import {
   isAssistantMessage,
   isFileSnapshot,
@@ -53,6 +46,18 @@ export function transformToHaevnChat(extraction: ClaudeCodeRawExtraction): Chat 
     const uuid = (msg as { uuid?: string }).uuid;
     if (uuid) {
       allMessagesByUuid.set(uuid, msg);
+    }
+  }
+
+  // tool_result blocks name their call by id only; the tool's name is on the tool_use block
+  const toolNameByCallId = new Map<string, string>();
+  for (const msg of extraction.messages) {
+    if (isAssistantMessage(msg)) {
+      for (const block of msg.message.content) {
+        if (block.type === "tool_use") {
+          toolNameByCallId.set(block.id, block.name);
+        }
+      }
     }
   }
 
@@ -113,7 +118,7 @@ export function transformToHaevnChat(extraction: ClaudeCodeRawExtraction): Chat 
     if (!haevnId) continue;
 
     // Transform the message content to ModelMessage
-    const modelMessage = transformToModelMessage(claudeMsg);
+    const modelMessage = transformToModelMessage(claudeMsg, toolNameByCallId);
     if (!modelMessage) continue;
 
     // Track models used
@@ -183,15 +188,22 @@ export function transformToHaevnChat(extraction: ClaudeCodeRawExtraction): Chat 
     timestamp: extraction.metadata.createdTimestamp,
     lastSyncedTimestamp: Date.now(),
     providerLastModifiedTimestamp: extraction.metadata.lastModifiedTimestamp,
+    // Sync metadata: placeholders, set by SyncService.saveChat()
+    checksum: "",
+    syncStatus: "new",
+    deleted: 0,
   };
 }
 
 /**
  * Transform a Claude Code message to ModelMessage.
  */
-function transformToModelMessage(message: ClaudeCodeMessage): ModelMessage | null {
+function transformToModelMessage(
+  message: ClaudeCodeMessage,
+  toolNameByCallId: Map<string, string>,
+): ModelMessage | null {
   if (isUserMessage(message)) {
-    return transformUserMessage(message);
+    return transformUserMessage(message, toolNameByCallId);
   }
 
   if (isAssistantMessage(message)) {
@@ -209,12 +221,15 @@ function transformToModelMessage(message: ClaudeCodeMessage): ModelMessage | nul
  * Transform user message to ModelRequest.
  * Handles both string content (regular prompts) and array content (tool results).
  */
-function transformUserMessage(message: ClaudeCodeMessage): ModelRequest {
+function transformUserMessage(
+  message: ClaudeCodeMessage,
+  toolNameByCallId: Map<string, string>,
+): ModelRequest {
   if (!isUserMessage(message)) {
     throw new Error("Expected user message");
   }
 
-  const parts: RequestPart[] = [];
+  const parts: ModelRequestPart[] = [];
   const content = message.message.content;
 
   if (typeof content === "string") {
@@ -222,8 +237,8 @@ function transformUserMessage(message: ClaudeCodeMessage): ModelRequest {
     parts.push({
       part_kind: "user-prompt",
       content,
-      timestamp: new Date(message.timestamp).getTime(),
-    } as UserPromptPart);
+      timestamp: message.timestamp,
+    });
   } else if (Array.isArray(content)) {
     // Array content - can contain text blocks and tool results
     for (const block of content) {
@@ -231,15 +246,17 @@ function transformUserMessage(message: ClaudeCodeMessage): ModelRequest {
         parts.push({
           part_kind: "user-prompt",
           content: block.text,
-          timestamp: new Date(message.timestamp).getTime(),
-        } as UserPromptPart);
+          timestamp: message.timestamp,
+        });
       } else if (block.type === "tool_result") {
         parts.push({
           part_kind: "tool-return",
+          tool_name: toolNameByCallId.get(block.tool_use_id) || "unknown_tool",
           tool_call_id: block.tool_use_id,
           content: block.content,
-          is_error: block.is_error,
-        } as ToolReturnPart);
+          metadata: block.is_error === undefined ? undefined : { is_error: block.is_error },
+          timestamp: message.timestamp,
+        });
       }
     }
   }
@@ -249,8 +266,8 @@ function transformUserMessage(message: ClaudeCodeMessage): ModelRequest {
     parts.push({
       part_kind: "user-prompt",
       content: "[Empty message]",
-      timestamp: new Date(message.timestamp).getTime(),
-    } as UserPromptPart);
+      timestamp: message.timestamp,
+    });
   }
 
   return {
@@ -299,7 +316,7 @@ function transformSystemMessage(message: ClaudeCodeMessage): ModelRequest {
   const part: SystemPromptPart = {
     part_kind: "system-prompt",
     content: message.message.content,
-    timestamp: new Date(message.timestamp).getTime(),
+    timestamp: message.timestamp,
   };
 
   return {

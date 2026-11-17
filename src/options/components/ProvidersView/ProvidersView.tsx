@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BulkSyncState } from "../../../background/bulkSync/types";
 import { Button } from "../../../components/ui/button";
 import {
@@ -159,9 +159,9 @@ export const ProvidersView = ({
           onRefreshChats();
         }
       }
-      if (message.action === "chatSynced") {
+      if (msg.action === "chatSynced") {
         // Refresh stats when a chat is synced (optimistic update)
-        const source = message.meta?.source?.toLowerCase() || "";
+        const source = msg.meta?.source?.toLowerCase() || "";
         if (source) {
           let providerName: string | undefined;
 
@@ -204,11 +204,11 @@ export const ProvidersView = ({
             fireAndForget(updateProviderStats(providerName), "Background provider stats refresh");
           }
         }
-      } else if (message.action === "providerStatsUpdated") {
+      } else if (msg.action === "providerStatsUpdated") {
         // Update stats when they're recalculated in the background
         setProviderStats((prev) => ({
           ...prev,
-          [message.providerName]: { downloaded: message.count || 0 },
+          [msg.providerName]: { downloaded: msg.count || 0 },
         }));
       }
     };

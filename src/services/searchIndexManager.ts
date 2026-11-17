@@ -13,6 +13,7 @@
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type {
   Chat,
+  SearchResult,
   SystemPromptPart,
   TextPart,
   ThinkingPart,
@@ -32,7 +33,7 @@ import { sendWorkerRequest } from "../utils/workerApi";
  */
 async function _sendWorkerMessage(
   message: SearchWorkerMessage,
-): Promise<SearchWorkerResponse | string[] | undefined> {
+): Promise<SearchWorkerResponse | string[] | SearchResult[] | undefined> {
   const response = await sendWorkerRequest("search", message);
 
   // For search results, extract the results array

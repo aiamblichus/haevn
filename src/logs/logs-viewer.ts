@@ -17,7 +17,7 @@ let logs: LogEntry[] = [];
 let config: LoggerConfig | null = null;
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
 let filterContext: string = "all";
-let filterLevel: string = "all";
+let filterLevel: NonNullable<LogFilter["level"]> | "all" = "all";
 let filterSearch: string = "";
 let autoRefresh: boolean = true;
 let selectedLogIds: Set<string> = new Set();
@@ -485,7 +485,8 @@ function initializeUI(): void {
   });
 
   levelFilter.addEventListener("change", (e) => {
-    filterLevel = (e.target as HTMLSelectElement).value;
+    // The select's options are "all" and the four level names
+    filterLevel = (e.target as HTMLSelectElement).value as typeof filterLevel;
     fetchLogs();
   });
 

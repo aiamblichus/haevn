@@ -289,7 +289,12 @@ export async function transformDeepseekToHaevn(data: DeepseekConversationData): 
       messages,
       tags: [],
       timestamp: chatTimestamp,
-    } as Chat;
+      // Sync metadata: placeholders, set by SyncService.saveChat()
+      lastSyncedTimestamp: Date.now(),
+      checksum: "",
+      syncStatus: "new",
+      deleted: 0,
+    };
 
     return chat;
   }
@@ -349,7 +354,12 @@ export async function transformDeepseekToHaevn(data: DeepseekConversationData): 
     messages,
     tags: [],
     timestamp: chatTimestamp,
-  } as Chat; // Sync metadata is populated by SyncService
+    // Sync metadata: placeholders, set by SyncService.saveChat()
+    lastSyncedTimestamp: Date.now(),
+    checksum: "",
+    syncStatus: "new",
+    deleted: 0,
+  };
 
   return chat;
 }
