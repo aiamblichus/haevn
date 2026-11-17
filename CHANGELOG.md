@@ -4,6 +4,7 @@
 
 ### Added
 
+- `haevn list --offset N` pages through the archive; the JSON output's `hasMore` says whether more chats follow.
 - **Starmap**: an interactive 3D constellation of your chats in the archive, laid out from embeddings of their metadata (UMAP + clustering in a worker), with runtime controls, an embedding queue that can be paused, and rebuild controls.
 - **Exporters**: single chats export as HAEVN JSON, HAEVN Markdown or Pi session JSONL (with thinking signatures); the CLI's exports go through the same exporters.
 - **Search**: `id:` scoped queries in the archive.
