@@ -65,6 +65,7 @@ const importer: Importer<string> = {
 export const claudeCodeProvider: Provider<ClaudeCodeRawExtraction> = {
   name: "claudecode",
   displayName: "Claude Code",
+  importOnly: true,
 
   extractor,
   transformer,

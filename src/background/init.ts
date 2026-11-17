@@ -1,6 +1,6 @@
 import { clearStaleImportState } from "../background/import/importOrchestrator";
 import { registerAllProviders } from "../providers/index";
-import { getProvider } from "../providers/provider";
+import { getAllProviders, getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
 import { diagnosticsService } from "../services/diagnosticsService";
 import { SyncService } from "../services/syncService";
@@ -43,20 +43,8 @@ clearStaleImportState().catch((err) => log.warn("Failed to clear stale import st
 
 // LoggerService initialization is now handled in bootstrap.ts
 
-const PROVIDERS = [
-  "gemini",
-  "claude",
-  "poe",
-  "chatgpt",
-  "openwebui",
-  "qwen",
-  "aistudio",
-  "deepseek",
-  "grok",
-  "claudecode",
-  "codex",
-  "pi",
-];
+// Every registered provider, import-only ones included (setup and the stats cache cover them all).
+const PROVIDERS = getAllProviders().map((provider) => provider.name);
 
 // Initialize SyncService (loads or builds Lunr index, etc.)
 diagnosticsService

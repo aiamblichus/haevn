@@ -53,6 +53,7 @@ const importer: Importer<string> = {
 export const piProvider: Provider<PiRawExtraction, string> = {
   name: "pi",
   displayName: "PI",
+  importOnly: true,
   extractor,
   transformer,
   importer,

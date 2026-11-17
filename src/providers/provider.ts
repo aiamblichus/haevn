@@ -69,6 +69,16 @@ export interface Provider<TRaw = unknown, TImport = unknown> {
   name: string;
   displayName: string;
 
+  /**
+   * Hostnames the web platform is served from. A sync selects this provider when the tab's
+   * hostname contains one of them (substring, as the hand-written chain did). Omit for a
+   * provider whose host is the user's own (Open WebUI): it is selected by name alone.
+   */
+  hosts?: readonly string[];
+
+  /** True for a provider that only imports backup files and is never selected for a sync. */
+  importOnly?: boolean;
+
   // Structured functions
   extractor: Extractor<TRaw>;
   transformer: Transformer<TRaw>;

@@ -79,6 +79,7 @@ const transformer: Transformer<ChatTranscript> = {
 export const claudeProvider: Provider<ChatTranscript> = {
   name: "claude",
   displayName: "Claude",
+  hosts: ["claude.ai"],
 
   extractor,
   transformer,

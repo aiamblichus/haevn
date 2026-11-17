@@ -69,6 +69,8 @@ export interface GetOptions {
 export interface ListOptions {
   platform?: string;
   limit?: number;
+  /** Chats to skip before the page; the response's hasMore says whether chats follow it. */
+  offset?: number;
   after?: string;
   sortBy?: "lastSynced" | "title" | "messageCount";
   /**

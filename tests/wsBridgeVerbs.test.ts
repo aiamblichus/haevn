@@ -10,6 +10,8 @@ const getChat = vi.hoisted(() => vi.fn());
 const startBulkSyncIndexing = vi.hoisted(() => vi.fn());
 const finishBulkSyncIndexing = vi.hoisted(() => vi.fn());
 const saveImportedChat = vi.hoisted(() => vi.fn());
+const getChatsMetadata = vi.hoisted(() => vi.fn());
+const getChatMessages = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/services/settingsService", () => ({
   getCliSettings,
@@ -17,7 +19,13 @@ vi.mock("../src/services/settingsService", () => ({
   getStarmapConfig,
 }));
 vi.mock("../src/services/syncService", () => ({
-  SyncService: { getChat, startBulkSyncIndexing, finishBulkSyncIndexing },
+  SyncService: {
+    getChat,
+    getChatsMetadata,
+    getChatMessages,
+    startBulkSyncIndexing,
+    finishBulkSyncIndexing,
+  },
 }));
 vi.mock("../src/services/importService", () => ({ ImportService: { saveImportedChat } }));
 vi.mock("../src/background/export/textExportArtifact", () => ({
@@ -101,6 +109,10 @@ beforeEach(async () => {
   startBulkSyncIndexing.mockReset();
   finishBulkSyncIndexing.mockReset();
   saveImportedChat.mockReset();
+  getChatsMetadata.mockReset();
+  getChatsMetadata.mockResolvedValue({ metadata: [], total: 0 });
+  getChatMessages.mockReset();
+  getChatMessages.mockResolvedValue({});
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("chrome", {
     alarms: { create: vi.fn(), clear: vi.fn(async () => true) },
@@ -260,5 +272,87 @@ describe("import over the bridge goes through the archive's import sequence (HVN
       success: true,
       data: { saved: 25, errors: 0, indexError: "rebuild refused" },
     });
+  });
+});
+
+describe("list pages over the bridge (HVN-14)", () => {
+  const DAY = Date.parse("2026-06-01T00:00:00Z");
+
+  /** The repository's answer for one page: `rows` chats, out of `total` on the platform. */
+  function repositoryPage(rows: number, total: number): void {
+    getChatsMetadata.mockResolvedValue({
+      metadata: Array.from({ length: rows }, (_, i) => ({
+        id: `c${i}`,
+        lastSyncedTimestamp: DAY - i * 1000,
+      })),
+      total,
+    });
+  }
+
+  it("passes the offset, limit and sort through to the repository", async () => {
+    repositoryPage(2, 9);
+    const bridge = await connectedBridge();
+
+    await bridge.ask({ action: "list", options: { limit: 2, offset: 4 } });
+
+    expect(getChatsMetadata).toHaveBeenCalledWith(4, 2, "all", "lastSyncedTimestamp", "desc");
+  });
+
+  it("reports more chats while the page ends before the total", async () => {
+    repositoryPage(2, 5);
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({ action: "list", options: { limit: 2, offset: 0 } });
+
+    expect(reply).toMatchObject({ success: true, data: { total: 5, hasMore: true } });
+  });
+
+  it("reports no more on the last, short page", async () => {
+    repositoryPage(1, 5);
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({ action: "list", options: { limit: 2, offset: 4 } });
+
+    expect(reply).toMatchObject({ success: true, data: { total: 5, hasMore: false } });
+  });
+
+  it("reports no more when a page ends exactly at the total", async () => {
+    repositoryPage(2, 4);
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({ action: "list", options: { limit: 2, offset: 2 } });
+
+    expect(reply).toMatchObject({ success: true, data: { total: 4, hasMore: false } });
+  });
+
+  it("counts the page's rows, not the chats the after-date filter keeps", async () => {
+    getChatsMetadata.mockResolvedValue({
+      metadata: [
+        { id: "c0", lastSyncedTimestamp: DAY },
+        { id: "c1", lastSyncedTimestamp: Date.parse("2025-01-01T00:00:00Z") },
+      ],
+      total: 5,
+    });
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({
+      action: "list",
+      options: { limit: 2, offset: 0, after: "2026-01-01" },
+    });
+
+    expect(reply).toMatchObject({
+      success: true,
+      data: { chats: [{ id: "c0" }], total: 5, hasMore: true },
+    });
+  });
+
+  it("refuses an offset that is not a whole number, 0 or more", async () => {
+    const bridge = await connectedBridge();
+
+    for (const offset of [-1, 1.5]) {
+      const reply = await bridge.ask({ action: "list", options: { limit: 2, offset } });
+      expect(reply).toMatchObject({ success: false, code: "BAD_REQUEST" });
+    }
+    expect(getChatsMetadata).not.toHaveBeenCalled();
   });
 });
