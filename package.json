@@ -112,8 +112,7 @@
     "turndown": "^7.2.2",
     "umap-js": "^1.4.0",
     "uuid": "^11.1.0",
-    "yaml": "^2.8.2",
-    "zustand": "^4.5.7"
+    "yaml": "^2.8.2"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm run hook:pre-commit",
