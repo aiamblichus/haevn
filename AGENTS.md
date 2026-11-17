@@ -49,14 +49,15 @@ pnpm run lint                # biome, src/ only
 pnpm run build               # the extension, into dist/
 pnpm -C cli run typecheck    # when cli/ changed
 pnpm -C cli run lint         # when cli/ changed
+pnpm -C cli test             # when cli/ changed
 ```
 
 Known gaps, each with a ticket rather than a workaround:
 
 - The root has no typecheck in the gate. `npx tsc --noEmit` reports errors today, most from a `jsx` setting that disagrees with the esbuild build; esbuild does not type-check, so CI cannot see them.
-- The CLI has no tests.
+- The CLI's tests are few (`pnpm -C cli test`, HVN-11).
 
-CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint and typecheck, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
 
 ## Commits and releases
 
