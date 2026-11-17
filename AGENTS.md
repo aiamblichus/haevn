@@ -81,7 +81,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 - **Runtime:** Chrome Extension MV3 (service worker)
 - **Frontend:** React 18.3, Tailwind CSS, shadcn/ui, Radix UI primitives
 - **Persistence:** Dexie (IndexedDB, schema in `src/services/db.ts`) + OPFS for media
-- **State:** Zustand (UI state), event-driven architecture (`chrome.runtime` messaging)
+- **State:** event-driven (`chrome.runtime` messaging); the service worker is the source of truth
 - **Search:** Lunr.js in a Web Worker
 - **CLI:** citty, a WebSocket daemon bridged to the extension (`src/background/wsBridge.ts`)
 - **Testing:** Vitest, fake-indexeddb
@@ -111,11 +111,13 @@ Each platform implements `Extractor<TRaw>` and `Transformer<TRaw>`. Core sync lo
 
 ### 5. Soft delete with deferred cleanup
 
-A soft-delete flag gives instant UX; the Janitor service does the expensive cleanup every 30 minutes. Compound indexes filter deleted items at query time.
+A soft-delete flag gives instant UX; the Janitor service hard-deletes after a 5-minute grace, at start and every 30 minutes. There is no undo. Compound indexes filter deleted items at query time.
 
 ### 6. Event-driven UI updates
 
 The background service worker is the source of truth. UI components subscribe to events (`chatSynced`, `bulkSync*`, `importProgress`, `providerStatsUpdated`) for real-time updates.
+
+The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /project/haevn/architecture/index`); this file is the summary.
 
 ## Conventions
 
@@ -150,18 +152,18 @@ The background service worker is the source of truth. UI components subscribe to
 5. **Bulk operations** (`src/background/bulkSync/`, `bulkExport/`, `import/`): stateful orchestration under an operation lock
 6. **UI** (`src/popup/`, `src/options/`, `src/viewer/`): popup, archive (options) and viewer
 7. **Content script** (`src/content/content.ts`): injected bridge to the LLM platforms
-8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive; exports go through the extension's exporter registry (`src/background/export/exporters.ts`)
+8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive. It keeps its own copies of some operations (exporter choice, metadata writes, import), so check that a change to a handler reaches the bridge too
 
 ### Data flows
 
 - **Single chat sync:** popup → handler → content script → extractor → transformer → repository → index → event
-- **Bulk sync:** orchestrator → offscreen (iframe) → chat ids → alarm loop → fetch (API or navigation) → transform → save → event
+- **Bulk sync:** orchestrator → extraction tab → chat ids → alarm loop → fetch (API or navigation) → transform → save → event
 - **Search:** UI → handler → offscreen → worker (Lunr) → streaming results → UI
 - **Export:** handler → worker → ZIP → browser API bridge → download
 
 ### Adding a platform
 
 - Create `src/providers/{platform}/` with extractor, transformer, model and provider
-- Register it in `src/background/init.ts`
+- Register it in `src/background/init.ts` (the `PROVIDERS` list) and in `getProviderByPlatform` (`src/background/utils/platformTransform.ts`)
 - Add the host permission in `src/manifest.json`
 - Update `src/utils/platform.ts` for detection
