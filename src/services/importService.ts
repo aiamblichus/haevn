@@ -18,10 +18,10 @@ export interface SaveImportedChatOptions {
  * - Inject Open WebUI base URL if needed
  * - Check if chat is new (for stats update)
  * - Save to database
- * - Seed the metadata record from the chat's haevnMetadata
  * - Update provider stats for new chats
  * - Trigger thumbnail generation (fire-and-forget)
  * - Broadcast chat synced event
+ * - Seed the metadata record from the chat's haevnMetadata (a failure is logged only)
  */
 async function saveImportedChat(
   chat: Chat,
@@ -64,24 +64,6 @@ async function saveImportedChat(
   // Save chat
   await SyncService.saveChat(chat, raw, { skipIndexing });
 
-  // Seed metadata from the chat's haevnMetadata field (a HAEVN export carries it), but never
-  // over a record the archive already has.
-  if (chat.haevnMetadata) {
-    const existingMetadata = await MetadataRepository.get(chat.id);
-    if (!existingMetadata) {
-      const m = chat.haevnMetadata;
-      await MetadataRepository.set(chat.id, {
-        title: m.title ?? "",
-        description: m.description ?? "",
-        synopsis: m.synopsis ?? "",
-        categories: m.categories ?? [],
-        keywords: m.keywords ?? [],
-        source: "manual",
-        updatedAt: Date.now(),
-      });
-    }
-  }
-
   // Update provider stats cache (increment for new chats)
   if (isNewChat && chat.source) {
     const providerName = ChatService.extractProviderName(chat.source);
@@ -102,6 +84,29 @@ async function saveImportedChat(
   // Broadcast chat synced event
   const { broadcastChatSynced } = await import("../background/utils/chatSyncUtils");
   broadcastChatSynced(chat);
+
+  // Seed metadata from the chat's haevnMetadata field (a HAEVN export carries it), but never
+  // over a record the archive already has. Last, and on its own: a failure here must not undo
+  // the count, the thumbnails and the broadcast of a chat that is saved.
+  if (chat.haevnMetadata) {
+    try {
+      const existingMetadata = await MetadataRepository.get(chat.id);
+      if (!existingMetadata) {
+        const m = chat.haevnMetadata;
+        await MetadataRepository.set(chat.id, {
+          title: m.title ?? "",
+          description: m.description ?? "",
+          synopsis: m.synopsis ?? "",
+          categories: m.categories ?? [],
+          keywords: m.keywords ?? [],
+          source: "manual",
+          updatedAt: Date.now(),
+        });
+      }
+    } catch (err) {
+      log.warn(`[ImportService] Failed to seed metadata for ${chat.id}:`, err);
+    }
+  }
 }
 
 // Export as namespace

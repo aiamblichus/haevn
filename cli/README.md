@@ -259,6 +259,7 @@ Options:
 - `--skip-index` - Save the chats without indexing them for search; they are not searchable until the extension next rebuilds its index (default: index them as they are saved; more than 20 files rebuild the index once at the end)
 
 Notes:
+- If the chats are saved but the extension cannot bring its search index up to date, `haevn import` prints `index=failed (reason)` and exits 1; the chats are in the archive and the next rebuild of the search index picks them up.
 - An import takes the extension's operation lock. While a bulk sync, another import or a bulk export runs, `haevn import` exits 1 with "Another operation is running"; run it again when that ends.
 - `claude_code`, `codex`, and `pi` are import-only providers (no live sync).
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.

@@ -171,27 +171,49 @@ describe("importing a batch of chats (HVN-38)", () => {
     expect(await getActiveOperation()).toBe("idle");
   });
 
-  it("releases the lock when bulk mode cannot start, and does not try to finish it", async () => {
+  it("reports an index error and still saves, ends bulk mode and frees the lock when bulk mode cannot start", async () => {
     startBulkSyncIndexing.mockRejectedValue(new Error("search worker gone"));
+    const count = INCREMENTAL_INDEX_MAX_CHATS + 1;
 
-    await expect(
-      importChatBatch(items(INCREMENTAL_INDEX_MAX_CHATS + 1), { overwrite: true, index: true }),
-    ).rejects.toThrow("search worker gone");
+    const result = await importChatBatch(items(count), { overwrite: true, index: true });
 
-    expect(finishBulkSyncIndexing).not.toHaveBeenCalled();
-    expect(saveImportedChat).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ saved: count, errors: 0, indexError: "search worker gone" });
+    // The worker may have switched to bulk mode before the call failed: switch it back.
+    expect(finishBulkSyncIndexing).toHaveBeenCalledTimes(1);
+    expect(calls.filter((c) => c.startsWith("save")).every((c) => c.endsWith("true}"))).toBe(true);
     expect(await getActiveOperation()).toBe("idle");
   });
 
-  it("releases the lock and reports the batch when the rebuild cannot be started", async () => {
-    finishBulkSyncIndexing.mockRejectedValue(new Error("search worker gone"));
+  it("reports an index error, with the chats saved, when the rebuild cannot be started", async () => {
+    finishBulkSyncIndexing.mockRejectedValue(new Error("rebuild refused"));
+    const count = INCREMENTAL_INDEX_MAX_CHATS + 1;
+
+    const result = await importChatBatch(items(count), { overwrite: true, index: true });
+
+    expect(result).toMatchObject({ saved: count, errors: 0, indexError: "rebuild refused" });
+    expect(await getActiveOperation()).toBe("idle");
+  });
+
+  it("names the first index failure when both ends fail", async () => {
+    startBulkSyncIndexing.mockRejectedValue(new Error("first"));
+    finishBulkSyncIndexing.mockRejectedValue(new Error("second"));
 
     const result = await importChatBatch(items(INCREMENTAL_INDEX_MAX_CHATS + 1), {
       overwrite: true,
       index: true,
     });
 
-    expect(result.saved).toBe(INCREMENTAL_INDEX_MAX_CHATS + 1);
-    expect(await getActiveOperation()).toBe("idle");
+    expect(result.indexError).toBe("first");
+  });
+
+  it("has no indexError when the index is brought up to date", async () => {
+    const small = await importChatBatch(items(2), { overwrite: true, index: true });
+    const big = await importChatBatch(items(INCREMENTAL_INDEX_MAX_CHATS + 1), {
+      overwrite: true,
+      index: true,
+    });
+
+    expect(small).not.toHaveProperty("indexError");
+    expect(big).not.toHaveProperty("indexError");
   });
 });

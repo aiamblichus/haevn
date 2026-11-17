@@ -183,8 +183,9 @@ describe("setMetadata over the bridge does what the UI's handler does (HVN-30)",
 });
 
 describe("import over the bridge goes through the archive's import sequence (HVN-38)", () => {
-  function chatFile(i: number): { name: string; content: string } {
-    return {
+  // The batch's own rules (lock, bulk mode, counts) are in importBatch.test.ts; this is the wire.
+  function files(count: number) {
+    return Array.from({ length: count }, (_, i) => ({
       name: `chat-${i}.json`,
       content: JSON.stringify({
         id: `chat-${i}`,
@@ -194,14 +195,10 @@ describe("import over the bridge goes through the archive's import sequence (HVN
         currentId: "m1",
         messages: { m1: { id: "m1" } },
       }),
-    };
+    }));
   }
 
-  function files(count: number) {
-    return Array.from({ length: count }, (_, i) => chatFile(i));
-  }
-
-  it("keeps the CLI's response shape and indexes a small import as it saves", async () => {
+  it("keeps the CLI's response shape", async () => {
     const bridge = await connectedBridge();
 
     const reply = await bridge.ask({
@@ -216,31 +213,6 @@ describe("import over the bridge goes through the archive's import sequence (HVN
       success: true,
       data: { format: "haevn_json", total: 2, processed: 2, saved: 2, skipped: 0, errors: 0 },
     });
-    expect(saveImportedChat).toHaveBeenCalledTimes(2);
-    for (const call of saveImportedChat.mock.calls) {
-      expect(call[2]).toEqual({ skipIndexing: false });
-    }
-    // No bulk mode, so no full rebuild that would blank search.
-    expect(startBulkSyncIndexing).not.toHaveBeenCalled();
-    expect(finishBulkSyncIndexing).not.toHaveBeenCalled();
-  });
-
-  it("rebuilds the index once for a big import", async () => {
-    const bridge = await connectedBridge();
-
-    const reply = await bridge.ask({
-      action: "import",
-      format: "haevn_json",
-      files: files(25),
-      options: { overwrite: true },
-    });
-
-    expect(reply).toMatchObject({ success: true, data: { saved: 25, errors: 0 } });
-    expect(startBulkSyncIndexing).toHaveBeenCalledTimes(1);
-    expect(finishBulkSyncIndexing).toHaveBeenCalledTimes(1);
-    for (const call of saveImportedChat.mock.calls) {
-      expect(call[2]).toEqual({ skipIndexing: true });
-    }
   });
 
   it("skipIndex saves without indexing now", async () => {
@@ -254,12 +226,11 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     });
 
     expect(saveImportedChat.mock.calls[0][2]).toEqual({ skipIndexing: true });
-    expect(startBulkSyncIndexing).not.toHaveBeenCalled();
   });
 
-  it("refuses while another operation holds the lock, and saves nothing", async () => {
+  it("answers BUSY, with the running operation named, while another holds the lock", async () => {
     const bridge = await connectedBridge();
-    const { acquireOperationLock, getActiveOperation } = await import("../src/background/state");
+    const { acquireOperationLock } = await import("../src/background/state");
     await acquireOperationLock("bulkExport");
 
     const reply = await bridge.ask({
@@ -270,28 +241,24 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     });
 
     expect(reply).toMatchObject({ success: false, code: "BUSY" });
-    expect(reply.error).toContain("Another operation is running");
-    expect(reply.error).toContain("bulkExport");
+    expect(reply.error).toContain("Another operation is running (bulkExport)");
     expect(saveImportedChat).not.toHaveBeenCalled();
-    expect(await getActiveOperation()).toBe("bulkExport");
   });
 
-  it("holds the lock for the import and frees it afterwards", async () => {
+  it("carries an index failure in the response next to the counts", async () => {
+    finishBulkSyncIndexing.mockRejectedValue(new Error("rebuild refused"));
     const bridge = await connectedBridge();
-    const { getActiveOperation } = await import("../src/background/state");
-    const seen: string[] = [];
-    saveImportedChat.mockImplementation(async () => {
-      seen.push(await getActiveOperation());
-    });
 
-    await bridge.ask({
+    const reply = await bridge.ask({
       action: "import",
       format: "haevn_json",
-      files: files(1),
+      files: files(25),
       options: { overwrite: true },
     });
 
-    expect(seen).toEqual(["import"]);
-    expect(await getActiveOperation()).toBe("idle");
+    expect(reply).toMatchObject({
+      success: true,
+      data: { saved: 25, errors: 0, indexError: "rebuild refused" },
+    });
   });
 });

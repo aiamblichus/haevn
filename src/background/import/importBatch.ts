@@ -51,6 +51,15 @@ export interface ImportBatchResult {
   saved: number;
   skipped: number;
   errors: number;
+  /**
+   * Set when the index could not be brought up to date (bulk mode would not start or the
+   * rebuild would not start). The chats are saved all the same; the next index init finds them.
+   */
+  indexError?: string;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export async function importChatBatch(
@@ -67,8 +76,15 @@ export async function importChatBatch(
 
   try {
     if (bulk) {
-      await SyncService.startBulkSyncIndexing();
+      // The worker may have switched to bulk mode before the call failed, so the finish below
+      // runs either way to switch it back. The chats are saved without indexing in both cases.
       bulkStarted = true;
+      try {
+        await SyncService.startBulkSyncIndexing();
+      } catch (err) {
+        log.error("[ImportBatch] Failed to start bulk indexing:", err);
+        result.indexError ??= errorMessage(err);
+      }
     }
 
     for (const item of items) {
@@ -88,7 +104,7 @@ export async function importChatBatch(
         result.errors++;
         log.warn("[ImportBatch] Import skipped due to parsing/transformation error", {
           file: item.name,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         });
       }
     }
@@ -97,6 +113,7 @@ export async function importChatBatch(
       if (bulkStarted) await SyncService.finishBulkSyncIndexing();
     } catch (err) {
       log.error("[ImportBatch] Failed to finish bulk indexing:", err);
+      result.indexError ??= errorMessage(err);
     } finally {
       await releaseOperationLock("import");
     }

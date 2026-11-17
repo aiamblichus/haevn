@@ -4,19 +4,23 @@ import { getDB } from "../src/services/db";
 import { ImportService } from "../src/services/importService";
 import * as MetadataRepository from "../src/services/metadataRepository";
 
-const { getChat, saveChat } = vi.hoisted(() => ({
-  getChat: vi.fn(),
-  saveChat: vi.fn(async () => {}),
-}));
+const { getChat, saveChat, updateProviderStats, broadcastChatSynced, generateThumbnails } =
+  vi.hoisted(() => ({
+    getChat: vi.fn(),
+    saveChat: vi.fn(async () => {}),
+    updateProviderStats: vi.fn(async () => {}),
+    broadcastChatSynced: vi.fn(),
+    generateThumbnails: vi.fn(async () => {}),
+  }));
 
 vi.mock("../src/services/syncService", () => ({ SyncService: { getChat, saveChat } }));
 vi.mock("../src/services/cacheService", () => ({
-  CacheService: { updateProviderStats: vi.fn(async () => {}) },
+  CacheService: { updateProviderStats },
 }));
 vi.mock("../src/background/handlers/galleryHandlers", () => ({
-  handleGenerateThumbnails: vi.fn(async () => {}),
+  handleGenerateThumbnails: generateThumbnails,
 }));
-vi.mock("../src/background/utils/chatSyncUtils", () => ({ broadcastChatSynced: vi.fn() }));
+vi.mock("../src/background/utils/chatSyncUtils", () => ({ broadcastChatSynced }));
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -38,6 +42,9 @@ function chatWithMetadata(id: string): Chat {
 beforeEach(async () => {
   getChat.mockReset();
   getChat.mockResolvedValue(undefined);
+  updateProviderStats.mockClear();
+  broadcastChatSynced.mockClear();
+  generateThumbnails.mockClear();
   await getDB().chatMetadata.clear();
 });
 
@@ -66,5 +73,20 @@ describe("saving an imported chat seeds its metadata (the UI and the CLI both co
     await ImportService.saveImportedChat({ id: "c3", source: "claude" } as unknown as Chat);
 
     expect(await MetadataRepository.get("c3")).toBeNull();
+  });
+
+  it("counts, thumbnails and announces the chat even when the seeding fails", async () => {
+    const put = vi.spyOn(getDB().chatMetadata, "put").mockRejectedValue(new Error("quota"));
+
+    try {
+      await expect(ImportService.saveImportedChat(chatWithMetadata("c4"))).resolves.toBeUndefined();
+    } finally {
+      put.mockRestore();
+    }
+
+    expect(updateProviderStats).toHaveBeenCalledWith("claude", 1);
+    expect(generateThumbnails).toHaveBeenCalledWith("c4");
+    expect(broadcastChatSynced).toHaveBeenCalledTimes(1);
+    expect(await MetadataRepository.get("c4")).toBeNull();
   });
 });

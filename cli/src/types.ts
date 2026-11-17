@@ -138,6 +138,8 @@ export interface ImportResult {
   saved: number;
   skipped: number;
   errors: number;
+  /** Set when the chats were saved but the search index could not be brought up to date. */
+  indexError?: string;
 }
 
 /**
