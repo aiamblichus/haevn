@@ -198,8 +198,9 @@ describe("search worker: a search during an index rebuild", () => {
     }
     await rebuild;
 
-    // 120 chats is one 1000-chat chunk: the old counter would only ever read 0.
-    expect([...processedSeen].some((n) => n > 0)).toBe(true);
+    // 120 chats fit in one 1000-chat chunk, so only a per-read counter is ever
+    // seen strictly between the ends; a per-chunk counter jumps from 0 to 120.
+    expect([...processedSeen].some((n) => n > 0 && n < 120)).toBe(true);
   });
 });
 

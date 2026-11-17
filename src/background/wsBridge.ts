@@ -545,7 +545,7 @@ async function handleSearch(
     return {
       id,
       success: false,
-      error: `Search index is rebuilding (${indexRebuilding.percentage}%); results will return when it finishes. Try again shortly.`,
+      error: `Search index is rebuilding (${indexRebuilding.percentage}%). Try again shortly.`,
       code: "INDEX_REBUILDING",
     };
   }

@@ -351,7 +351,7 @@ const App = () => {
               setSearchIndexRebuild(event.indexRebuilding ?? null);
               if (event.indexRebuilding) {
                 setStatus(
-                  `Search index is rebuilding (${event.indexRebuilding.percentage}%) — results will return when it finishes`,
+                  `Search index is rebuilding (${event.indexRebuilding.percentage}%). Search again when it finishes.`,
                   "warn",
                 );
               } else {
