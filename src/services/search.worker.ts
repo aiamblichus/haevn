@@ -145,6 +145,9 @@ let rebuildRun: Promise<RebuildOutcome> | null = null;
 // Set by a request that arrives during a run: the run goes once more, so chats written after
 // the running pass read its `count()` are indexed (HVN-50).
 let rebuildAgain = false;
+// Chats an `add` named while a pass ran (HVN-54). The pass owns the segments, so the add only
+// leaves its id here; the pass indexes these from the database before it ends.
+const addedDuringRebuild = new Set<string>();
 // Set when the last rebuild pass failed; the index is then part-built until a rebuild succeeds.
 let rebuildFailure: string | null = null;
 // A failed pass is retried by `init` once per worker lifetime, so a failure that never goes away
@@ -417,7 +420,20 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
   segment.index = builder.build();
 }
 
+/**
+ * Index one chat document. During a rebuild the pass owns the segments (it replaces them and
+ * keeps its own handle on the one it fills), so an add only records the chat; the pass indexes
+ * it before it ends, reading the row as it is then (HVN-54).
+ */
 function addToIndex(doc: SearchDoc): void {
+  if (rebuildRun) {
+    addedDuringRebuild.add(doc.id);
+    return;
+  }
+  indexDocument(doc);
+}
+
+function indexDocument(doc: SearchDoc): void {
   let activeSeg = segments.get(activeSegmentId);
   if (!activeSeg) {
     activeSeg = createNewSegment(activeSegmentId);
@@ -547,6 +563,29 @@ function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
   return run;
 }
 
+/**
+ * Index the chats an add named during the pass, from the database, into the segments the pass
+ * has just built. An add can name a chat the pass had already read past (an update) or one it
+ * will never read (written after it counted), so the pass cannot rely on its own reads. Adds
+ * that arrive while this reads join the loop; the last check is synchronous, so none can slip
+ * in between it and the end of the run.
+ */
+async function indexChatsAddedDuringRebuild(): Promise<void> {
+  while (addedDuringRebuild.size > 0) {
+    const ids = Array.from(addedDuringRebuild);
+    addedDuringRebuild.clear();
+    const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
+    for (const chat of chats) {
+      const data = extractTextAndMap(chat);
+      if (data) indexDocument(data.doc);
+    }
+    // The debounce is off during a run, so write the active segment now: an update of a chat it
+    // holds only changes the cache until the segment is rebuilt.
+    const active = segments.get(activeSegmentId);
+    if (active) rebuildActiveSegment(active);
+  }
+}
+
 async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
   rebuildFailure = null;
   clearDebounceTimers();
@@ -649,6 +688,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
         });
       }
     }
+
+    await indexChatsAddedDuringRebuild();
 
     log.info("[SearchWorker] Full rebuild complete.");
 
@@ -1175,6 +1216,9 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "remove" || msg.type === "removeMany") {
+      // A pass pages through the chats by position: a row deleted behind it moves the next row
+      // into a place it has read, and that chat is never indexed. The pass reads again.
+      if (rebuildRun) rebuildAgain = true;
       self.postMessage({ type: "removeComplete", success: true });
     }
   } catch (e) {

@@ -9,7 +9,11 @@ vi.mock("../src/utils/logger", () => ({
 
 // The worker opens its own database; keep each one so a test can make its writes fail.
 const workerDbs = vi.hoisted(
-  () => [] as Array<{ lunrIndex: { put: (...a: unknown[]) => unknown } }>,
+  () =>
+    [] as Array<{
+      lunrIndex: { put: (...a: unknown[]) => unknown };
+      chats: { offset: (n: number) => unknown };
+    }>,
 );
 vi.mock("../src/services/db", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/services/db")>();
@@ -600,3 +604,174 @@ function lastReply(): Posted {
   const replies = posted.filter((m) => m.type === "bulkComplete");
   return replies[replies.length - 1];
 }
+
+describe("search worker: an add or a remove during an index rebuild (HVN-54)", () => {
+  /** A held step: `paused` settles when it is reached, `resume` lets it go on. */
+  type Hold = {
+    paused: Promise<void>;
+    resume: () => void;
+    reached: () => void;
+    released: Promise<void>;
+  };
+
+  function newHold(): Hold {
+    let reached!: () => void;
+    let resume!: () => void;
+    const paused = new Promise<void>((r) => {
+      reached = r;
+    });
+    const released = new Promise<void>((r) => {
+      resume = r;
+    });
+    return { paused, resume, reached, released };
+  }
+
+  /**
+   * Hold the running rebuild just before it reads the chats from `offset` on: it has read, and
+   * moved past, the chats before that.
+   */
+  function holdRebuildBefore(offset: number): Hold {
+    const db = workerDbs[workerDbs.length - 1];
+    const original = db.chats.offset.bind(db.chats);
+    const hold = newHold();
+    type Reads = { limit: (n: number) => Reads; toArray: () => Promise<unknown[]> };
+    vi.spyOn(db.chats, "offset").mockImplementation(((n: number) => {
+      const reads = original(n) as Reads;
+      if (n !== offset) return reads;
+      const limit = reads.limit.bind(reads);
+      reads.limit = (count: number) => {
+        const limited = limit(count);
+        const toArray = limited.toArray.bind(limited);
+        limited.toArray = async () => {
+          hold.reached();
+          await hold.released;
+          return toArray();
+        };
+        return limited;
+      };
+      return reads;
+    }) as never);
+    return hold;
+  }
+
+  function chatIds(count: number): string[] {
+    return Array.from({ length: count }, (_, i) => `c${String(i).padStart(3, "0")}`);
+  }
+
+  async function startHeldRebuild(
+    count: number,
+    holdBefore: number,
+  ): Promise<{ rebuild: Promise<void>; hold: Hold }> {
+    await seedChats(chatIds(count).map((id) => buildChat(id, "pineapple")));
+    const hold = holdRebuildBefore(holdBefore);
+    const rebuild = send({ type: "rebuild" });
+    await hold.paused;
+    return { rebuild, hold };
+  }
+
+  /** What a save does: write the row, then send the add. */
+  async function rewriteAndAdd(id: string, text: string): Promise<void> {
+    await seedChats([buildChat(id, text)]);
+    await send({ type: "add", doc: { id, title: `Chat ${id}`, content: text } });
+  }
+
+  it("indexes a chat written after the rebuild counted the chats", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+
+    await rewriteAndAdd("zzz-late", "mango");
+    hold.resume();
+    await rebuild;
+
+    expect(hitIds(await search("mango", false))).toEqual(["zzz-late"]);
+    expect(hitIds(await search("pineapple", false))).toHaveLength(120);
+  });
+
+  it("indexes the new text of a chat the rebuild had read, in the segment it is filling", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+
+    await rewriteAndAdd("c000", "mango");
+    hold.resume();
+    await rebuild;
+
+    expect(hitIds(await search("mango", false))).toEqual(["c000"]);
+  });
+
+  it("indexes the new text of a chat the rebuild had read, in a segment it had already written", async () => {
+    const { rebuild, hold } = await startHeldRebuild(300, 250);
+
+    await rewriteAndAdd("c000", "mango");
+    hold.resume();
+    await rebuild;
+
+    expect(hitIds(await search("mango", false))).toEqual(["c000"]);
+  });
+
+  it("writes the new text of a chat the rebuild had read to storage", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+
+    await rewriteAndAdd("c000", "mango");
+    hold.resume();
+    await rebuild;
+
+    // The segment the pass wrote holds the old text, and the debounce is off while it runs.
+    await vi.waitFor(async () => {
+      const stored = await getDB().lunrIndex.get("segment_0");
+      expect(JSON.stringify(stored?.index)).toContain("mango");
+    });
+  });
+
+  it("indexes an add that arrives while the rebuild is reading the earlier ones", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+    const db = workerDbs[workerDbs.length - 1];
+    const bulkGet = db.chats.bulkGet.bind(db.chats);
+    const reading = newHold();
+    let calls = 0;
+    // The first bulkGet is the rebuild's own (its last segment); the second reads the adds.
+    vi.spyOn(db.chats, "bulkGet").mockImplementation(((...args: unknown[]) => {
+      calls += 1;
+      if (calls !== 2) return bulkGet(...args);
+      reading.reached();
+      return reading.released.then(() => bulkGet(...args));
+    }) as never);
+
+    await rewriteAndAdd("early", "mango");
+    hold.resume();
+    await reading.paused;
+    await rewriteAndAdd("late", "kiwi");
+    reading.resume();
+    await rebuild;
+
+    expect(hitIds(await search("mango", false))).toEqual(["early"]);
+    expect(hitIds(await search("kiwi", false))).toEqual(["late"]);
+  });
+
+  it("answers once, and runs one pass, for a rebuild that took an add", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+
+    await rewriteAndAdd("zzz-late", "mango");
+    hold.resume();
+    await rebuild;
+
+    expect(posted.filter((m) => m.type === "bulkComplete")).toEqual([
+      { type: "bulkComplete", success: true },
+    ]);
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+  });
+
+  it("indexes the chat that follows a chat deleted behind the rebuild", async () => {
+    const { rebuild, hold } = await startHeldRebuild(120, 100);
+
+    // The rows after c000 move up one place, so the pass would read c101 next and skip c100.
+    await getDB().chats.delete("c000");
+    await send({ type: "removeMany", chatIds: ["c000"] });
+    hold.resume();
+    await rebuild;
+
+    const found = hitIds(await search("pineapple", false));
+    expect(
+      chatIds(120)
+        .slice(1)
+        .filter((id) => !found.includes(id)),
+    ).toEqual([]);
+  });
+});
