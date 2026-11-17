@@ -9,6 +9,7 @@
 
 import type { HAEVN } from "../../model/haevn_model";
 import { hasTextContent } from "../../providers/claude/transformer";
+import { registerAllProviders } from "../../providers/index";
 import * as ChatPersistence from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
 import type { AllProviderRawData } from "../../types/messaging";
@@ -16,6 +17,9 @@ import type { BulkSyncWorkerMessage } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import { handleWorkerResponse } from "../../utils/media_utils";
 import { transformRawDataToHaevn } from "../utils/platformTransform";
+
+// This worker is its own JavaScript context with an empty provider registry (see content.ts)
+registerAllProviders();
 
 // Use the shared database class - worker gets its own instance
 const db = new HaevnDatabase();

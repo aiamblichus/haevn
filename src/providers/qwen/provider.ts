@@ -67,6 +67,7 @@ const transformer: Transformer<QwenChatData> = {
 export const qwenProvider: Provider<QwenChatData> = {
   name: "qwen",
   displayName: "Qwen",
+  hosts: ["chat.qwen.ai"],
 
   extractor,
   transformer,

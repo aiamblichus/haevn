@@ -71,6 +71,7 @@ const transformer: Transformer<ChatGPTRawExtraction> = {
 export const chatgptProvider: Provider<ChatGPTRawExtraction> = {
   name: "chatgpt",
   displayName: "ChatGPT",
+  hosts: ["chat.openai.com", "chatgpt.com"],
 
   extractor,
   transformer,

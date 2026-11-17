@@ -68,6 +68,7 @@ const transformer: Transformer<GrokRawExtraction> = {
 export const grokProvider: Provider<GrokRawExtraction> = {
   name: "grok",
   displayName: "Grok",
+  hosts: ["grok.com", "x.ai"],
 
   extractor,
   transformer,

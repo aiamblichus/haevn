@@ -198,6 +198,7 @@ const transformer: Transformer<AIStudioConversationData> = {
 export const aistudioProvider: Provider<AIStudioConversationData> = {
   name: "aistudio",
   displayName: "Google AI Studio",
+  hosts: ["aistudio.google.com"],
 
   extractor,
   transformer,

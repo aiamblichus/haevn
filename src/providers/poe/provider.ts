@@ -121,6 +121,7 @@ const transformer: Transformer<PoeConversationData> = {
 export const poeProvider: Provider<PoeConversationData> = {
   name: "poe",
   displayName: "Poe",
+  hosts: ["poe.com"],
 
   extractor,
   transformer,

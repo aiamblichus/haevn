@@ -64,6 +64,7 @@ const transformer: Transformer<GeminiConversationData> = {
 export const geminiProvider: Provider<GeminiConversationData> = {
   name: "gemini",
   displayName: "Google Gemini",
+  hosts: ["gemini.google.com", "bard.google.com"],
 
   extractor,
   transformer,

@@ -49,6 +49,7 @@ const importer: Importer<string> = {
 export const codexProvider: Provider<CodexRawExtraction, string> = {
   name: "codex",
   displayName: "Codex",
+  importOnly: true,
   extractor,
   transformer,
   importer,

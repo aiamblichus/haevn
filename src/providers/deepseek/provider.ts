@@ -68,6 +68,7 @@ const transformer: Transformer<DeepseekConversationData> = {
 export const deepseekProvider: Provider<DeepseekConversationData> = {
   name: "deepseek",
   displayName: "DeepSeek",
+  hosts: ["chat.deepseek.com"],
 
   extractor,
   transformer,
