@@ -1,3 +1,4 @@
+<!-- generated from /project/haevn/skills/dev-guide-extending by pnpm run skills:sync; edit the KB note, not this file -->
 # Extending HAEVN with an MCP-First Workflow
 
 This guide describes how to add new capability to HAEVN and validate it using Chrome MCP + `haevnDebug`.

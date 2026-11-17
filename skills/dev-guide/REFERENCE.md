@@ -1,3 +1,4 @@
+<!-- generated from /project/haevn/skills/dev-guide-reference by pnpm run skills:sync; edit the KB note, not this file -->
 # HAEVN Console Reference (`haevnDebug`-First)
 
 Use this from the extension Options page console (or MCP `evaluate_script` in that page).

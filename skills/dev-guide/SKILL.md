@@ -3,6 +3,7 @@ name: dev-guide
 description: Autonomous development and debugging workflow for the HAEVN extension using Chrome MCP and in-page `haevnDebug` APIs (no relay bridge).
 ---
 
+<!-- generated from /project/haevn/skills/dev-guide by pnpm run skills:sync; edit the KB note, not this file -->
 # HAEVN Autonomous Dev Manual (MCP-First)
 
 ## Purpose
@@ -28,6 +29,8 @@ Do **not** use the old relay/HTTP bridge workflow.
 Navigate Chrome MCP to:
 
 - `chrome-extension://<EXTENSION_ID>/options.html`
+
+The id is machine-specific (unpacked, no `key` in `src/manifest.json`): read it from `chrome://extensions` (the HAEVN card) or from the HAEVN target in the Chrome MCP page list.
 
 Then verify debug surface is present:
 
