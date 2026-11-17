@@ -182,7 +182,8 @@ Use `--include-media` only when explicitly needed.
 
 ```bash
 haevn export <chatId> -o ./chat.json
-haevn export <chatId> -o ./chat-with-media.json --include-media
+haevn export <chatId> -o ./chat.md -f haevn_markdown                  # the branch you are on
+haevn export <chatId> -o ./chat-all.md -f haevn_markdown --all-branches   # every branch, as sections (reading only; the importer refuses it)
 ```
 
 Use export for archival fidelity; use `get` for readable branch extraction.
@@ -218,5 +219,5 @@ haevn search "query" --format json | jq '.results[] | {chatId, messageRef, sourc
 
 - Start broad with `list`/`search`, then narrow with `branches` and `get -m`.
 - Prefer short refs in user communication; raw IDs are too noisy.
-- Keep `--include-media` off unless required (smaller payloads, faster runs).
+- Keep `get --include-media` off unless required (smaller payloads, faster runs); `export` never embeds media.
 - For automations and scripts, prefer `--format json` + `jq`.
