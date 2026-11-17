@@ -5,6 +5,7 @@ import { RateLimiter } from "../../utils/rateLimit";
 import { detectPlatform } from "../shared/platformDetector";
 import { generateFallbackId } from "../shared_utils";
 import type {
+  ChatGPTAssetsMap,
   ChatGPTRawExtraction,
   ChatList,
   OpenAIConversation,
@@ -344,7 +345,7 @@ export async function fetchChatGPTConversation(
 }
 
 // Main extraction: fetch conversation and download assets
-import type { ExportOptions } from "../../formatters";
+import type { ExportOptions } from "../interfaces";
 
 export async function extractChatGPTConversationData(
   _options: ExportOptions = {},

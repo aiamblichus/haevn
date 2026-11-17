@@ -428,7 +428,10 @@ export type ContentScriptRequest =
   | { action: "fetchQwenConversation"; chatId: string }
   | { action: "fetchDeepseekConversation"; chatId: string }
   | { action: "fetchPoeConversation"; chatId: string; baseUrl?: string }
-  | { action: "fetchBlob"; url: string; credentials?: RequestCredentials };
+  | { action: "fetchBlob"; url: string; credentials?: RequestCredentials }
+  // Sent by the ChatGPT webRequest listener when the auth/session call completes; the content
+  // script re-reads the session itself and ignores the url
+  | { action: "captureChatGPTToken"; url?: string };
 
 // ======================
 // Content Script Response Messages

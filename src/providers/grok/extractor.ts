@@ -5,7 +5,6 @@ import { ExportOptions } from "../interfaces";
 import { detectPlatform } from "../shared/platformDetector";
 import type {
   GrokConversation,
-  GrokConversationResponse,
   GrokConversationsResponse,
   GrokLoadResponsesResponse,
   GrokRawExtraction,

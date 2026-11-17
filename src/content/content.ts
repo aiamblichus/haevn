@@ -1,9 +1,9 @@
 // HAEVN Content Script
 // Provides: ping, platform detection, and data extraction for supported platforms.
 
-import type { ExportOptions } from "../formatters";
 import { captureAndStoreChatGPTToken } from "../providers/chatgpt/listeners";
 import { registerAllProviders } from "../providers/index";
+import type { ExportOptions } from "../providers/interfaces";
 import { getProvider } from "../providers/provider";
 import type { ContentScriptResponse } from "../types/messaging";
 import { isContentScriptRequest } from "../types/messaging";
@@ -78,7 +78,7 @@ chrome.runtime.onMessage.addListener(
         return;
       }
 
-      log.debug("[HAEVN][Content] Received message:", message.action || message.type, message);
+      log.debug("[HAEVN][Content] Received message:", message.action, message);
 
       if (!("action" in message)) {
         return;
@@ -165,7 +165,9 @@ chrome.runtime.onMessage.addListener(
         case "captureChatGPTToken":
           captureAndStoreChatGPTToken()
             .then(() => sendResponse({ success: true }))
-            .catch(() => sendResponse({ success: false }));
+            .catch(() =>
+              sendResponse({ success: false, error: "Could not capture the ChatGPT access token" }),
+            );
           return true;
 
         default:

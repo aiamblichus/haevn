@@ -149,12 +149,6 @@ function waitForRender(ms: number = 150): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Scroll a turn into view and wait for content to render
-async function _scrollTurnIntoView(turnEl: Element): Promise<void> {
-  turnEl.scrollIntoView({ behavior: "instant", block: "center" });
-  await waitForRender(100);
-}
-
 // Expand thinking panel if collapsed
 async function expandThinkingIfNeeded(turnEl: Element): Promise<void> {
   const thinkingContainer = turnEl.querySelector(SELECTORS.thinkingContainer);
