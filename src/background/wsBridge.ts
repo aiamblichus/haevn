@@ -27,10 +27,11 @@
  * Keepalive – while the SW is alive an in-process timer sends pings every 20 s.
  * A chrome.alarm fires every 30 s to wake a dormant SW and reconnect if needed.
  *
- * Two closes are final, because reconnecting cannot help and would only repeat them: the daemon
- * rejecting the key (4001) and a newer extension connection replacing this one (4002; two
- * extensions sharing a key would otherwise replace each other for ever). The bridge then stops
- * (no alarm, no timers) until the user enables it or changes a setting. See wsBridgeClose.ts.
+ * Two closes get special treatment (see wsBridgeClose.ts). A newer extension connection
+ * replacing this one (4002) is final: two extensions sharing a key would otherwise replace each
+ * other for ever, so the bridge stops (no alarm, no timers) until the user enables it or changes
+ * a setting. A rejected key (4001) is retried slowly (30 s, doubling to 5 min), because the fix
+ * is usually a daemon restart that the extension cannot see.
  */
 
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
@@ -55,7 +56,12 @@ import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
-import { terminalCloseReason, WS_REASON_UNAUTHORIZED } from "./wsBridgeClose";
+import {
+  isKeyRejected,
+  rejectedRetryDelayMs,
+  terminalCloseReason,
+  WS_REASON_UNAUTHORIZED,
+} from "./wsBridgeClose";
 
 // ─── Protocol types ────────────────────────────────────────────────────────────
 
@@ -264,7 +270,10 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 /** Why the bridge gave up (a final close, see wsBridgeClose.ts); null while it should connect. */
 let haltedReason: string | null = null;
-let haltedLoaded = false;
+let haltedLoad: Promise<void> | null = null;
+/** After a rejected key: no connection before this time (ms since the epoch), and tries so far. */
+let retryNotBefore = 0;
+let rejectedAttempts = 0;
 
 /**
  * The stop outlives a service worker restart (it would otherwise reconnect the moment the
@@ -272,21 +281,23 @@ let haltedLoaded = false;
  */
 const HALTED_STORAGE_KEY = "haevn.cli.bridgeHalted";
 
-async function loadHalted(): Promise<void> {
-  if (haltedLoaded) return;
-  haltedLoaded = true;
-  try {
-    const stored = await chrome.storage.session.get(HALTED_STORAGE_KEY);
-    const reason = stored?.[HALTED_STORAGE_KEY];
-    if (typeof reason === "string") haltedReason = reason;
-  } catch {
-    // No session storage: the stop lasts as long as this service worker.
-  }
+/** Read the stop once per service worker; every caller waits for that one read. */
+function loadHalted(): Promise<void> {
+  haltedLoad ??= (async () => {
+    try {
+      const stored = await chrome.storage.session.get(HALTED_STORAGE_KEY);
+      const reason = stored?.[HALTED_STORAGE_KEY];
+      if (typeof reason === "string" && haltedReason === null) haltedReason = reason;
+    } catch {
+      // No session storage: the stop lasts as long as this service worker.
+    }
+  })();
+  return haltedLoad;
 }
 
 async function setHalted(reason: string | null): Promise<void> {
   haltedReason = reason;
-  haltedLoaded = true;
+  haltedLoad ??= Promise.resolve(); // what is stored no longer matters: this is newer
   try {
     if (reason === null) await chrome.storage.session.remove(HALTED_STORAGE_KEY);
     else await chrome.storage.session.set({ [HALTED_STORAGE_KEY]: reason });
@@ -325,6 +336,8 @@ export function handleWsReconnectAlarm(): void {
  */
 export async function resetWsBridge(): Promise<void> {
   await setHalted(null); // an explicit change of settings is a reason to try again
+  retryNotBefore = 0;
+  rejectedAttempts = 0;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -365,6 +378,7 @@ export async function applyWsBridgeSettings(): Promise<void> {
     sendJson({ type: "ping" });
     return;
   }
+  if (Date.now() < retryNotBefore) return; // the key was rejected; wait out the slow backoff
   await connect();
 }
 
@@ -457,6 +471,10 @@ async function connect(): Promise<void> {
       haltWsBridge(reason);
       return;
     }
+    if (isKeyRejected(event.code)) {
+      retryAfterRejectedKey();
+      return;
+    }
     scheduleReconnect();
   };
 }
@@ -473,10 +491,24 @@ function haltWsBridge(reason: string): void {
   void setHalted(reason);
 }
 
-function scheduleReconnect(): void {
+/**
+ * The daemon refused the key. Keep the alarm (a daemon restarted with the right key is found
+ * again) but connect no more often than the slow backoff allows; one warning per try.
+ */
+function retryAfterRejectedKey(): void {
+  const delayMs = rejectedRetryDelayMs(rejectedAttempts++);
+  retryNotBefore = Date.now() + delayMs;
+  log.warn(
+    `[WsBridge] Cannot connect: ${WS_REASON_UNAUTHORIZED}. Trying again in ${Math.round(delayMs / 1000)} s.`,
+  );
+  scheduleReconnect(delayMs);
+}
+
+function scheduleReconnect(delayOverrideMs?: number): void {
   if (reconnectTimer) return;
-  const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
-  reconnectAttempts++;
+  const delayMs =
+    delayOverrideMs ?? Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+  if (delayOverrideMs === undefined) reconnectAttempts++;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     applyWsBridgeSettings().catch((err) => {
@@ -492,13 +524,22 @@ function handleIncoming(msg: WsIncoming, _apiKey: string): void {
   if ("type" in msg) {
     if (msg.type === "authOk") {
       authenticated = true;
+      retryNotBefore = 0;
+      rejectedAttempts = 0;
       log.info("[WsBridge] Authenticated with daemon");
       return;
     }
     if (msg.type === "authError") {
-      log.warn("[WsBridge] Auth rejected by daemon:", msg.message);
-      // The daemon follows with close code 4001, but a client-initiated close can race it.
-      haltWsBridge(WS_REASON_UNAUTHORIZED);
+      log.debug("[WsBridge] Auth rejected by daemon:", msg.message);
+      // The daemon follows with close code 4001, but a client-initiated close can race it:
+      // take the socket down here, so that one rejection is one try, not two.
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+        socket = null;
+        authenticated = false;
+      }
+      retryAfterRejectedKey();
       return;
     }
     // Unknown control frame — ignore.

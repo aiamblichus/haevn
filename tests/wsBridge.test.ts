@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../src/utils/logger";
 
 const searchChatsStreaming = vi.hoisted(() => vi.fn());
 const getCliSettings = vi.hoisted(() => vi.fn());
@@ -99,6 +100,7 @@ beforeEach(() => {
   searchChatsStreaming.mockReset();
   alarms.create.mockClear();
   alarms.clear.mockClear();
+  vi.mocked(log.warn).mockClear();
   getCliSettings.mockReset();
   getCliSettings.mockResolvedValue({ enabled: true, port: 5517, apiKey: "key" });
   vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -180,6 +182,7 @@ describe("the bridge after the daemon closes it (HVN-44)", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("reconnects after an ordinary close, with a growing delay", async () => {
@@ -197,39 +200,106 @@ describe("the bridge after the daemon closes it (HVN-44)", () => {
     expect(sockets()).toHaveLength(3);
   });
 
-  for (const [code, name] of [
-    [4002, "replaced by a newer extension connection"],
-    [4001, "rejected key"],
-  ] as const) {
-    it(`stops for good on close ${code} (${name}): no timer, no alarm, no new socket`, async () => {
-      const { bridge, socket } = await connectedBridge();
+  it("stops for good on close 4002 (replaced by a newer extension): no timer, no alarm, no new socket", async () => {
+    const { bridge, socket } = await connectedBridge();
 
-      socket.drop(code);
-      await pass(0);
+    socket.drop(4002);
+    await pass(0);
 
-      expect(alarms.clear).toHaveBeenCalledWith(bridge.WS_RECONNECT_ALARM);
-      expect(vi.getTimerCount()).toBe(0);
-      await pass(120_000);
-      expect(sockets()).toHaveLength(1);
+    expect(alarms.clear).toHaveBeenCalledWith(bridge.WS_RECONNECT_ALARM);
+    expect(vi.getTimerCount()).toBe(0);
+    await pass(120_000);
+    expect(sockets()).toHaveLength(1);
 
-      // An alarm that was already in flight finds nothing to do.
-      alarms.create.mockClear();
-      bridge.handleWsReconnectAlarm();
-      await pass(60_000);
-      expect(sockets()).toHaveLength(1);
-      expect(alarms.create).not.toHaveBeenCalled();
+    // An alarm that was already in flight finds nothing to do.
+    alarms.create.mockClear();
+    bridge.handleWsReconnectAlarm();
+    await pass(60_000);
+    expect(sockets()).toHaveLength(1);
+    expect(alarms.create).not.toHaveBeenCalled();
+  });
+
+  /** The daemon refuses the key: the socket opens, no authOk, then the close. */
+  function reject(socket: FakeWebSocket, how: "frame" | "close"): void {
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.onopen?.();
+    if (how === "frame") socket.receive({ type: "authError", message: "Invalid API key" });
+    socket.drop(4001);
+  }
+
+  const keyWarnings = () =>
+    vi.mocked(log.warn).mock.calls.filter(([text]) => String(text).includes("Cannot connect"));
+
+  for (const how of ["frame", "close"] as const) {
+    it(`keeps trying after a rejected key (${how}), slowly: 30 s, doubling to 5 min`, async () => {
+      const bridge = await loadBridge();
+      await bridge.applyWsBridgeSettings();
+
+      const waits = [30, 60, 120, 240, 300, 300];
+      for (const [i, seconds] of waits.entries()) {
+        reject(latest(), how);
+        const count = sockets().length;
+        await pass(seconds * 1000 - 1);
+        expect(sockets()).toHaveLength(count); // not a moment early, alarm ticks or not
+        bridge.handleWsReconnectAlarm(); // the 30 s alarm ticks inside the wait
+        await pass(0);
+        expect(sockets()).toHaveLength(count);
+        await pass(1);
+        expect(sockets()).toHaveLength(count + 1);
+        expect(keyWarnings()).toHaveLength(i + 1); // one warning per try, the reason in it
+      }
+      expect(String(keyWarnings()[0][0])).toContain("API key");
+      expect(alarms.clear).not.toHaveBeenCalled(); // the alarm stays: it finds the daemon again
     });
   }
 
-  it("stops on an authError frame, without waiting for the close code", async () => {
-    const { bridge, socket } = await connectedBridge();
+  it("counts one rejection as one try when the close follows the authError frame", async () => {
+    const bridge = await loadBridge();
+    await bridge.applyWsBridgeSettings();
+    const first = latest();
+    first.readyState = FakeWebSocket.OPEN;
+    first.onopen?.();
+    first.receive({ type: "authError", message: "Invalid API key" });
+    first.drop(4001); // nobody listens any more
 
-    socket.receive({ type: "authError", message: "Invalid API key" });
-    socket.drop(1005); // what a client-initiated close can report instead of 4001
-    await pass(120_000);
+    await pass(30_000);
+    expect(sockets()).toHaveLength(2);
+    reject(latest(), "frame");
+    await pass(59_999);
+    expect(sockets()).toHaveLength(2); // the second wait is 60 s, not 120
+    await pass(1);
+    expect(sockets()).toHaveLength(3);
+    expect(keyWarnings()).toHaveLength(2);
+  });
 
+  it("recovers by itself when the daemon is restarted with the key, and starts over at 30 s", async () => {
+    const bridge = await loadBridge();
+    await bridge.applyWsBridgeSettings();
+    reject(latest(), "frame");
+    await pass(30_000);
+    reject(latest(), "frame");
+    await pass(60_000);
+    expect(sockets()).toHaveLength(3);
+
+    latest().accept(); // the daemon has the right key now
+    latest().drop(1006);
+    await pass(2_000);
+    expect(sockets()).toHaveLength(4); // an ordinary close, an ordinary reconnect
+
+    reject(latest(), "close");
+    await pass(30_000); // the backoff began again
+    expect(sockets()).toHaveLength(5);
+  });
+
+  it("connects at once when the settings change during the slow backoff", async () => {
+    const bridge = await loadBridge();
+    await bridge.applyWsBridgeSettings();
+    reject(latest(), "frame");
     expect(sockets()).toHaveLength(1);
-    expect(alarms.clear).toHaveBeenCalledWith(bridge.WS_RECONNECT_ALARM);
+
+    await bridge.resetWsBridge(); // a new key or port, or the switch
+
+    expect(sockets()).toHaveLength(2);
   });
 
   it("resumes when the settings are reset (enable, port or key changed)", async () => {
@@ -258,6 +328,26 @@ describe("the bridge after the daemon closes it (HVN-44)", () => {
 
     await restarted.resetWsBridge();
     expect(sockets()).toHaveLength(2);
+  });
+
+  it("does not connect while the stop is still being read from storage", async () => {
+    const { socket } = await connectedBridge();
+    socket.drop(4002);
+    await pass(0);
+
+    const restarted = await loadBridge();
+    const realGet = sessionStorage.get;
+    vi.spyOn(sessionStorage, "get").mockImplementation(async (key: string) => {
+      await new Promise((r) => setTimeout(r, 50)); // storage is slow at a wake
+      return realGet(key);
+    });
+    // At a wake the init call and the alarm listener both apply the settings.
+    const first = restarted.applyWsBridgeSettings();
+    const second = restarted.applyWsBridgeSettings();
+    await pass(100);
+    await Promise.all([first, second]);
+
+    expect(sockets()).toHaveLength(1);
   });
 
   it("is not stopped by a restart when the bridge never gave up", async () => {
