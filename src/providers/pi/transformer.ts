@@ -307,5 +307,9 @@ export function transformPiToHaevnChat(extraction: PiRawExtraction): Chat {
     timestamp: extraction.metadata.createdTimestamp,
     lastSyncedTimestamp: Date.now(),
     providerLastModifiedTimestamp: extraction.metadata.lastModifiedTimestamp,
+    // Sync metadata: placeholders, set by SyncService.saveChat()
+    checksum: "",
+    syncStatus: "new",
+    deleted: 0,
   };
 }
