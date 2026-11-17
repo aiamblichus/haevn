@@ -19,8 +19,6 @@ const fontFiles = [
   "playfair-display/files/playfair-display-latin-400-normal.woff2",
   "playfair-display/files/playfair-display-latin-700-normal.woff2",
   "playfair-display/files/playfair-display-latin-900-normal.woff2",
-  "space-mono/files/space-mono-latin-400-normal.woff2",
-  "space-mono/files/space-mono-latin-700-normal.woff2",
 ];
 mkdirSync("dist/fonts", { recursive: true });
 for (const file of fontFiles) {
