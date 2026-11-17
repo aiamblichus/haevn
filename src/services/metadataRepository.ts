@@ -1,3 +1,4 @@
+import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
 import type { ChatMetadataRecord } from "./db";
 import { getDB } from "./db";
@@ -37,6 +38,34 @@ export async function set(
       updatedAt: now,
       ...partial,
     });
+  }
+}
+
+/**
+ * Seed a chat's metadata record from the `haevnMetadata` it carries (a HAEVN export writes it),
+ * as a manual record, and never over a record the archive already has. Never rejects: the chat
+ * is saved, and an import must not count it as failed or undo its other work over this. Returns
+ * whether a record was written. The archive's import job (in its worker) and `ImportService`
+ * (the UI's and the CLI's imports) both call this.
+ */
+export async function seedFromChat(chat: Pick<Chat, "id" | "haevnMetadata">): Promise<boolean> {
+  const carried = chat.haevnMetadata;
+  if (!carried || !chat.id) return false;
+  try {
+    if (await get(chat.id)) return false;
+    await set(chat.id, {
+      title: carried.title ?? "",
+      description: carried.description ?? "",
+      synopsis: carried.synopsis ?? "",
+      categories: carried.categories ?? [],
+      keywords: carried.keywords ?? [],
+      source: "manual",
+      updatedAt: Date.now(),
+    });
+    return true;
+  } catch (err) {
+    log.warn(`[MetadataRepository] Failed to seed metadata for ${chat.id}`, err);
+    return false;
   }
 }
 

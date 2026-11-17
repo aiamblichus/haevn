@@ -44,7 +44,7 @@ import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
 import * as MetadataRepository from "../services/metadataRepository";
-import { generateForChat, setManualMetadata } from "../services/metadataService";
+import { generateOnRequest, setManualMetadata } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
@@ -940,7 +940,7 @@ async function handleGenerateMetadata(
   id: string,
   req: Extract<WsRequest, { action: "generateMetadata" }>,
 ): Promise<WsResponse> {
-  const record = await generateForChat(req.chatId);
+  const record = await generateOnRequest(req.chatId);
   return { id, success: true, data: record };
 }
 

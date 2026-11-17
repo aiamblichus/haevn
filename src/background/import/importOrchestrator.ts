@@ -7,8 +7,7 @@
 
 import { CacheService } from "../../services/cacheService";
 import type { SaveChatResult } from "../../services/chatPersistence";
-import { queueGeneration } from "../../services/metadataService";
-import { getMetadataAIConfig } from "../../services/settingsService";
+import { queueGenerationForImportedChats } from "../../services/metadataService";
 import { SyncService } from "../../services/syncService";
 import { getStorageAdapter } from "../../storage";
 import type { ImportSourceType, ImportWorkerResponse } from "../../types/workerMessages";
@@ -184,15 +183,10 @@ async function handlePostProcess(
     });
 
     // Queue AI metadata generation if enabled and autoGenerate is on
-    getMetadataAIConfig()
-      .then((config) => {
-        if (config.enabled && config.autoGenerate) {
-          return queueGeneration(chatId);
-        }
-      })
-      .catch((err) => {
-        log.warn(`[ImportOrchestrator] Failed to queue metadata generation for ${chatId}:`, err);
-      });
+    fireAndForget(
+      queueGenerationForImportedChats([chatId]),
+      `Queue metadata generation for ${chatId}`,
+    );
 
     // Broadcast chat synced event
     safeSendMessage({

@@ -238,23 +238,7 @@ async function processChat(
     log.info(`[ImportWorker] Saved chat: ${result.chatId}`);
 
     // Seed chatMetadata from haevnMetadata field if present — never overwrite existing
-    if (chat.haevnMetadata && chat.id && isNewChat) {
-      const existing = await MetadataRepository.get(chat.id);
-      if (!existing) {
-        const m = chat.haevnMetadata;
-        await MetadataRepository.set(chat.id, {
-          title: m.title ?? "",
-          description: m.description ?? "",
-          synopsis: m.synopsis ?? "",
-          categories: m.categories ?? [],
-          keywords: m.keywords ?? [],
-          source: "manual",
-          updatedAt: Date.now(),
-        }).catch((err) => {
-          log.warn(`[ImportWorker] Failed to seed metadata for ${chat.id}:`, err);
-        });
-      }
-    }
+    if (isNewChat) await MetadataRepository.seedFromChat(chat);
 
     // Send saved notification
     self.postMessage({

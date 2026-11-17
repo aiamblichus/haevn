@@ -10,7 +10,7 @@ vi.mock("../src/services/importService", () => ({ ImportService: {} }));
 vi.mock("../src/services/metadataRepository", () => ({
   getMany: vi.fn(async () => new Map()),
 }));
-vi.mock("../src/services/metadataService", () => ({ generateForChat: vi.fn() }));
+vi.mock("../src/services/metadataService", () => ({ generateOnRequest: vi.fn() }));
 vi.mock("../src/background/export/textExportArtifact", () => ({
   buildTextExportArtifact: vi.fn(),
 }));

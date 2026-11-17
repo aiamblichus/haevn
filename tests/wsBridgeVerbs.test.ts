@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The bridge verbs that must do what the extension's own handlers do. Everything below the
 // bridge is real (Dexie on fake-indexeddb, the metadata service); the daemon is a fake socket.
@@ -156,8 +156,11 @@ describe("setMetadata over the bridge does what the UI's handler does (HVN-30)",
       const chatId = `c-${Math.random().toString(36).slice(2)}`;
       await getDB().metadataQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1 });
       await write(chatId);
-      const { updatedAt: _updatedAt, chatId: _chatId, ...record } =
-        (await getDB().chatMetadata.get(chatId)) ?? {};
+      const {
+        updatedAt: _updatedAt,
+        chatId: _chatId,
+        ...record
+      } = (await getDB().chatMetadata.get(chatId)) ?? {};
       return {
         record,
         queued: await getDB().metadataQueue.get(chatId),
@@ -179,6 +182,99 @@ describe("setMetadata over the bridge does what the UI's handler does (HVN-30)",
 
     expect(viaBridge).toEqual(viaHandler);
     expect(viaBridge.embedding).toBe("pending");
+  });
+});
+
+describe("generateMetadata over the bridge does what the UI's handler does (HVN-53)", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    getMetadataAIConfig.mockResolvedValue({
+      enabled: true,
+      url: "http://llm.test/v1",
+      apiKey: "",
+      model: "m",
+      categories: [],
+    });
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                title: "Generated",
+                description: "d",
+                synopsis: "s",
+                categories: ["Other"],
+                keywords: ["k"],
+              }),
+            },
+          },
+        ],
+      }),
+    }));
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("fetch", originalFetch);
+  });
+
+  async function chatInQueue(chatId: string) {
+    const { getDB } = await import("../src/services/db");
+    await getDB().chats.put({ id: chatId, title: chatId, source: "claude" } as never);
+    await getDB().metadataQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1 });
+    return getDB();
+  }
+
+  it("takes the chat off the generation queue once it has generated its metadata", async () => {
+    const db = await chatInQueue("c1");
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({ action: "generateMetadata", chatId: "c1" });
+
+    expect(reply).toMatchObject({
+      success: true,
+      data: { chatId: "c1", title: "Generated", source: "ai" },
+    });
+    // Left there, the next queue tick would generate it a second time.
+    expect(await db.metadataQueue.get("c1")).toBeUndefined();
+  });
+
+  it("leaves the same stored state as the UI's generateChatMetadata handler", async () => {
+    const { handleGenerateChatMetadata } = await import(
+      "../src/background/handlers/metadataHandlers"
+    );
+    const bridge = await connectedBridge();
+
+    async function stateAfter(generate: (chatId: string) => Promise<void>) {
+      const chatId = `c-${Math.random().toString(36).slice(2)}`;
+      const db = await chatInQueue(chatId);
+      await generate(chatId);
+      const {
+        updatedAt: _u,
+        generatedAt: _g,
+        chatId: _c,
+        ...record
+      } = (await db.chatMetadata.get(chatId)) ?? {};
+      return {
+        record,
+        queued: await db.metadataQueue.get(chatId),
+        embedding: (await db.embeddingQueue.get(chatId))?.status,
+      };
+    }
+
+    const viaHandler = await stateAfter(async (chatId) => {
+      const sendResponse = vi.fn();
+      await handleGenerateChatMetadata({ action: "generateChatMetadata", chatId }, sendResponse);
+      expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+    });
+    const viaBridge = await stateAfter(async (chatId) => {
+      await bridge.ask({ action: "generateMetadata", chatId });
+    });
+
+    expect(viaBridge).toEqual(viaHandler);
+    expect(viaBridge.queued).toBeUndefined();
   });
 });
 
@@ -260,5 +356,39 @@ describe("import over the bridge goes through the archive's import sequence (HVN
       success: true,
       data: { saved: 25, errors: 0, indexError: "rebuild refused" },
     });
+  });
+
+  it("queues the chats it saved for AI metadata when automatic generation is on (HVN-53)", async () => {
+    getMetadataAIConfig.mockResolvedValue({ enabled: true, autoGenerate: true });
+    const { getDB } = await import("../src/services/db");
+    const bridge = await connectedBridge();
+
+    await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(2),
+      options: { overwrite: true },
+    });
+
+    const queued = await getDB().metadataQueue.toArray();
+    expect(queued.map((q) => [q.chatId, q.status]).sort()).toEqual([
+      ["chat-0", "pending"],
+      ["chat-1", "pending"],
+    ]);
+  });
+
+  it("queues nothing when automatic generation is off", async () => {
+    getMetadataAIConfig.mockResolvedValue({ enabled: true, autoGenerate: false });
+    const { getDB } = await import("../src/services/db");
+    const bridge = await connectedBridge();
+
+    await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(2),
+      options: { overwrite: true },
+    });
+
+    expect(await getDB().metadataQueue.count()).toBe(0);
   });
 });

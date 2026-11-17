@@ -1,8 +1,9 @@
 /**
  * Import a batch of chats that the caller already holds in memory (the CLI's `import` over the
  * bridge). It runs the way the archive's own import runs: the operation lock is taken for the
- * whole batch, each chat is saved by `ImportService.saveImportedChat`, and the search index is
- * brought up to date once the chats are in.
+ * whole batch, each chat is saved by `ImportService.saveImportedChat`, the saved chats are queued
+ * for AI metadata when automatic generation is on, and the search index is brought up to date
+ * once the chats are in.
  *
  * The archive's file import (`importOrchestrator`) streams a ZIP through a worker and is not
  * reused here; this is the same sequence for chats that need no worker.
@@ -10,6 +11,7 @@
 
 import type { Chat } from "../../model/haevn_model";
 import { ImportService } from "../../services/importService";
+import { queueGenerationForImportedChats } from "../../services/metadataService";
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
 import { log } from "../../utils/logger";
@@ -71,6 +73,7 @@ export async function importChatBatch(
   }
 
   const result: ImportBatchResult = { processed: 0, saved: 0, skipped: 0, errors: 0 };
+  const savedIds: string[] = [];
   const bulk = options.index && items.length > INCREMENTAL_INDEX_MAX_CHATS;
   let bulkStarted = false;
 
@@ -100,6 +103,7 @@ export async function importChatBatch(
         }
         await ImportService.saveImportedChat(chat, raw, { skipIndexing: !options.index || bulk });
         result.saved++;
+        savedIds.push(chat.id);
       } catch (err) {
         result.errors++;
         log.warn("[ImportBatch] Import skipped due to parsing/transformation error", {
@@ -108,6 +112,9 @@ export async function importChatBatch(
         });
       }
     }
+
+    // The archive's import job queues each chat it saves when automatic generation is on.
+    await queueGenerationForImportedChats(savedIds);
   } finally {
     try {
       if (bulkStarted) await SyncService.finishBulkSyncIndexing();

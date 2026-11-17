@@ -4,6 +4,7 @@ import {
   handleWorkerResponse,
 } from "../src/background/import/importOrchestrator";
 import { safeSendMessage } from "../src/background/utils/messageUtils";
+import { queueGenerationForImportedChats } from "../src/services/metadataService";
 import { getStorageAdapter, MemoryStorageAdapter, setStorageAdapter } from "../src/storage";
 import type { ImportWorkerResponse } from "../src/types/workerMessages";
 
@@ -12,10 +13,7 @@ vi.mock("../src/background/handlers/galleryHandlers", () => ({
   handleGenerateThumbnails: vi.fn(async () => undefined),
 }));
 vi.mock("../src/services/metadataService", () => ({
-  queueGeneration: vi.fn(async () => undefined),
-}));
-vi.mock("../src/services/settingsService", () => ({
-  getMetadataAIConfig: vi.fn(async () => ({ enabled: false, autoGenerate: false })),
+  queueGenerationForImportedChats: vi.fn(async () => undefined),
 }));
 vi.mock("../src/services/syncService", () => ({
   SyncService: { finishBulkSyncIndexing: vi.fn(async () => undefined) },
@@ -111,5 +109,26 @@ describe("import job counts", () => {
     expect(sentEvents("importComplete")).toEqual([
       expect.objectContaining({ saved: 1, skipped: 0, errors: 1 }),
     ]);
+  });
+});
+
+describe("import job post-processing (HVN-53)", () => {
+  beforeEach(async () => {
+    setStorageAdapter(new MemoryStorageAdapter());
+    vi.mocked(queueGenerationForImportedChats).mockClear();
+    await startJob();
+  });
+
+  it("queues a saved chat for AI metadata through the operation the CLI's import shares", async () => {
+    await handleWorkerResponse({
+      type: "postProcess",
+      chatId: "chat-1",
+      result: { chatId: "chat-1", source: "claude", sourceId: "s-1" },
+      isNewChat: false,
+    } as unknown as ImportWorkerResponse);
+
+    await vi.waitFor(() =>
+      expect(queueGenerationForImportedChats).toHaveBeenCalledWith(["chat-1"]),
+    );
   });
 });
