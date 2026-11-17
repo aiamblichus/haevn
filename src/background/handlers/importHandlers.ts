@@ -2,6 +2,7 @@
 
 import { ImportService } from "../../services/importService";
 import * as MetadataRepository from "../../services/metadataRepository";
+import { SyncService } from "../../services/syncService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import type { ImportSourceType } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
