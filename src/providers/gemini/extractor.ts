@@ -5,6 +5,14 @@ import { detectPlatform } from "../shared/platformDetector";
 import { formatLocalTime, generateFallbackId } from "../shared_utils";
 import type { GeminiConversationData, GeminiFileInfo, GeminiMessage } from "./model";
 
+// esbuild bundles these two CommonJS packages with require(). Neither ships types and the DOM
+// lib has no `require`, so declare the little of each that is used here.
+declare function require(id: "turndown"): new () => {
+  use(plugin: unknown): void;
+  turndown(node: Node | string): string;
+};
+declare function require(id: "@joplin/turndown-plugin-gfm"): { gfm: unknown };
+
 const TurndownService = require("turndown");
 
 export interface ExportOptions {
