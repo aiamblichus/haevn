@@ -55,6 +55,12 @@ export default defineCommand({
       description: "Export format (haevn_json | haevn_markdown | pi_session_jsonl)",
       default: "haevn_json",
     },
+    "all-branches": {
+      type: "boolean",
+      description:
+        "Markdown only: write every branch, each alternative as its own section (default: the current branch)",
+      default: false,
+    },
   },
   async run({ args }) {
     const { chatId, output } = args;
@@ -67,6 +73,13 @@ export default defineCommand({
       process.exit(1);
     }
 
+    const allBranches = args["all-branches"] === true;
+    if (allBranches && format !== "haevn_markdown") {
+      consola.warn(
+        `--all-branches only applies to haevn_markdown; ${format} is written as usual.`,
+      );
+    }
+
     let artifact: ExportArtifactResponse;
     try {
       artifact = await daemonRequest<ExportArtifactResponse>({
@@ -75,6 +88,7 @@ export default defineCommand({
         options: {
           exporterId: format,
           includeMedia: false,
+          ...(allBranches ? { allBranches } : {}),
         },
       });
     } catch (err) {
