@@ -165,7 +165,6 @@ export async function writeFile(
 
   if (useSyncHandle || isWorkerContext) {
     try {
-      // @ts-expect-error - createSyncAccessHandle is not in all TS libs yet
       const accessHandle = await fileHandle.createSyncAccessHandle();
       const writeBuffer = new Uint8Array(buffer);
 

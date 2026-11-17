@@ -231,7 +231,7 @@ async function generateThumbnailsForChat(
 
         // Prepare content outside transaction (expensive I/O operations)
         const contentRef = getContentUrl(attachment);
-        let thumbnailUrl: string;
+        let thumbnailUrl: string | undefined;
         let contentUrlForThumbnail = contentRef;
 
         // If content is stored in OPFS, read and convert to data URL for thumbnail generation

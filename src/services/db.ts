@@ -124,7 +124,16 @@ export class HaevnDatabase extends Dexie {
   chats!: Table<Chat, string>; // Primary key 'id' is of type string
   chatMessages!: Table<StoredChatMessage, [string, string]>; // PK: [chatId, id]
   // Store for serialized Lunr index (single-record store)
-  lunrIndex!: Table<{ id: string; index?: object; dirty?: boolean }, string>;
+  lunrIndex!: Table<
+    {
+      id: string;
+      index?: object;
+      dirty?: boolean;
+      // Written with every segment: the chat ids it holds (so a load need not scan the index)
+      meta?: { docIds: string[]; timestamp: number };
+    },
+    string
+  >;
   openwebuiInstances!: Table<OpenWebUIInstance, string>;
   providerStats!: Table<ProviderStats, string>; // Deprecated, kept for migration
   cache!: Table<CacheEntry, string>;

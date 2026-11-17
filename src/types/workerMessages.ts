@@ -195,7 +195,6 @@ export type BulkSyncWorkerResponse = (
 // Import Worker Messages
 // ======================
 
-import type { Chat } from "../model/haevn_model";
 import type { SaveChatResult } from "../services/chatPersistence";
 
 // Import source types
@@ -397,15 +396,16 @@ export type ThumbnailWorkerMessage =
     };
 
 export type ThumbnailWorkerResponse =
-  | { type: "initComplete"; success: boolean }
+  | { type: "initComplete"; success: boolean; requestId?: string }
   | {
       type: "thumbnailsGenerated";
       chatId: string;
       count: number;
       thumbnails: GalleryMediaItem[];
+      requestId?: string;
     }
-  | { type: "batchProgress"; processed: number; total: number; chatId: string }
-  | { type: "batchComplete"; totalGenerated: number; totalSkipped: number }
+  | { type: "batchProgress"; processed: number; total: number; chatId: string; requestId?: string }
+  | { type: "batchComplete"; totalGenerated: number; totalSkipped: number; requestId?: string }
   | {
       type: "missingCount";
       requestId: string;

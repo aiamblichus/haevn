@@ -6,7 +6,7 @@ export class RateLimiter {
   private timestamps: number[] = [];
   private maxRequests: number;
   private intervalMs: number;
-  private timeoutId: NodeJS.Timeout | null = null;
+  private timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   constructor(maxRequests: number, intervalMs: number) {
     this.maxRequests = maxRequests;

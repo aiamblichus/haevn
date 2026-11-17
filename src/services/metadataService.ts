@@ -54,7 +54,9 @@ export function getDisplayTitle(
 
 // ─── Queue Management ─────────────────────────────────────────────────────────
 
-function hasMeaningfulMetadata(metadata: ChatMetadataRecord | null | undefined): boolean {
+function hasMeaningfulMetadata(
+  metadata: ChatMetadataRecord | null | undefined,
+): metadata is ChatMetadataRecord {
   return !!metadata && metadata.source !== "unset";
 }
 
