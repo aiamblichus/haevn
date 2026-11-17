@@ -861,6 +861,11 @@ const StarmapSettingsCard = () => {
                 Enable embeddings generation
               </Label>
             </div>
+            <p className="pl-7 text-sm text-muted-foreground">
+              When embeddings generation is enabled, the metadata of each chat (title, description,
+              synopsis, categories and keywords) is sent to the embedding API URL you set; the
+              conversation text is not.
+            </p>
 
             <div className="space-y-2">
               <Label htmlFor="starmapEmbeddingUrl">Embedding API URL</Label>
