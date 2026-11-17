@@ -142,14 +142,18 @@ Options:
 haevn list
 haevn list --platform claude --limit 50
 haevn list --sort title --format json
+haevn list --limit 50 --offset 50 --format json
 ```
 
 Options:
 - `-p, --platform <name>` - Filter by platform
 - `-l, --limit <n>` - Max results (default: 20)
+- `--offset <n>` - Skip the first n chats, to read the next page (default: 0)
 - `--sort <field>` - Sort by (lastSynced, title, messageCount)
 - `-f, --format <fmt>` - Output format (text, json)
 - `--after <date>` - Only chats after date
+
+To read every chat, page with `--offset`. The JSON output has `hasMore`, which is true while chats follow the page; the next page starts at `--offset` plus `--limit`. `--after` filters the chats of each page, so a page can hold fewer than `--limit` chats while `hasMore` is still true.
 
 ### `branches` - Show tree structure
 

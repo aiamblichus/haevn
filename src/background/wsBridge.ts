@@ -107,6 +107,8 @@ type WsListMetadataKey = "description" | "synopsis" | "categories" | "keywords";
 interface WsListOptions {
   platform?: string;
   limit?: number;
+  /** Chats to skip before the page; the response's hasMore says whether chats follow it. */
+  offset?: number;
   after?: string;
   sortBy?: "lastSynced" | "title" | "messageCount";
   /**
@@ -735,6 +737,15 @@ async function handleList(
   req: Extract<WsRequest, { action: "list" }>,
 ): Promise<WsResponse> {
   const { options = {} } = req;
+  const offset = options.offset ?? 0;
+  if (!Number.isInteger(offset) || offset < 0) {
+    return {
+      id,
+      success: false,
+      error: "offset must be a whole number, 0 or more",
+      code: "BAD_REQUEST",
+    };
+  }
 
   const sortByMap: Record<string, string> = {
     lastSynced: "lastSyncedTimestamp",
@@ -747,12 +758,15 @@ async function handleList(
     | "messageCount";
 
   const { metadata, total } = await SyncService.getChatsMetadata(
-    0,
+    offset,
     options.limit ?? 50,
     options.platform ?? "all",
     sortBy,
     "desc",
   );
+  // The page is the rows from offset on, so chats follow it while those rows end before the
+  // total. Counted before the after-date filter below, which can drop some of the page's rows.
+  const hasMore = offset + metadata.length < total;
 
   const afterMs = options.after ? new Date(options.after).getTime() : undefined;
   const filtered = afterMs
@@ -797,7 +811,7 @@ async function handleList(
     return next;
   });
 
-  return { id, success: true, data: { chats: enrichedChats, total } };
+  return { id, success: true, data: { chats: enrichedChats, total, hasMore } };
 }
 
 /**

@@ -35,6 +35,10 @@ export default defineCommand({
       alias: "l",
       description: "Maximum number of results (default: 20)",
     },
+    offset: {
+      type: "string",
+      description: "Skip this many chats before the page, to read the next one (default: 0)",
+    },
     after: {
       type: "string",
       description: "Only chats updated after date (YYYY-MM-DD)",
@@ -62,21 +66,24 @@ export default defineCommand({
     const { platform, after, sort, format } = args;
     const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
 
+    let offset: number;
     let includeMetadata: ListMetadataKey[];
     try {
+      offset = parseOffset(args.offset);
       includeMetadata = parseMetadataKeys(args["include-metadata"]);
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
 
-    let response: { chats: Partial<Chat>[]; total: number };
+    let response: ListResponse;
     try {
-      response = await daemonRequest<{ chats: Partial<Chat>[]; total: number }>({
+      response = await daemonRequest<ListResponse>({
         action: "list",
         options: {
           platform,
           limit,
+          offset,
           after,
           sortBy: sort as "lastSynced" | "title" | "messageCount",
           ...(includeMetadata.length > 0 ? { includeMetadata } : {}),
@@ -87,10 +94,10 @@ export default defineCommand({
       process.exit(1);
     }
 
-    const { chats, total } = response;
+    const { chats, total, hasMore } = response;
 
     if (format === "json") {
-      consola.log(toJsonString({ chats, total }));
+      consola.log(toJsonString({ chats, total, hasMore }));
       return;
     }
 
@@ -98,7 +105,27 @@ export default defineCommand({
   },
 });
 
+interface ListResponse {
+  chats: Partial<Chat>[];
+  /** Chats on the platform, before the --after filter. */
+  total: number;
+  /** True while chats follow this page: the next page starts at --offset plus --limit. */
+  hasMore: boolean;
+}
+
 // ─── Argument parsing ────────────────────────────────────────────────────────
+
+/**
+ * Parse the --offset flag value. Returns 0 when the flag is absent.
+ */
+export function parseOffset(input: string | undefined): number {
+  if (input == null || input === "") return 0;
+
+  if (!/^\d+$/.test(input)) {
+    throw new Error(`--offset must be a whole number, 0 or more (got "${input}").`);
+  }
+  return Number.parseInt(input, 10);
+}
 
 /**
  * Parse the --include-metadata flag value into a deduplicated, validated list
