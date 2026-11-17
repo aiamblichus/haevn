@@ -5,6 +5,13 @@
 // Search Worker Messages
 // ======================
 
+/** Progress of a full index rebuild, as the search worker reports it. */
+export interface SearchIndexRebuildStatus {
+  processed: number;
+  total: number;
+  percentage: number;
+}
+
 export type SearchWorkerMessage =
   | { type: "init" }
   | { type: "add"; doc: { id: string; title: string; content: string } }
@@ -38,6 +45,11 @@ export type SearchWorkerResponse =
       requestId: string;
       results: string[] | import("../model/haevn_model").SearchResult[];
       done: boolean;
+      /**
+       * Set when the index is being rebuilt and the search was not run. An empty `results` then
+       * means "not searched", never "no matches".
+       */
+      indexRebuilding?: SearchIndexRebuildStatus;
     }
   | { type: "bulkComplete"; success: boolean; indexedCount: number }
   | {
@@ -45,10 +57,6 @@ export type SearchWorkerResponse =
       progress: { processed: number; total: number; percentage: number };
     }
   | { type: "indexRebuildComplete"; totalChats: number }
-  | {
-      type: "searchDuringRebuild";
-      rebuildProgress: { processed: number; total: number; percentage: number };
-    }
   | { type: "error"; error: string; requestId?: string };
 
 // ======================

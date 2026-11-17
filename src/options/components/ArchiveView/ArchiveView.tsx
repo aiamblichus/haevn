@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { Table, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import type { SearchIndexRebuildStatus } from "../../../types/workerMessages";
 import type { ChatMeta, SearchResult, SortDirection, SortKey } from "../../types";
 import { ICONS, Icon } from "../../utils";
 import { ChatTableRow } from "./ChatTableRow";
@@ -26,6 +27,8 @@ interface ArchiveViewProps {
   setSearchQuery: (query: string) => void;
   setSearchResults: (results: SearchResult[] | null) => void;
   isSearching: boolean;
+  /** Set when the last search found the index being rebuilt (it did not run). */
+  searchIndexRebuild: SearchIndexRebuildStatus | null;
   selectedIds: Set<string>;
   filterProvider: string;
   setFilterProvider: (provider: string) => void;
@@ -61,6 +64,21 @@ interface ArchiveViewProps {
   onExpandChat?: (chatId: string) => void | Promise<void>;
 }
 
+/** What an empty search shows: "No results.", or why the search did not look. */
+const NoSearchResults = ({ rebuild }: { rebuild: SearchIndexRebuildStatus | null }) =>
+  rebuild ? (
+    <div
+      role="status"
+      className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+    >
+      Search index is rebuilding — results will return when it finishes (
+      {rebuild.total > 0 ? `${rebuild.processed} of ${rebuild.total} chats, ` : ""}
+      {rebuild.percentage}%). Search again then.
+    </div>
+  ) : (
+    <p className="text-sm text-slate-500">No results.</p>
+  );
+
 export const ArchiveView = ({
   displayedChats,
   totalChats,
@@ -69,6 +87,7 @@ export const ArchiveView = ({
   setSearchQuery,
   setSearchResults,
   isSearching,
+  searchIndexRebuild,
   selectedIds,
   filterProvider,
   setFilterProvider,
@@ -361,7 +380,7 @@ export const ArchiveView = ({
         ) : searchResults ? (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {!searchResults || searchResults.length === 0 ? (
-              <p className="text-sm text-slate-500">No results.</p>
+              <NoSearchResults rebuild={searchIndexRebuild} />
             ) : (
               <>
                 <div className="flex-shrink-0 mb-2">
@@ -417,7 +436,7 @@ export const ArchiveView = ({
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex items-center justify-center">
-            <p className="text-sm text-slate-500">No results.</p>
+            <NoSearchResults rebuild={searchIndexRebuild} />
           </div>
         )
       ) : (

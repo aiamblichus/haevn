@@ -42,6 +42,7 @@ import { generateForChat } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
+import type { SearchIndexRebuildStatus } from "../types/workerMessages";
 import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
@@ -521,7 +522,10 @@ async function handleSearch(
     return { id, success: false, error: "Query is required", code: "BAD_REQUEST" };
   }
 
-  const results = await new Promise<SearchResult[]>((resolve, reject) => {
+  const { results, indexRebuilding } = await new Promise<{
+    results: SearchResult[];
+    indexRebuilding?: SearchIndexRebuildStatus;
+  }>((resolve, reject) => {
     const collected: SearchResult[] = [];
     SyncService.searchChatsStreaming(query, {
       streamBatchSize: 50,
@@ -530,10 +534,21 @@ async function handleSearch(
       filterProvider: options.platform,
       contextChars: options.contextChars,
       onResults: (batch) => collected.push(...batch),
-      onComplete: () => resolve(collected),
+      onComplete: (stats) =>
+        resolve({ results: collected, indexRebuilding: stats.indexRebuilding }),
       onError: reject,
     });
   });
+
+  // An empty list during a rebuild is not "no matches": say so, so the caller can retry.
+  if (indexRebuilding) {
+    return {
+      id,
+      success: false,
+      error: `Search index is rebuilding (${indexRebuilding.percentage}%); results will return when it finishes. Try again shortly.`,
+      code: "INDEX_REBUILDING",
+    };
+  }
 
   const afterMs = options.after ? new Date(options.after).getTime() : undefined;
   const beforeMs = options.before ? new Date(options.before).getTime() : undefined;

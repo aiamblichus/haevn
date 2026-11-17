@@ -9,7 +9,7 @@ import type {
   ThinkingPart,
   UserPromptPart,
 } from "../model/haevn_model";
-import type { SearchWorkerMessage } from "../types/workerMessages";
+import type { SearchIndexRebuildStatus, SearchWorkerMessage } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
 import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
@@ -478,6 +478,17 @@ async function rebuildAll(emitProgress = false) {
     return;
   }
 
+  // Mark the rebuild before the first await: from here until `finally` the index is not
+  // searchable, and a search must say so instead of answering from a half-built index.
+  const chunkSize = 1000; // Process 1000 chats per chunk
+  rebuildState = {
+    totalChats: 0,
+    processedChats: 0,
+    isRebuilding: true,
+    chunkSize,
+    currentChunk: 0,
+  };
+
   segments.clear();
   docCache.clear();
   activeSegmentId = "segment_0";
@@ -487,16 +498,8 @@ async function rebuildAll(emitProgress = false) {
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
     // Initialize rebuild state for chunked processing
-    const chunkSize = 1000; // Process 1000 chats per chunk
     const totalChunks = Math.ceil(count / chunkSize);
-
-    rebuildState = {
-      totalChats: count,
-      processedChats: 0,
-      isRebuilding: true,
-      chunkSize,
-      currentChunk: 0,
-    };
+    rebuildState.totalChats = count;
 
     let currentSeg = createNewSegment("segment_0");
     segments.set("segment_0", currentSeg);
@@ -530,6 +533,7 @@ async function rebuildAll(emitProgress = false) {
           }
         }
         processed += chats.length;
+        rebuildState.processedChats = processed; // a search asked mid-chunk reports this
       }
 
       // Update rebuild state
@@ -818,30 +822,27 @@ async function filterResultsByTextPhrases(
   });
 }
 
+/**
+ * The rebuild's progress while one is running, otherwise undefined. A rebuild empties the index
+ * and refills it, so it cannot answer queries until it ends. Keeping the previous index to answer
+ * from would double the index's memory for the length of the rebuild (HVN-40).
+ */
+function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
+  if (!rebuildState?.isRebuilding) return undefined;
+  const { processedChats: processed, totalChats: total } = rebuildState;
+  return {
+    processed,
+    total,
+    percentage: total > 0 ? Math.round((processed / total) * 100) : 0,
+  };
+}
+
 async function performSearch(
   query: string,
   hydrate: boolean = false,
   options: { exactTextFilter?: boolean } = {},
 ): Promise<string[] | LunrResult[]> {
   if (!query) return [];
-
-  // Check if rebuild is in progress
-  if (rebuildState?.isRebuilding) {
-    log.info("[SearchWorker] Search during rebuild, returning empty with status");
-
-    // Send rebuild status to caller
-    self.postMessage({
-      type: "searchDuringRebuild",
-      rebuildProgress: {
-        processed: rebuildState.processedChats,
-        total: rebuildState.totalChats,
-        percentage: Math.round((rebuildState.processedChats / rebuildState.totalChats) * 100),
-      },
-    });
-
-    // Return empty results - caller can implement fallback if needed
-    return [];
-  }
 
   if (segments.size === 0) await loadSegments();
 
@@ -939,6 +940,19 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "search") {
+      const rebuilding = currentRebuildStatus();
+      if (rebuilding) {
+        log.info("[SearchWorker] Search during rebuild: reporting the rebuild instead of results");
+        self.postMessage({
+          type: "searchResultChunk",
+          requestId: msg.requestId,
+          results: [],
+          done: true,
+          indexRebuilding: rebuilding,
+        });
+        return;
+      }
+
       const hydrate = msg.hydrate === true;
       const filterProvider =
         typeof msg.filterProvider === "string" ? msg.filterProvider : undefined;
