@@ -7,6 +7,8 @@ export interface ExporterDefinition {
   description: string;
   supportsMultiChat: boolean;
   supportsMessageSelection: boolean;
+  /** Can write every branch of a branched chat (`allBranches`), not only the current one. */
+  supportsAllBranches: boolean;
   outputKind: "zip" | "file";
 }
 
@@ -24,6 +26,7 @@ const EXPORTERS: Record<ExporterId, ExporterDefinition> = {
     description: "Canonical backup export with chat JSON, media assets, and manifest.",
     supportsMultiChat: true,
     supportsMessageSelection: true,
+    supportsAllBranches: false,
     outputKind: "zip",
   },
   haevn_json: {
@@ -32,14 +35,17 @@ const EXPORTERS: Record<ExporterId, ExporterDefinition> = {
     description: "Single-chat canonical JSON export.",
     supportsMultiChat: false,
     supportsMessageSelection: true,
+    supportsAllBranches: false,
     outputKind: "file",
   },
   haevn_markdown: {
     id: "haevn_markdown",
     label: "HAEVN Markdown (.md)",
-    description: "Single-chat readable transcript export.",
+    description:
+      "Single-chat readable transcript export. Writes the current branch; all branches on request.",
     supportsMultiChat: false,
     supportsMessageSelection: true,
+    supportsAllBranches: true,
     outputKind: "file",
   },
   pi_session_jsonl: {
@@ -48,6 +54,7 @@ const EXPORTERS: Record<ExporterId, ExporterDefinition> = {
     description: "Single-chat export in Pi session JSONL format.",
     supportsMultiChat: false,
     supportsMessageSelection: true,
+    supportsAllBranches: false,
     outputKind: "file",
   },
 };
@@ -93,6 +100,10 @@ export function normalizeExportOptions(options?: ExportOptions): ExportOptions {
 
   if (normalized.exporterId === "pi_session_jsonl") {
     normalized.format = "json";
+  }
+
+  if (!exporter.supportsAllBranches) {
+    delete normalized.allBranches;
   }
 
   return normalized;

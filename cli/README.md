@@ -200,8 +200,11 @@ Options:
 haevn export chat_abc123 -o ./backup.json
 haevn export chat_abc123 -o ./backup.json --format haevn_json
 
-# Markdown transcript
+# Markdown transcript (the current branch)
 haevn export chat_abc123 -o ./chat.md --format haevn_markdown
+
+# Markdown transcript with every branch: the current branch, then each alternative as a section
+haevn export chat_abc123 -o ./chat-all.md --format haevn_markdown --all-branches
 
 # Pi session JSONL
 haevn export chat_abc123 -o ./.pi/sessions/chat.jsonl --format pi_session_jsonl
@@ -210,8 +213,10 @@ haevn export chat_abc123 -o ./.pi/sessions/chat.jsonl --format pi_session_jsonl
 Options:
 - `-o, --output <file>` - Output file path (required)
 - `-f, --format <fmt>` - Export format (`haevn_json`, `haevn_markdown`, `pi_session_jsonl`)
+- `--all-branches` - Markdown only: also write the branches off the current one, each under a `## Branch N: at message M` heading (default: the current branch only). A file written with `--all-branches` is for reading; the Markdown importer refuses it
 
 Notes:
+- Markdown writes the path from the first message to the chat's current message. Its frontmatter says `branch: current` and, when the chat has other branches, `other_branches_omitted: N`. JSON keeps the whole tree.
 - CLI export is intentionally **single-chat** and **no-assets** (to keep daemon requests predictable).
 - Formatting is produced by the extension exporter pipeline (single source of truth), not reimplemented in CLI.
 

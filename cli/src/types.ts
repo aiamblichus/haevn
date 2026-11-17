@@ -98,6 +98,8 @@ export type ListMetadataKey = "description" | "synopsis" | "categories" | "keywo
 
 export interface ExportOptions {
   includeMedia?: boolean;
+  /** Markdown only: write every branch, not only the current one. */
+  allBranches?: boolean;
   exporterId?: "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
   format?: "json" | "markdown" | "md" | "pi" | "jsonl" | "haevn_json" | "haevn_markdown";
 }

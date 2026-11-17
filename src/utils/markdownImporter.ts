@@ -129,6 +129,12 @@ function parseYamlFrontmatter(content: string): {
       ? conversationValue.trim()
       : undefined;
 
+  if (record.branches === "all") {
+    throw new Error(
+      "This file was exported with --all-branches, a reading format; re-export without it to import",
+    );
+  }
+
   const systemValue = record.system;
   const system = typeof systemValue === "string" && systemValue.trim() ? systemValue : undefined;
 

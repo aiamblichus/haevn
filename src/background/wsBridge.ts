@@ -104,6 +104,8 @@ type WsExporterId = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
 
 interface WsExportOptions {
   includeMedia?: boolean;
+  /** Markdown only: write every branch, not only the current one. */
+  allBranches?: boolean;
   exporterId?: WsExporterId;
   format?:
     | "json"
@@ -778,6 +780,7 @@ async function handleExport(
       format: exporterId === "haevn_markdown" ? "markdown" : "json",
       includeMetadata: true,
       includeTimestamps: true,
+      allBranches: req.options?.allBranches === true,
     },
   );
 

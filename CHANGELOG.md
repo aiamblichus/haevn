@@ -12,6 +12,7 @@
 
 ### Changed
 
+- The Markdown export of a branched chat writes the current branch (from the first message to the chat's current message) instead of every branch interleaved by time; `haevn export --all-branches` adds the others as `## Branch N` sections (a reading format, not importable).
 - The extension no longer loads fonts from Google: they ship with the extension.
 - The docs, README and settings say exactly what leaves your machine: the AI platforms you sync from, and an AI metadata or embeddings endpoint only if you turn it on and set one.
 - Imports report chats that failed as errors instead of counting them as skipped.
