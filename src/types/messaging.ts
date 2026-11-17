@@ -192,7 +192,6 @@ export type BackgroundRequest =
   | { action: "getSyncedChatContent"; chatId: string }
   | { action: "deleteSyncedChats"; chatIds: string[] }
   | { action: "existsChat"; chatId: string }
-  | { action: "checkForChanges"; chatId: string }
   | {
       action: "checkCurrentChatSynced";
       platformName?: string;

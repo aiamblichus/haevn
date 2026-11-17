@@ -32,7 +32,6 @@ export namespace SyncService {
   export const existsChatBySourceId = ChatRepository.existsChatBySourceId;
   export const batchCheckExistingChats = ChatRepository.batchCheckExistingChats;
   export const deleteChats = ChatRepository.deleteChats;
-  export const performCheckForChanges = ChatRepository.performCheckForChanges;
 
   // === Search Index Management (delegated to SearchIndexManager) ===
   export const init = SearchIndexManager.init;

@@ -29,18 +29,6 @@ export type CliRequestBody = DistributiveOmit<CliRequest, "id">;
 export type OutputFormat = "text" | "json";
 
 /**
- * CLI configuration stored in ~/.haevn/config.json
- */
-export interface CliConfig {
-  /** Path to exported HAEVN data file (for file-based mode) */
-  dataFile?: string;
-  /** Extension ID for native messaging */
-  extensionId?: string;
-  /** Native host name (must match manifest) */
-  nativeHostName?: string;
-}
-
-/**
  * Request sent from a CLI command to the daemon over the Unix socket.
  * Every request carries a unique `id` so the daemon can correlate responses
  * when multiple CLI clients are connected simultaneously.
