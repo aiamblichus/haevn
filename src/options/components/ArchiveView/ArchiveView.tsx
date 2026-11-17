@@ -12,7 +12,10 @@ import {
   SelectValue,
 } from "../../../components/ui/select";
 import { Table, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
-import type { SearchIndexRebuildStatus } from "../../../types/workerMessages";
+import type {
+  SearchIndexIncompleteStatus,
+  SearchIndexRebuildStatus,
+} from "../../../types/workerMessages";
 import type { ChatMeta, SearchResult, SortDirection, SortKey } from "../../types";
 import { ICONS, Icon } from "../../utils";
 import { ChatTableRow } from "./ChatTableRow";
@@ -29,6 +32,7 @@ interface ArchiveViewProps {
   isSearching: boolean;
   /** Set when the last search found the index being rebuilt (it did not run). */
   searchIndexRebuild: SearchIndexRebuildStatus | null;
+  searchIndexIncomplete: SearchIndexIncompleteStatus | null;
   selectedIds: Set<string>;
   filterProvider: string;
   setFilterProvider: (provider: string) => void;
@@ -79,6 +83,17 @@ const NoSearchResults = ({ rebuild }: { rebuild: SearchIndexRebuildStatus | null
     <p className="text-sm text-slate-500">No results.</p>
   );
 
+/** Shown above search results after a failed index rebuild: the list may be missing chats. */
+const IndexIncompleteNotice = ({ incomplete }: { incomplete: SearchIndexIncompleteStatus }) => (
+  <div
+    role="status"
+    className="mb-2 flex-shrink-0 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+  >
+    Search index is incomplete: the last rebuild failed ({incomplete.error}). Some chats may be
+    missing from these results. Reload the extension to rebuild it.
+  </div>
+);
+
 export const ArchiveView = ({
   displayedChats,
   totalChats,
@@ -88,6 +103,7 @@ export const ArchiveView = ({
   setSearchResults,
   isSearching,
   searchIndexRebuild,
+  searchIndexIncomplete,
   selectedIds,
   filterProvider,
   setFilterProvider,
@@ -379,6 +395,7 @@ export const ArchiveView = ({
           </div>
         ) : searchResults ? (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {searchIndexIncomplete && <IndexIncompleteNotice incomplete={searchIndexIncomplete} />}
             {!searchResults || searchResults.length === 0 ? (
               <NoSearchResults rebuild={searchIndexRebuild} />
             ) : (

@@ -12,6 +12,11 @@ export interface SearchIndexRebuildStatus {
   percentage: number;
 }
 
+/** The index is part-built because the last rebuild failed; only a successful rebuild ends it. */
+export interface SearchIndexIncompleteStatus {
+  error: string;
+}
+
 export type SearchWorkerMessage =
   | { type: "init" }
   | { type: "add"; doc: { id: string; title: string; content: string } }
@@ -50,12 +55,14 @@ export type SearchWorkerResponse =
        * means "not searched", never "no matches".
        */
       indexRebuilding?: SearchIndexRebuildStatus;
+      /**
+       * Set when the last rebuild failed: the search ran on a part-built index, so a short or
+       * empty `results` may be missing chats.
+       */
+      indexIncomplete?: SearchIndexIncompleteStatus;
     }
-  | { type: "bulkComplete"; success: boolean; indexedCount: number }
-  | {
-      type: "indexRebuildProgress";
-      progress: { processed: number; total: number; percentage: number };
-    }
+  | { type: "bulkComplete"; success: boolean; indexedCount: number; error?: string }
+  | { type: "indexRebuildProgress"; progress: SearchIndexRebuildStatus }
   | { type: "indexRebuildComplete"; totalChats: number }
   | { type: "error"; error: string; requestId?: string };
 

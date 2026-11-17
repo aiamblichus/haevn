@@ -42,7 +42,10 @@ import { generateForChat } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
-import type { SearchIndexRebuildStatus } from "../types/workerMessages";
+import type {
+  SearchIndexIncompleteStatus,
+  SearchIndexRebuildStatus,
+} from "../types/workerMessages";
 import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
@@ -522,9 +525,10 @@ async function handleSearch(
     return { id, success: false, error: "Query is required", code: "BAD_REQUEST" };
   }
 
-  const { results, indexRebuilding } = await new Promise<{
+  const { results, indexRebuilding, indexIncomplete } = await new Promise<{
     results: SearchResult[];
     indexRebuilding?: SearchIndexRebuildStatus;
+    indexIncomplete?: SearchIndexIncompleteStatus;
   }>((resolve, reject) => {
     const collected: SearchResult[] = [];
     SyncService.searchChatsStreaming(query, {
@@ -535,7 +539,11 @@ async function handleSearch(
       contextChars: options.contextChars,
       onResults: (batch) => collected.push(...batch),
       onComplete: (stats) =>
-        resolve({ results: collected, indexRebuilding: stats.indexRebuilding }),
+        resolve({
+          results: collected,
+          indexRebuilding: stats.indexRebuilding,
+          indexIncomplete: stats.indexIncomplete,
+        }),
       onError: reject,
     });
   });
@@ -547,6 +555,17 @@ async function handleSearch(
       success: false,
       error: `Search index is rebuilding (${indexRebuilding.percentage}%). Try again shortly.`,
       code: "INDEX_REBUILDING",
+    };
+  }
+
+  // The last rebuild failed and the index is part-built: a short or empty list may be missing
+  // chats, and a script cannot tell. Fail rather than answer.
+  if (indexIncomplete) {
+    return {
+      id,
+      success: false,
+      error: `Search index is incomplete: the last rebuild failed (${indexIncomplete.error}). Reload the extension to rebuild it.`,
+      code: "INDEX_INCOMPLETE",
     };
   }
 

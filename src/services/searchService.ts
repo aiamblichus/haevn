@@ -14,6 +14,7 @@
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type { Chat, SearchResult } from "../model/haevn_model";
 import type {
+  SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
   SearchWorkerMessage,
   SearchWorkerResponse,
@@ -219,6 +220,8 @@ export namespace SearchService {
         wasLimited: boolean;
         /** Set when the index was being rebuilt: the search did not run, so 0 results means nothing. */
         indexRebuilding?: SearchIndexRebuildStatus;
+        /** Set when the last rebuild failed: the search ran on a part-built index. */
+        indexIncomplete?: SearchIndexIncompleteStatus;
       }) => void;
       onError?: (error: Error) => void;
       streamBatchSize?: number;
@@ -260,6 +263,7 @@ export namespace SearchService {
       let totalResults = 0;
       let chatsScanned = 0; // Worker handles this, but we can track results count
       let indexRebuilding: SearchIndexRebuildStatus | undefined;
+      let indexIncomplete: SearchIndexIncompleteStatus | undefined;
 
       const finish = (wasLimited = false) => {
         if (cancelled) return;
@@ -275,6 +279,7 @@ export namespace SearchService {
           durationMs,
           wasLimited,
           ...(indexRebuilding ? { indexRebuilding } : {}),
+          ...(indexIncomplete ? { indexIncomplete } : {}),
         });
       };
 
@@ -331,6 +336,7 @@ export namespace SearchService {
               if (cancelled) return;
 
               if (chunk.indexRebuilding) indexRebuilding = chunk.indexRebuilding;
+              if (chunk.indexIncomplete) indexIncomplete = chunk.indexIncomplete;
 
               // The worker now returns SearchResult[] when hydrate: true
               let results = chunk.results as SearchResult[];

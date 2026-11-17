@@ -252,3 +252,222 @@ describe("search worker: soft-deleted chats", () => {
     expect(hitIds(await search("pineapple", false))).toEqual(["keep"]);
   });
 });
+
+type RebuildStatus = { processed: number; total: number; percentage: number };
+
+/** Run the clock and the event loop until `done` settles (fake timers, real IndexedDB). */
+async function settle(done: Promise<unknown>): Promise<void> {
+  let finished = false;
+  void done.then(() => {
+    finished = true;
+  });
+  while (!finished) {
+    await vi.advanceTimersByTimeAsync(10);
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+/** Poll with searches until the worker answers without a rebuild status. */
+async function waitUntilIndexReady(): Promise<void> {
+  for (let i = 0; i < 2000; i++) {
+    const [chunk] = await search("pineapple", false);
+    if (chunk.indexRebuilding === undefined) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("the index never became ready");
+}
+
+describe("search worker: a rebuild that fails (HVN-50)", () => {
+  /**
+   * 200 good chats fill segment_0 (it is built and stored), then the rebuild reads "zzz-bad",
+   * whose message list cannot be read, and fails with the index part-built.
+   */
+  async function seedOneUnreadableChat(): Promise<void> {
+    const bad = buildChat("zzz-bad", "pineapple");
+    const message = bad.messages["zzz-bad-m1"];
+    (message as { message: unknown }).message = 42;
+    await seedChats([
+      ...Array.from({ length: 200 }, (_, i) =>
+        buildChat(`c${String(i).padStart(3, "0")}`, "pineapple"),
+      ),
+      bad,
+    ]);
+  }
+
+  function lastBulkComplete(): Posted {
+    const replies = posted.filter((m) => m.type === "bulkComplete");
+    return replies[replies.length - 1];
+  }
+
+  it("replies that it failed, and says why", async () => {
+    await seedOneUnreadableChat();
+
+    await send({ type: "rebuild" });
+
+    const reply = lastBulkComplete();
+    expect(reply.success).toBe(false);
+    expect(typeof reply.error).toBe("string");
+    expect((reply.error as string).length).toBeGreaterThan(0);
+    expect(posted.some((m) => m.type === "indexRebuildComplete")).toBe(false);
+  });
+
+  it("marks a search that finds nothing, so an empty answer is not read as no matches", async () => {
+    await seedOneUnreadableChat();
+    await send({ type: "rebuild" });
+
+    const [chunk] = await search("zeppelin", true);
+
+    expect(chunk).toMatchObject({ results: [], done: true });
+    expect(chunk.indexRebuilding).toBeUndefined();
+    expect(chunk.indexIncomplete).toEqual({ error: lastBulkComplete().error });
+  });
+
+  it("marks a search that finds chats, on its last chunk, for id-only and hydrated searches", async () => {
+    await seedOneUnreadableChat();
+    await send({ type: "rebuild" });
+
+    for (const hydrate of [false, true]) {
+      const chunks = await search("pineapple", hydrate);
+
+      expect(hitIds(chunks).length).toBeGreaterThan(0);
+      const marked = chunks.filter((c) => c.indexIncomplete !== undefined);
+      expect(marked).toHaveLength(1);
+      expect(marked[0]).toBe(chunks[chunks.length - 1]);
+      expect(marked[0].done).toBe(true);
+    }
+  });
+
+  it("does not mark searches before any rebuild has failed", async () => {
+    await seedChats([buildChat("c1", "pineapple")]);
+    await send({ type: "rebuild" });
+
+    const chunks = await search("pineapple", true);
+
+    expect(lastBulkComplete().success).toBe(true);
+    expect(chunks.every((c) => c.indexIncomplete === undefined)).toBe(true);
+  });
+
+  it("recovers on the next explicit rebuild", async () => {
+    await seedOneUnreadableChat();
+    await send({ type: "rebuild" });
+    await getDB().chats.delete("zzz-bad");
+
+    await send({ type: "rebuild" });
+
+    expect(lastBulkComplete().success).toBe(true);
+    const chunks = await search("pineapple", false);
+    expect(chunks.every((c) => c.indexIncomplete === undefined)).toBe(true);
+    expect(new Set(hitIds(chunks)).size).toBe(200);
+  });
+
+  it("recovers on the next init, even when the stored segments already hold every chat", async () => {
+    await seedOneUnreadableChat();
+    await send({ type: "rebuild" });
+    // segment_0 (200 chats) is stored: once the bad chat is gone, a count of chats against
+    // indexed documents sees nothing wrong, so only the failure itself can start the rebuild.
+    await getDB().chats.delete("zzz-bad");
+
+    await send({ type: "init" });
+    await waitUntilIndexReady();
+
+    const chunks = await search("pineapple", false);
+    expect(chunks.every((c) => c.indexIncomplete === undefined)).toBe(true);
+    expect(new Set(hitIds(chunks)).size).toBe(200);
+  });
+});
+
+describe("search worker: init and the rebuild it starts (HVN-50)", () => {
+  it("answers init only after the consistency check, so the next search is told about the rebuild", async () => {
+    await seedChats([buildChat("c1", "pineapple"), buildChat("c2", "pineapple")]);
+
+    await send({ type: "init" });
+    const [chunk] = await search("pineapple", false);
+
+    expect(chunk.results).toEqual([]);
+    expect(chunk.indexRebuilding as RebuildStatus | undefined).toBeDefined();
+    await waitUntilIndexReady();
+    expect(new Set(hitIds(await search("pineapple", false)))).toEqual(new Set(["c1", "c2"]));
+  });
+});
+
+describe("search worker: timers and a second request around a rebuild (HVN-50)", () => {
+  const doc = { id: "stale", title: "Stale", content: "pineapple" };
+
+  it("drops the debounce timer of an earlier add when a rebuild starts", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await seedChats([buildChat("c1", "pineapple"), buildChat("c2", "pineapple")]);
+      await send({ type: "add", doc });
+      expect(vi.getTimerCount()).toBe(1);
+
+      const rebuild = send({ type: "rebuild" });
+      expect(vi.getTimerCount()).toBe(0);
+      await settle(rebuild);
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // The old segment object must not be written over the new one with its old document list.
+      const stored = await getDB().lunrIndex.get("segment_0");
+      expect([...((stored?.meta as { docIds: string[] }).docIds ?? [])].sort()).toEqual([
+        "c1",
+        "c2",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("schedules no debounced rebuild for an add that arrives during a rebuild", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await seedChats([buildChat("c1", "pineapple")]);
+
+      const rebuild = send({ type: "rebuild" });
+      await send({ type: "add", doc });
+      expect(vi.getTimerCount()).toBe(0);
+
+      await settle(rebuild);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still debounces an add when no rebuild is running", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await send({ type: "add", doc });
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("indexes a chat written after a running rebuild counted the chats, when a second rebuild is asked for", async () => {
+    await seedChats(
+      Array.from({ length: 600 }, (_, i) =>
+        buildChat(`c${String(i).padStart(3, "0")}`, "pineapple"),
+      ),
+    );
+    const first = send({ type: "rebuild" });
+
+    // Wait until the first rebuild has counted (its status carries the total).
+    let status: RebuildStatus | undefined;
+    while (!status || status.total === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+      const [chunk] = await search("pineapple", false);
+      status = chunk.indexRebuilding as RebuildStatus | undefined;
+      if (!status) throw new Error("the first rebuild ended before the test could write");
+    }
+    await seedChats([buildChat("zzz-late", "pineapple")]);
+    const [still] = await search("pineapple", false);
+    // The write above must have landed inside the running rebuild, or this proves nothing.
+    expect(still.indexRebuilding).toBeDefined();
+
+    const second = send({ type: "rebuild" });
+    await Promise.all([first, second]);
+
+    expect(hitIds(await search("pineapple", false))).toContain("zzz-late");
+    const replies = posted.filter((m) => m.type === "bulkComplete");
+    expect(replies).toHaveLength(2);
+    expect(replies.every((r) => r.success === true)).toBe(true);
+  });
+});

@@ -74,3 +74,37 @@ describe("search handlers and a rebuilding index", () => {
     expect(response).toEqual({ success: true, results: [] });
   });
 });
+
+describe("search handlers and an index left part-built by a failed rebuild", () => {
+  const incomplete = { error: "boom" };
+
+  it("broadcasts the failure with searchStreamingComplete", async () => {
+    searchChatsStreaming.mockImplementation((_query: string, options: StreamingOptions) => {
+      options.onComplete({ totalResults: 2, indexIncomplete: incomplete });
+      return { cancel: () => {} };
+    });
+
+    await handleSearchChatsStreaming(
+      { action: "searchChatsStreaming", query: "pineapple" },
+      () => {},
+    );
+
+    const complete = safeSendMessage.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.action === "searchStreamingComplete");
+    expect(complete).toMatchObject({ totalResults: 2, indexIncomplete: incomplete });
+  });
+
+  it("answers a plain search with the failure beside the results", async () => {
+    searchChatsStreaming.mockImplementation((_query: string, options: StreamingOptions) => {
+      options.onComplete({ totalResults: 0, indexIncomplete: incomplete });
+      return { cancel: () => {} };
+    });
+
+    const response = await new Promise((resolve) => {
+      void handleSearchChats({ action: "searchChats", query: "pineapple" }, resolve);
+    });
+
+    expect(response).toEqual({ success: true, results: [], indexIncomplete: incomplete });
+  });
+});

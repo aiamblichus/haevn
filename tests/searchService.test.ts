@@ -20,6 +20,7 @@ type Chunk = {
   results: SearchResult[];
   done: boolean;
   indexRebuilding?: { processed: number; total: number; percentage: number };
+  indexIncomplete?: { error: string };
 };
 
 /** Make the worker answer a streaming search with these chunks. */
@@ -79,5 +80,27 @@ describe("SearchService.searchChatsStreaming and a rebuilding index", () => {
 
     expect(results).toEqual([hit]);
     expect(stats).not.toHaveProperty("indexRebuilding");
+  });
+});
+
+describe("SearchService.searchChatsStreaming and an index left part-built by a failed rebuild", () => {
+  it("completes with the failure, also when the search found chats", async () => {
+    const hit = { chatId: "c1", messageId: "m1" } as SearchResult;
+    const incomplete = { error: "boom" };
+    workerAnswers([{ results: [hit], done: true, indexIncomplete: incomplete }]);
+
+    const { results, stats } = await runSearch();
+
+    expect(results).toEqual([hit]);
+    expect(stats.indexIncomplete).toEqual(incomplete);
+    expect(stats).not.toHaveProperty("indexRebuilding");
+  });
+
+  it("carries no failure when the worker sent none", async () => {
+    workerAnswers([{ results: [], done: true }]);
+
+    const { stats } = await runSearch();
+
+    expect(stats).not.toHaveProperty("indexIncomplete");
   });
 });
