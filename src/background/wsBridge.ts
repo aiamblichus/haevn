@@ -43,7 +43,6 @@ import { transformCodexToHaevnChat } from "../providers/codex/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
-import { ImportService } from "../services/importService";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateForChat, setManualMetadata } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
@@ -57,6 +56,7 @@ import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
+import { type ImportBatchItem, ImportBusyError, importChatBatch } from "./import/importBatch";
 import {
   isKeyRejected,
   rejectedRetryDelayMs,
@@ -970,76 +970,43 @@ async function handleImport(
     };
   }
 
-  const summary: WsImportResult = {
-    format,
-    total: files.length,
-    processed: 0,
-    saved: 0,
-    skipped: 0,
-    errors: 0,
-  };
+  const items: ImportBatchItem[] = files.map((file) => ({
+    name: file.name,
+    load: async () => {
+      let chat: Chat;
+      let raw: AllProviderRawData | undefined;
+      if (format === "codex") {
+        const extraction = await parseCodexJsonl(file.content);
+        chat = transformCodexToHaevnChat(extraction);
+        raw = extraction;
+      } else if (format === "pi") {
+        const extraction = await parsePiJsonl(file.content);
+        chat = transformPiToHaevnChat(extraction);
+        raw = extraction;
+      } else if (format === "haevn_json") {
+        const contentHash = await sha256Hex(file.content);
+        chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
+      } else if (format === "markdown") {
+        chat = await parseMarkdownContent(file.content);
+      } else {
+        const extraction = await parseClaudeCodeJsonl(file.content);
+        chat = transformToHaevnChat(extraction);
+        raw = extraction;
+      }
 
-  let bulkIndexingStarted = false;
+      return { chat, raw };
+    },
+  }));
 
   try {
-    if (!skipIndex) {
-      await SyncService.startBulkSyncIndexing();
-      bulkIndexingStarted = true;
+    const outcome = await importChatBatch(items, { overwrite, index: !skipIndex });
+    return { id, success: true, data: { format, total: files.length, ...outcome } };
+  } catch (err) {
+    if (err instanceof ImportBusyError) {
+      return { id, success: false, error: err.message, code: "BUSY" };
     }
-
-    for (const file of files) {
-      summary.processed++;
-      try {
-        let chat: Chat;
-        let raw: AllProviderRawData | undefined;
-        if (format === "codex") {
-          const extraction = await parseCodexJsonl(file.content);
-          chat = transformCodexToHaevnChat(extraction);
-          raw = extraction;
-        } else if (format === "pi") {
-          const extraction = await parsePiJsonl(file.content);
-          chat = transformPiToHaevnChat(extraction);
-          raw = extraction;
-        } else if (format === "haevn_json") {
-          const contentHash = await sha256Hex(file.content);
-          chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
-        } else if (format === "markdown") {
-          chat = await parseMarkdownContent(file.content);
-        } else {
-          const extraction = await parseClaudeCodeJsonl(file.content);
-          chat = transformToHaevnChat(extraction);
-          raw = extraction;
-        }
-
-        if (!chat.id) {
-          throw new Error("Imported chat is missing id");
-        }
-
-        if (!overwrite) {
-          const existing = await SyncService.getChat(chat.id);
-          if (existing) {
-            summary.skipped++;
-            continue;
-          }
-        }
-
-        await ImportService.saveImportedChat(chat, raw, { skipIndexing: true });
-        summary.saved++;
-      } catch (err) {
-        summary.errors++;
-        log.warn("[WsBridge] Import skipped due to parsing/transformation error", {
-          file: file.name,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  } finally {
-    if (bulkIndexingStarted) {
-      await SyncService.finishBulkSyncIndexing();
-    }
+    throw err;
   }
-
-  return { id, success: true, data: summary };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

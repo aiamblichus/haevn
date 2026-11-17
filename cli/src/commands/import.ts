@@ -151,7 +151,7 @@ export default defineCommand({
     },
     "skip-index": {
       type: "boolean",
-      description: "Skip search indexing after import",
+      description: "Save without indexing for search (the next index rebuild picks the chats up)",
       default: false,
     },
   },
@@ -250,7 +250,7 @@ export default defineCommand({
     const lines = [
       `${pc.green("✓")} Imported ${pc.bold(String(result.saved))} chat${result.saved === 1 ? "" : "s"}`,
       `  format=${format} · processed=${result.processed}/${result.total}`,
-      `  skipped=${result.skipped} · errors=${result.errors} · index=${skipIndex ? "skipped" : "rebuilt"}`,
+      `  skipped=${result.skipped} · errors=${result.errors} · index=${skipIndex ? "skipped" : "updated"}`,
     ];
 
     consola.log(lines.join("\n"));

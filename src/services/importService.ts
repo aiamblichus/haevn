@@ -6,6 +6,7 @@ import { fireAndForget } from "../utils/error_utils";
 import { log } from "../utils/logger";
 import { CacheService } from "./cacheService";
 import { ChatService } from "./chatService";
+import * as MetadataRepository from "./metadataRepository";
 import { SyncService } from "./syncService";
 
 export interface SaveImportedChatOptions {
@@ -17,6 +18,7 @@ export interface SaveImportedChatOptions {
  * - Inject Open WebUI base URL if needed
  * - Check if chat is new (for stats update)
  * - Save to database
+ * - Seed the metadata record from the chat's haevnMetadata
  * - Update provider stats for new chats
  * - Trigger thumbnail generation (fire-and-forget)
  * - Broadcast chat synced event
@@ -61,6 +63,24 @@ async function saveImportedChat(
 
   // Save chat
   await SyncService.saveChat(chat, raw, { skipIndexing });
+
+  // Seed metadata from the chat's haevnMetadata field (a HAEVN export carries it), but never
+  // over a record the archive already has.
+  if (chat.haevnMetadata) {
+    const existingMetadata = await MetadataRepository.get(chat.id);
+    if (!existingMetadata) {
+      const m = chat.haevnMetadata;
+      await MetadataRepository.set(chat.id, {
+        title: m.title ?? "",
+        description: m.description ?? "",
+        synopsis: m.synopsis ?? "",
+        categories: m.categories ?? [],
+        keywords: m.keywords ?? [],
+        source: "manual",
+        updatedAt: Date.now(),
+      });
+    }
+  }
 
   // Update provider stats cache (increment for new chats)
   if (isNewChat && chat.source) {

@@ -6,14 +6,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getCliSettings = vi.hoisted(() => vi.fn());
 const getMetadataAIConfig = vi.hoisted(() => vi.fn());
 const getStarmapConfig = vi.hoisted(() => vi.fn());
+const getChat = vi.hoisted(() => vi.fn());
+const startBulkSyncIndexing = vi.hoisted(() => vi.fn());
+const finishBulkSyncIndexing = vi.hoisted(() => vi.fn());
+const saveImportedChat = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/services/settingsService", () => ({
   getCliSettings,
   getMetadataAIConfig,
   getStarmapConfig,
 }));
-vi.mock("../src/services/syncService", () => ({ SyncService: {} }));
-vi.mock("../src/services/importService", () => ({ ImportService: {} }));
+vi.mock("../src/services/syncService", () => ({
+  SyncService: { getChat, startBulkSyncIndexing, finishBulkSyncIndexing },
+}));
+vi.mock("../src/services/importService", () => ({ ImportService: { saveImportedChat } }));
 vi.mock("../src/background/export/textExportArtifact", () => ({
   buildTextExportArtifact: vi.fn(),
 }));
@@ -55,6 +61,9 @@ async function connectedBridge(): Promise<{
   ask: (request: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }> {
   vi.resetModules();
+  // A reset drops the storage adapter the test setup installed; the lock lives in it.
+  const storage = await import("../src/storage");
+  storage.setStorageAdapter(new storage.MemoryStorageAdapter());
   const bridge = await import("../src/background/wsBridge");
   await bridge.applyWsBridgeSettings();
   const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
@@ -87,6 +96,11 @@ beforeEach(async () => {
     embeddingUrl: "http://localhost:1234",
     embeddingModel: "m",
   });
+  getChat.mockReset();
+  getChat.mockResolvedValue(undefined);
+  startBulkSyncIndexing.mockReset();
+  finishBulkSyncIndexing.mockReset();
+  saveImportedChat.mockReset();
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("chrome", {
     alarms: { create: vi.fn(), clear: vi.fn(async () => true) },
@@ -165,5 +179,119 @@ describe("setMetadata over the bridge does what the UI's handler does (HVN-30)",
 
     expect(viaBridge).toEqual(viaHandler);
     expect(viaBridge.embedding).toBe("pending");
+  });
+});
+
+describe("import over the bridge goes through the archive's import sequence (HVN-38)", () => {
+  function chatFile(i: number): { name: string; content: string } {
+    return {
+      name: `chat-${i}.json`,
+      content: JSON.stringify({
+        id: `chat-${i}`,
+        sourceId: `src-${i}`,
+        source: "claude",
+        title: `Chat ${i}`,
+        currentId: "m1",
+        messages: { m1: { id: "m1" } },
+      }),
+    };
+  }
+
+  function files(count: number) {
+    return Array.from({ length: count }, (_, i) => chatFile(i));
+  }
+
+  it("keeps the CLI's response shape and indexes a small import as it saves", async () => {
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(2),
+      options: { overwrite: true },
+    });
+
+    expect(reply).toEqual({
+      id: expect.any(String),
+      success: true,
+      data: { format: "haevn_json", total: 2, processed: 2, saved: 2, skipped: 0, errors: 0 },
+    });
+    expect(saveImportedChat).toHaveBeenCalledTimes(2);
+    for (const call of saveImportedChat.mock.calls) {
+      expect(call[2]).toEqual({ skipIndexing: false });
+    }
+    // No bulk mode, so no full rebuild that would blank search.
+    expect(startBulkSyncIndexing).not.toHaveBeenCalled();
+    expect(finishBulkSyncIndexing).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds the index once for a big import", async () => {
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(25),
+      options: { overwrite: true },
+    });
+
+    expect(reply).toMatchObject({ success: true, data: { saved: 25, errors: 0 } });
+    expect(startBulkSyncIndexing).toHaveBeenCalledTimes(1);
+    expect(finishBulkSyncIndexing).toHaveBeenCalledTimes(1);
+    for (const call of saveImportedChat.mock.calls) {
+      expect(call[2]).toEqual({ skipIndexing: true });
+    }
+  });
+
+  it("skipIndex saves without indexing now", async () => {
+    const bridge = await connectedBridge();
+
+    await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(1),
+      options: { overwrite: true, skipIndex: true },
+    });
+
+    expect(saveImportedChat.mock.calls[0][2]).toEqual({ skipIndexing: true });
+    expect(startBulkSyncIndexing).not.toHaveBeenCalled();
+  });
+
+  it("refuses while another operation holds the lock, and saves nothing", async () => {
+    const bridge = await connectedBridge();
+    const { acquireOperationLock, getActiveOperation } = await import("../src/background/state");
+    await acquireOperationLock("bulkExport");
+
+    const reply = await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(1),
+      options: { overwrite: true },
+    });
+
+    expect(reply).toMatchObject({ success: false, code: "BUSY" });
+    expect(reply.error).toContain("Another operation is running");
+    expect(reply.error).toContain("bulkExport");
+    expect(saveImportedChat).not.toHaveBeenCalled();
+    expect(await getActiveOperation()).toBe("bulkExport");
+  });
+
+  it("holds the lock for the import and frees it afterwards", async () => {
+    const bridge = await connectedBridge();
+    const { getActiveOperation } = await import("../src/background/state");
+    const seen: string[] = [];
+    saveImportedChat.mockImplementation(async () => {
+      seen.push(await getActiveOperation());
+    });
+
+    await bridge.ask({
+      action: "import",
+      format: "haevn_json",
+      files: files(1),
+      options: { overwrite: true },
+    });
+
+    expect(seen).toEqual(["import"]);
+    expect(await getActiveOperation()).toBe("idle");
   });
 });
