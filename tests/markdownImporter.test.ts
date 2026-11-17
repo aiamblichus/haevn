@@ -95,4 +95,26 @@ Hello
 
     await expect(parseMarkdownContent(markdown)).rejects.toThrow("Missing YAML frontmatter");
   });
+
+  it("refuses a file exported with all branches, which would import as one linear chat", async () => {
+    const markdown = `---
+title: Branched
+source: claude
+branches: all
+---
+
+<!-- HAEVN: role="user" -->
+Hi
+
+<!-- HAEVN: role="assistant" -->
+Hello
+
+## Branch 1: at message 1
+
+<!-- HAEVN: role="assistant" -->
+Hello again
+`;
+
+    await expect(parseMarkdownContent(markdown)).rejects.toThrow("re-export without it to import");
+  });
 });

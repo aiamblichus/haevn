@@ -213,7 +213,7 @@ haevn export chat_abc123 -o ./.pi/sessions/chat.jsonl --format pi_session_jsonl
 Options:
 - `-o, --output <file>` - Output file path (required)
 - `-f, --format <fmt>` - Export format (`haevn_json`, `haevn_markdown`, `pi_session_jsonl`)
-- `--all-branches` - Markdown only: also write the branches off the current one, each under a `## Branch N: at message M` heading (default: the current branch only)
+- `--all-branches` - Markdown only: also write the branches off the current one, each under a `## Branch N: at message M` heading (default: the current branch only). A file written with `--all-branches` is for reading; the Markdown importer refuses it
 
 Notes:
 - Markdown writes the path from the first message to the chat's current message. Its frontmatter says `branch: current` and, when the chat has other branches, `other_branches_omitted: N`. JSON keeps the whole tree.

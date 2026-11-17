@@ -414,7 +414,9 @@ function generateMarkdownContent(
     return content + renderAllBranches(chat, attachmentMap);
   }
 
-  for (const msgId of currentBranchIds(chat)) {
+  const branch = currentBranchIds(chat);
+  // A tree with no way in (a cycle, no root) leaves no branch to follow: keep the messages.
+  for (const msgId of branch.length > 0 ? branch : sortMessageIdsByResponseTimestamp(chat)) {
     content += renderMarkdownMessage(chat, msgId, attachmentMap);
   }
   return content;
@@ -450,7 +452,10 @@ function renderAllBranches(chat: Chat, attachmentMap?: Map<string, string>): str
   const sections = branchSections(chat);
 
   sections.forEach((section, index) => {
-    if (index > 0) {
+    if (section.unlinked) {
+      content += "## Unlinked messages\n\n";
+      content += "*Messages whose place in the conversation could not be found, oldest first.*\n\n";
+    } else if (index > 0) {
       const { forkId, forkSection } = section;
       if (forkId) {
         const number = messageNumber(chat, forkId);

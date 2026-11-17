@@ -10,6 +10,20 @@ export interface BranchSection {
   forkId?: string;
   /** Index (in the returned list) of the section that holds `forkId`. */
   forkSection?: number;
+  /** Messages the links never reach (corrupt data), oldest first; never a real branch. */
+  unlinked?: boolean;
+}
+
+interface Leaf {
+  id: string;
+  time: number;
+}
+
+interface Frame {
+  id: string;
+  children: string[];
+  next: number;
+  best?: Leaf;
 }
 
 function messageTime(message: ChatMessage): number {
@@ -39,15 +53,27 @@ function rootIds(chat: Chat): string[] {
 }
 
 /** The most recently created leaf at or under `id`; ties go to the later child. */
-function latestLeaf(chat: Chat, id: string, seen: Set<string>): { id: string; time: number } {
-  seen.add(id);
-  let best: { id: string; time: number } | undefined;
-  for (const childId of childrenOf(chat, id)) {
-    if (seen.has(childId)) continue;
-    const leaf = latestLeaf(chat, childId, seen);
-    if (!best || leaf.time >= best.time) best = leaf;
+function latestLeaf(chat: Chat, rootId: string, seen: Set<string>): Leaf {
+  // Post-order walk on an explicit stack: a chat can be thousands of messages deep.
+  const frame = (id: string): Frame => ({ id, children: childrenOf(chat, id), next: 0 });
+  seen.add(rootId);
+  const stack: Frame[] = [frame(rootId)];
+  for (;;) {
+    const top = stack[stack.length - 1];
+    if (top.next < top.children.length) {
+      const childId = top.children[top.next++];
+      if (!seen.has(childId)) {
+        seen.add(childId);
+        stack.push(frame(childId));
+      }
+      continue;
+    }
+    stack.pop();
+    const leaf = top.best ?? { id: top.id, time: messageTime(chat.messages[top.id]) };
+    const parent = stack[stack.length - 1];
+    if (!parent) return leaf;
+    if (!parent.best || leaf.time >= parent.best.time) parent.best = leaf;
   }
-  return best ?? { id, time: messageTime(chat.messages[id]) };
 }
 
 /** Root-to-`id` path through `parentId`, guarded against cycles. */
@@ -74,7 +100,7 @@ function pathDown(chat: Chat, id: string): string[] {
 function mainLeafId(chat: Chat): string | undefined {
   if (chat.currentId && chat.messages[chat.currentId]) return chat.currentId;
   const seen = new Set<string>();
-  let best: { id: string; time: number } | undefined;
+  let best: Leaf | undefined;
   for (const rootId of rootIds(chat)) {
     const leaf = latestLeaf(chat, rootId, seen);
     if (!best || leaf.time >= best.time) best = leaf;
@@ -102,7 +128,9 @@ export function otherBranchCount(chat: Chat): number {
 /**
  * Every message, as chains: the main path in full, then each alternative from its fork point
  * (to its most recently created leaf), then the alternatives nested inside it, depth first.
- * Siblings go oldest first. Each message appears in exactly one chain.
+ * Siblings go oldest first. Each message appears in exactly one chain: a message the links
+ * never reach (a `parentId` its parent does not list, a cycle with no root) goes last, in an
+ * `unlinked` section, so nothing is dropped silently.
  */
 export function branchSections(chat: Chat): BranchSection[] {
   const main = currentBranchIds(chat);
@@ -128,14 +156,19 @@ export function branchSections(chat: Chat): BranchSection[] {
     }
   };
 
-  if (main.length === 0) return sections;
-  place(main);
+  if (main.length > 0) place(main);
 
   // Other roots (the first message was edited): alternatives that fork from the start.
   for (const rootId of rootIds(chat)) {
     if (placed.has(rootId)) continue;
     place(pathDown(chat, rootId).filter((id) => !placed.has(id)));
   }
+
+  const unlinked = Object.values(chat.messages)
+    .filter((m) => !placed.has(m.id))
+    .sort((a, b) => messageTime(a) - messageTime(b))
+    .map((m) => m.id);
+  if (unlinked.length > 0) sections.push({ chain: unlinked, unlinked: true });
   return sections;
 }
 

@@ -347,4 +347,63 @@ describe("Markdown export of a branched chat", () => {
     const imported = await parseMarkdownContent(content);
     expect(Object.keys(imported.messages)).toHaveLength(4);
   });
+
+  it("exports a chat 20,000 messages deep, with and without currentId", async () => {
+    const depth = 20000;
+    const t0 = Date.UTC(2024, 0, 1);
+    const messages: Record<string, ChatMessage> = {};
+    for (let i = 0; i < depth; i++) {
+      const id = `d${i}`;
+      messages[id] = {
+        id,
+        parentId: i > 0 ? `d${i - 1}` : undefined,
+        childrenIds: i < depth - 1 ? [`d${i + 1}`] : [],
+        message: [
+          {
+            kind: "request",
+            parts: [{ part_kind: "user-prompt", content: `m${i}`, timestamp: "" }],
+          } as ModelRequest,
+        ],
+        model: "user",
+        done: true,
+        chatId: "c1",
+        timestamp: t0 + i,
+      };
+    }
+    // A side branch at the very top, so all-branches has an alternative to descend into.
+    messages.side = { ...messages.d1, id: "side", parentId: "d0", childrenIds: ["side2"] };
+    messages.side2 = { ...messages.d1, id: "side2", parentId: "side", childrenIds: [] };
+    messages.d0.childrenIds.push("side");
+
+    for (const currentId of ["", `d${depth - 1}`]) {
+      const chat = makeChat({ currentId, messages });
+      const current = await generateExportContent(chat, MD_OPTIONS);
+      expect(current.match(/<!-- HAEVN: role=/g)).toHaveLength(depth);
+      const all = await generateExportContent(chat, { ...MD_OPTIONS, allBranches: true });
+      expect(all.match(/<!-- HAEVN: role=/g)).toHaveLength(depth + 2);
+    }
+  });
+
+  it("does not drop a message whose parent does not list it", async () => {
+    const chat = makeBranchedChat();
+    // q2-original still names a1 as its parent, but a1 forgot it; a2-original hangs off it.
+    chat.messages.a1.childrenIds = ["q2-edited"];
+
+    const content = await generateExportContent(chat, { ...MD_OPTIONS, allBranches: true });
+    expect(content.match(/<!-- HAEVN: role=/g)).toHaveLength(7);
+    const unlinked = content.slice(content.indexOf("## Unlinked messages"));
+    expect(unlinked).toContain("Question two, as first written");
+    expect(unlinked).toContain("Answer to the first wording");
+  });
+
+  it("does not export an empty body for a cycle with no root and no currentId", async () => {
+    const chat = makeBranchedChat({ currentId: "" });
+    chat.messages.q1.parentId = "a2"; // q1 → a2 → q2-edited → a1 → q1: no message is a root
+    for (const options of [MD_OPTIONS, { ...MD_OPTIONS, allBranches: true }]) {
+      const content = await generateExportContent(chat, options);
+      expect(content.match(/<!-- HAEVN: role=/g)).toHaveLength(7);
+    }
+    const all = await generateExportContent(chat, { ...MD_OPTIONS, allBranches: true });
+    expect(all).toContain("## Unlinked messages");
+  });
 });

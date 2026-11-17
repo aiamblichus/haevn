@@ -58,7 +58,7 @@ export default defineCommand({
     "all-branches": {
       type: "boolean",
       description:
-        "Markdown only: write every branch, each alternative as its own section (default: the current branch)",
+        "Markdown only: write every branch, each alternative as its own section (default: the current branch). Such a file is for reading and cannot be imported",
       default: false,
     },
   },
@@ -75,9 +75,7 @@ export default defineCommand({
 
     const allBranches = args["all-branches"] === true;
     if (allBranches && format !== "haevn_markdown") {
-      consola.warn(
-        `--all-branches only applies to haevn_markdown; ${format} is written as usual.`,
-      );
+      consola.warn(`--all-branches only applies to haevn_markdown; ${format} is written as usual.`);
     }
 
     let artifact: ExportArtifactResponse;
