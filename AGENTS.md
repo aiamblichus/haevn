@@ -153,7 +153,7 @@ The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /
 5. **Bulk operations** (`src/background/bulkSync/`, `bulkExport/`, `import/`): stateful orchestration under an operation lock
 6. **UI** (`src/popup/`, `src/options/`, `src/viewer/`): popup, archive (options) and viewer
 7. **Content script** (`src/content/content.ts`): injected bridge to the LLM platforms
-8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive. It keeps its own copies of some operations (exporter choice, metadata writes, import), so check that a change to a handler reaches the bridge too
+8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive. `setMetadata` and `import` call the same operation as the UI handler; a few copies remain (HVN-53), so check that a change to a handler reaches the bridge too
 
 ### Data flows
 
@@ -165,6 +165,6 @@ The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /
 ### Adding a platform
 
 - Create `src/providers/{platform}/` with extractor, transformer, model and provider
-- Register it in `src/background/init.ts` (the `PROVIDERS` list) and in `getProviderByPlatform` (`src/background/utils/platformTransform.ts`)
+- Register it in `registerAllProviders()` (`src/providers/index.ts`), and give its provider definition `hosts` (the web hostnames a sync matches) or `importOnly: true`; `PROVIDERS` in `init.ts` and `getProviderByPlatform` both read the registry. Every JavaScript context that selects a provider calls `registerAllProviders()` first (service worker, content script, bulk-sync worker)
 - Add the host permission in `src/manifest.json`
 - Update `src/utils/platform.ts` for detection
