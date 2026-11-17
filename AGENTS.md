@@ -69,7 +69,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 ## Generated and local-only
 
 - Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
-- `skills/*/SKILL.md` will be generated from `/project/haevn/skills/*` by a sync target (HVN-1): once it lands, edit the KB note and re-sync, never the file. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
+- `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
 - Gitignored and local-only: `charter/`, `planning/`, `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
 - Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
 
