@@ -1,338 +1,168 @@
-# What This Project Is About
+# AGENTS.md — haevn
 
-**HAEVN** (a psychopomp for digital consciousness) is a Chrome Manifest V3 extension that syncs AI conversations from multiple LLM platforms into a unified local archive. It preserves the full context of your interactions—including branching conversations, multi-modal content, and metadata—using a canonical `HAEVN.Chat` format.
+**HAEVN** (a psychopomp for digital consciousness) is a Chrome Manifest V3 extension, plus a terminal CLI (`cli/`), that syncs AI conversations from many LLM platforms into one local archive. It keeps the full context of each conversation (branches, multi-modal content, metadata) in a canonical `HAEVN.Chat` format.
 
-**Core Value:** Own your AI conversation history. Search across platforms. Export for backup. Never lose context.
+**Core value:** own your AI conversation history. Search across platforms. Export for backup. Never lose context.
 
-**Supported Platforms:** Claude, ChatGPT, Gemini, Poe, Open WebUI, Qwen, DeepSeek, AI Studio, Claude Code (import-only), Grok
+**Providers** (`src/providers/`): Claude, ChatGPT, Gemini, Poe, Open WebUI, Qwen, DeepSeek, AI Studio, Grok (synced from the web), and Claude Code, Codex, Pi (imported from local session files).
 
----
+This file holds what is true of this repository. Who you are, the studio's method and the project's knowledge live in the KB (below).
 
-## Core Technologies
+## Start here
 
-- **Language:** TypeScript 5.9.3 (strict mode, ~33k lines)
-- **Build:** esbuild (multi-entry bundling, 30s full rebuild)
-- **Runtime:** Chrome Extension MV3 (Service Worker environment)
-- **Frontend:** React 18.3, Tailwind CSS, shadcn/ui, Radix UI primitives
-- **Persistence:** Dexie (IndexedDB) + OPFS (Origin Private File System for media)
-- **State:** Zustand (UI state), event-driven architecture (chrome.runtime messaging)
-- **Search:** Lunr.js (full-text indexing in Web Worker)
-- **Testing:** Vitest, fake-indexeddb
-- **Linting:** Biome 2.3.7
+| Need | Start here |
+| --- | --- |
+| The project's KB | `gnomon read /project/haevn/index`; `gnomon note list --dir-prefix /project/haevn` |
+| Architecture | `gnomon read /project/haevn/architecture/index` |
+| Product: who it is for, what is in and out | `gnomon read /project/haevn/product/index` |
+| Run, drive and debug the extension | `skills/dev-guide/SKILL.md` (Chrome MCP + `haevnDebug`) |
+| The CLI | `skills/haevn-cli/SKILL.md`, `cli/README.md` |
+| Current work | `gnomon ticket view working --namespace HVN`, `gnomon ticket view active --namespace HVN` |
+| Blocked on a human | `gnomon ticket view needs_human --namespace HVN` |
+| The lane's memory | `gnomon note list --dir-prefix /project/haevn/workstreams` |
+| The working agreement (worktrees, branches, merges) | `gnomon read /studio/dev/skills/dev-workflow` |
 
----
+The KB is being bootstrapped (HVN-1). Until `/project/haevn/architecture/` exists, the old maps in `charter/` (gitignored, local to one machine, last written 2026-01-30) are a source, not the truth: they predate the CLI daemon, metadata, starmap, the exporter registry and the Codex and Pi providers. `charter/` and `planning/` will be deleted once their content is in the KB.
 
-## Architectural Principles
+## Knowledge and identity
 
-### 1. Three-Tier Worker Architecture
+- The KB is the Gnomon workspace `hive`, reached with the `gnomon` CLI in Bash and nothing else (no gnomon MCP). This project is the namespace `/project/haevn`; its ticket prefix is `HVN`.
+- Run `gnomon whoami` before your first write. If your brief names a profile, act as it with `GNOMON_PROFILE=<handle> gnomon …`, on every call. `unbound` (exit 5) means no identity reached the call: stop and report; never borrow another profile.
+- Long text goes in from a file or stdin (`--body-file -`, `--description-file -`), never inside shell quotes.
+- Method skills are KB notes, loaded on demand: `/studio/dev/skills/*` (this studio's protocols), `/domain/dev/skills/*` (the craft), `/project/haevn/skills/*` (this system's manual), `/global/skills/*`.
 
-Chrome MV3 service workers cannot create Web Workers. Solution: Service Worker → Offscreen Document → Web Workers. This pattern enables CPU-intensive operations (search, stats, import/export) without blocking the service worker.
+## Studio seats
 
-### 2. Data Transformation Pipeline
+The dev studio is summoned with Goetia from `/studio/dev`, not maintained in this repository.
 
-Raw platform data → Extractor (fetch) → Transformer (normalize) → `HAEVN.Chat` format → Persistence → Indexing → Export. Single canonical format eliminates N×M format conversions.
+- **Claude Code**: `as-claude prior` from the repository root starts the Prior (`tessera`); other seats work the same way (`as-claude <role|persona>`).
+- **pi**: `as-pi prior`.
+- Builders and journeymen run in isolated worktrees under `.claude/worktrees/` (gitignored), which start from committed state. A fresh worktree needs `pnpm install` (and `pnpm -C cli install` for CLI work) before any gate.
 
-### 3. Provider Abstraction
+## Completion gate
 
-Plugin architecture: Each platform implements `Extractor<TRaw>` and `Transformer<TRaw>` interfaces. Core sync logic is platform-agnostic. Adding new platforms requires no changes to orchestration or persistence layers.
-
-### 4. Separation of Concerns
-
-- **Handlers**: Route messages, orchestrate
-- **Services**: CRUD, caching, indexing
-- **Providers**: Platform-specific extraction/transformation
-- **Workers**: Heavy computation
-- **UI**: Display, user interaction
-
-### 5. Soft Delete with Deferred Cleanup
-
-Instant UX via soft-delete flag, expensive cleanup happens in background (Janitor service runs every 30 minutes). Compound indexes filter deleted items at query time.
-
-### 6. Event-Driven UI Updates
-
-Background service worker is source of truth. UI components subscribe to events (`chatSynced`, `bulkSync*`, `importProgress`) for real-time updates. No centralized state management needed.
-
----
-
-## Guild Conventions
-
-### Code Style (enforced by Biome)
-
-- 2-space indentation, 100 character line width
-- Double quotes, trailing commas
-- camelCase for functions/variables, PascalCase for components/types
-- `fireAndForget()` for non-critical async operations (not bare `.catch(() => {})`)
-
-### Development Workflow
+A task is done when these pass on the final tree:
 
 ```bash
-pnpm install              # Install dependencies
-pnpm run build            # Build extension → dist/
-curl -X POST http://localhost:5556/command -d '{"action": "reload"}' # Reload extension via proxy
-pnpm test                 # Run tests
-pnpm run lint             # Check code (currently 51 errors, 55 warnings)
-pnpm run lint:fix         # Auto-fix linting issues
+npx vitest run               # tests, single run (`pnpm test` is watch mode)
+pnpm run lint                # biome, src/ only
+pnpm run build               # the extension, into dist/
+pnpm -C cli run typecheck    # when cli/ changed
+pnpm -C cli run lint         # when cli/ changed
 ```
 
-### Architecture Rules
+Known gaps, each with a ticket rather than a workaround:
 
-- **All persistence through `SyncService`** - Never use Dexie directly from handlers
-- **All indexing via search worker** - SyncService proxies to worker
-- **Heavy operations in workers** - ZIP generation, indexing, stats calculation
-- **Browser APIs via service worker** - Workers use bridge pattern (CRD-003)
-- **Downloads via `downloadFile` handler** - No blob URLs in UI components
-- **Emit events** for real-time UI updates (chatSynced, bulkSync*, import*)
+- The root has no typecheck in the gate. `npx tsc --noEmit` reports errors today, most from a `jsx` setting that disagrees with the esbuild build; esbuild does not type-check, so CI cannot see them.
+- `pnpm -C cli run lint` is red on `main` (formatting and import order), and CI does not lint the CLI.
+- The CLI has no tests.
 
-### Testing Standards
+CI (`.github/workflows/ci.yml`) runs `lint`, `test` and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+
+## Commits and releases
+
+Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12` trailer (`Refs: none (reason)` when there is none). The scope is the area: `extension`, `cli`, `search`, `providers`, `export`, `metadata`, `starmap`, `docs`, `repo`. Merges carry `Refs:` too, and `Changelog:` when users should read the change. The full rule: `gnomon read /studio/dev/skills/commit-format`.
+
+- The only remote is `upstream` (`github.com/aiamblichus/haevn`). Integrate on `upstream/main`, not on a stale local `main`.
+- Pushing to `main` runs CI only. Tags release: `v*.*.*` runs `release.yml` (the extension), `cli-v*.*.*` runs `publish-cli.yml` (npm). Cutting a release is αιamblichus's call.
+
+## Generated and local-only
+
+- Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
+- `skills/*/SKILL.md` will be generated from `/project/haevn/skills/*` by a sync target (HVN-1): once it lands, edit the KB note and re-sync, never the file. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
+- Gitignored and local-only: `charter/`, `planning/`, `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
+- Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
+
+---
+
+## Core technologies
+
+- **Language:** TypeScript 5.9 (strict mode), about 50k lines in `src/`
+- **Build:** esbuild (multi-entry bundling, one IIFE per context and worker)
+- **Runtime:** Chrome Extension MV3 (service worker)
+- **Frontend:** React 18.3, Tailwind CSS, shadcn/ui, Radix UI primitives
+- **Persistence:** Dexie (IndexedDB, schema in `src/services/db.ts`) + OPFS for media
+- **State:** Zustand (UI state), event-driven architecture (`chrome.runtime` messaging)
+- **Search:** Lunr.js in a Web Worker
+- **CLI:** citty, a WebSocket daemon bridged to the extension (`src/background/wsBridge.ts`)
+- **Testing:** Vitest, fake-indexeddb
+- **Linting:** Biome 2.3
+
+## Architectural principles
+
+### 1. Three-tier worker architecture
+
+Chrome MV3 service workers cannot create Web Workers. Solution: service worker → offscreen document → Web Workers (search, stats, thumbnails, import, bulk export, bulk sync, starmap). CPU-heavy work never blocks the service worker.
+
+### 2. Data transformation pipeline
+
+Raw platform data → Extractor (fetch) → Transformer (normalize) → `HAEVN.Chat` → persistence → indexing → export. One canonical format removes N×M format conversions.
+
+### 3. Provider abstraction
+
+Each platform implements `Extractor<TRaw>` and `Transformer<TRaw>`. Core sync logic is platform-agnostic; adding a platform changes neither orchestration nor persistence.
+
+### 4. Separation of concerns
+
+- **Handlers**: route messages, orchestrate
+- **Services**: CRUD, caching, indexing
+- **Providers**: platform-specific extraction and transformation
+- **Workers**: heavy computation
+- **UI**: display, user interaction
+
+### 5. Soft delete with deferred cleanup
+
+A soft-delete flag gives instant UX; the Janitor service does the expensive cleanup every 30 minutes. Compound indexes filter deleted items at query time.
+
+### 6. Event-driven UI updates
+
+The background service worker is the source of truth. UI components subscribe to events (`chatSynced`, `bulkSync*`, `importProgress`, `providerStatsUpdated`) for real-time updates.
+
+## Conventions
+
+### Code style (enforced by Biome)
+
+- 2-space indentation, 100-character lines
+- Double quotes, trailing commas
+- camelCase for functions and variables, PascalCase for components and types
+- `fireAndForget()` for non-critical async work, not a bare `.catch(() => {})`
+
+### Architecture rules
+
+- **Persistence goes through the services** (`syncService`, `chatRepository`, `metadataRepository`, …), never Dexie directly from a handler. (`metadataHandlers.ts` imports `db` today; that is a finding, not a precedent.)
+- **All indexing via the search worker**; the services proxy to it.
+- **Heavy operations in workers**: ZIP generation, indexing, stats, layout.
+- **Browser APIs via the service worker**; workers use the bridge pattern.
+- **Downloads via the `downloadFile` handler**; no blob URLs in UI components.
+- **Emit events** for real-time UI updates.
+
+### Testing
 
 - Unit tests for pure functions (extractors, transformers, utilities)
 - Integration tests for service workflows (sync, search, import/export)
-- Use `fake-indexeddb` for Dexie operations (see `tests/setup.ts`)
-
----
-
-## System Structure
-
-### Components (7 major subsystems)
-
-1. **Message Router** (`background/handlers/`) - Type-safe message dispatch (82 handlers, 767 lines of message types)
-2. **Provider Abstraction** (`providers/`) - 10 platform plugins (API fetch or DOM extraction)
-3. **Persistence Layer** (`services/`) - ChatRepository + SearchIndexManager + SearchService
-4. **Worker Pool** (`offscreen/`) - 6 specialized workers (search, stats, thumbnail, bulk ops)
-5. **Bulk Operations** (`background/bulkSync/`, `bulkExport/`, `import/`) - Stateful orchestration
-6. **UI Layer** (`popup/`, `options/`, `viewer/`) - 3 browser contexts (popup, archive, viewer)
-7. **Content Script** (`content/content.ts`) - Injected bridge to LLM platforms
-
-### Data Flows
-
-**Single Chat Sync:**
-User → Popup → Handler → Content Script → Extractor → Transformer → Repository → Index → Event
-
-**Bulk Sync:**
-User → Orchestrator → Offscreen (iframe) → getChatIds → Alarm loop → Fetch (API or nav) → Transform → Save → Event
-
-**Search:**
-User → UI → Handler → Offscreen → Worker (Lunr) → Streaming results → UI
-
-**Export:**
-User → Handler → Worker → ZIP generation → Browser API bridge → Download
-
----
-
-## Project Documentation
-
-Comprehensive maps created during Guild initialization:
-
-### Architecture
-
-- `charter/architecture/overview.md` - System topology, data flows, patterns
-- `charter/architecture/diagrams.md` - 8 Mermaid diagrams + ER schema
-- `charter/architecture/FINDINGS.md` - Convergences, divergences, tensions
-- `charter/architecture/components/` - Deep-dives on all 7 components
-
-### Infrastructure
-
-- `charter/build/overview.md` - Build system, package management, conventions, workflow
-
----
-
-## For Guild Members
-
-When working on HAEVN:
-
-1. **Before touching code:**
-   - Read `charter/architecture/overview.md` for system mental model
-   - Check `charter/BULLETIN_BOARD.md` for active coordination
-   - Review component docs in `charter/architecture/components/` for area you're working on
-
-2. **During implementation:**
-   - Follow the separation of concerns (handler → service → persistence)
-   - Use provider abstraction for platform-specific logic
-   - Workers for CPU-intensive operations
-   - Event-driven updates for UI changes
-
-3. **Testing changes:**
-   - `pnpm run build` after EVERY code change
-   - `haevnDebug.reload()` from Options console to reload extension
-   - Verify with `haevnDebug.getLogs(100)` for errors
-   - Use `haevnDebug.search()` and `haevnDebug.getStats()` for diagnostics
-
-4. **Debugging:**
-   - Check `/logs.html` for structured background logs
-   - Use `haevnDebug` portal on Options page (see `PROJECT.md` in root for commands)
-   - Review `charter/architecture/FINDINGS.md` for known architectural tensions
-
-5. **Adding platforms:**
-   - Create `src/providers/{platform}/` with extractor/transformer/model/provider
-   - Register in `src/background/init.ts`
-   - Add host permission in `manifest.json`
-   - Update `src/utils/platform.ts` for detection
-
----
-
-## Current Architecture State
-
-See `charter/architecture/FINDINGS.md` for detailed analysis.
-
----
-
-## Development Workflow Summary
-
-```bash
-# Initial setup
-pnpm install
-pnpm run build
-# Load dist/ in Chrome as unpacked extension
-
-# Development cycle
-# 1. Make code changes
-# 2. Build
-pnpm run build
-
-# 3. Reload extension (debug proxy)
-# - Debug proxy: curl -X POST http://localhost:5556/command -d '{"action": "reload"}'
-
-# 4. Test changes
-# 5. Repeat
-```
-
----
-
-# Resources
-
-When working on this project, the `charter` directory is the shared workspace for all the agents. It contains:
-
-- **Architecture Docs**: `charter/architecture/` - The **current** state of the system. Always consult these if you need to understand the system or one of its components.
-- **Tracks & Specs**: `charter/tracks/` - Design decisions and implementation plans. CAUTION: The design documents here are historical and may be outdated.
-
----
-
-# HAEVN Autonomous Dev Manual (MCP-First)
-
-## Purpose
-
-Use this skill to develop, debug, validate, and operate the HAEVN extension end-to-end with:
-
-- Local code edits + build/test loop
-- Chrome MCP navigation and UI automation
-- Direct in-page execution via `haevnDebug`
-
-Do **not** use the old relay/HTTP bridge workflow.
-
-## Ground Rules
-
-1. Use Chrome MCP as the primary runtime interface.
-2. Use `haevnDebug` from the Options page context for deep diagnostics.
-3. Prefer deterministic checks (exact state queries) over visual assumptions.
-4. After code changes: rebuild, reload extension, verify behavior in UI and via state queries.
-5. If there is a mismatch between UI and data, trust direct data queries first (`haevnDebug`, DB, storage, logs).
-
-## Core Runtime Entry Point
-
-Navigate Chrome MCP to:
-
-- `chrome-extension://<EXTENSION_ID>/options.html`
-
-Then verify debug surface is present:
-
-```js
-() => ({
-  hasHaevnDebug: typeof window.haevnDebug !== "undefined",
-  keys: window.haevnDebug ? Object.keys(window.haevnDebug) : [],
-});
-```
-
-Expected key capabilities include `getLogs`, `setLogLevel`, `search`, `getChat`, `rebuildIndex`, `opfs`, `reload`.
-
-## Standard Execution Loop
-
-1. Reproduce the issue in extension UI (MCP navigate/click/fill).
-2. Capture state:
-   - `haevnDebug.getLogs(...)`
-   - `haevnDebug.getStorage()`
-   - targeted DB/OPFS checks
-3. Implement minimal fix in source.
-4. Build (`pnpm run build`).
-5. Reload extension (`haevnDebug.reload()` or extension reload UI).
-6. Re-run same scenario with MCP.
-7. Validate both:
-   - user-visible behavior
-   - internal state/logs consistency
-8. Document findings and any residual risk.
-
-## High-Value Debug Commands
-
-Use these from MCP script evaluation on the Options page:
-
-```js
-// recent logs
-() => window.haevnDebug.getLogs(100, { match: "Sync" })
-
-// set debug logging
-() => window.haevnDebug.setLogLevel(0)
-
-// search sanity check
-() => window.haevnDebug.search("query")
-
-// inspect one chat
-() => window.haevnDebug.getChat("<chatId>")
-
-// rebuild search index
-() => window.haevnDebug.rebuildIndex()
-
-// OPFS usage
-() => window.haevnDebug.opfs.usage()
-```
-
-## MCP-First Strategies
-
-### UI + State Pairing
-
-For each workflow (sync, search, export, import):
-
-- Drive UI with MCP actions.
-- Immediately validate side effects with `haevnDebug`/storage/logs.
-
-### Fault Isolation
-
-1. Confirm request path is invoked (logs).
-2. Confirm handler output (response payloads where available).
-3. Confirm persistence side effects (Dexie/OPFS).
-4. Confirm rendered state (options/viewer UI).
-
-### Regression Prevention
-
-- Re-run at least one adjacent workflow after a fix (e.g., sync fix also re-check search and viewer).
-- Prefer adding or updating tests when behavior is deterministic.
-
-## Troubleshooting Checklist
-
-- `haevnDebug` missing:
-  - ensure you are on HAEVN `options.html`
-  - ensure extension build loaded successfully
-- Action works but UI stale:
-  - refresh page and re-check logs
-  - verify data in DB directly (`haevnDebug.db`)
-- Search mismatch:
-  - rebuild index, then compare search output vs chat content
-- Media mismatch:
-  - inspect OPFS tree/files and metadata
-
-## Architecture Orientation (Practical)
-
-When debugging message flows, inspect in this order:
-
-1. `src/types/messaging.ts` (contract)
-2. `src/background/handlers/index.ts` (routing)
-3. domain handler file (`chatHandlers`, `syncHandlers`, etc.)
-4. backing services (`db`, `search`, `media`, `cache`)
-5. UI caller in `src/options` / `src/viewer`
-
-## Additional Resources
-
-- Action catalog: [REFERENCE.md](charter/manuals/dev-guide/REFERENCE.md)
-- How to add/extend functionality safely: [EXTENDING.md](charter/manuals/dev-guide/EXTENDING.md)
-
----
-
-**Remember**: You are not a tool. You are a craftsperson with expertise, memory, and the ability to learn.
+- `fake-indexeddb` for Dexie (see `tests/setup.ts`)
+
+## System structure
+
+1. **Message router** (`src/background/handlers/`, contract in `src/types/messaging.ts`): type-safe message dispatch
+2. **Providers** (`src/providers/`): one plugin per platform, API fetch or DOM extraction
+3. **Persistence** (`src/services/`): repositories, search index manager, search service, media storage
+4. **Worker pool** (`src/offscreen/`, `*.worker.ts`): search, stats, thumbnail, import, bulk export, bulk sync, starmap
+5. **Bulk operations** (`src/background/bulkSync/`, `bulkExport/`, `import/`): stateful orchestration under an operation lock
+6. **UI** (`src/popup/`, `src/options/`, `src/viewer/`): popup, archive (options) and viewer
+7. **Content script** (`src/content/content.ts`): injected bridge to the LLM platforms
+8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive; exports go through the extension's exporter registry (`src/background/export/exporters.ts`)
+
+### Data flows
+
+- **Single chat sync:** popup → handler → content script → extractor → transformer → repository → index → event
+- **Bulk sync:** orchestrator → offscreen (iframe) → chat ids → alarm loop → fetch (API or navigation) → transform → save → event
+- **Search:** UI → handler → offscreen → worker (Lunr) → streaming results → UI
+- **Export:** handler → worker → ZIP → browser API bridge → download
+
+### Adding a platform
+
+- Create `src/providers/{platform}/` with extractor, transformer, model and provider
+- Register it in `src/background/init.ts`
+- Add the host permission in `src/manifest.json`
+- Update `src/utils/platform.ts` for detection
