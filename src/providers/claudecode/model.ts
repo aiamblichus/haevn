@@ -75,7 +75,7 @@ export interface ClaudeCodeToolUseContent {
   type: "tool_use";
   id: string; // Tool call ID (e.g., "toolu_012WCd1d3TgxkUbhmN3Wbhks")
   name: string; // Tool name (e.g., "Read", "Edit", "Bash", "Task")
-  input: unknown; // Tool-specific input parameters
+  input: Record<string, unknown>; // Tool-specific input parameters
 }
 
 export interface ClaudeCodeThinkingContent {
