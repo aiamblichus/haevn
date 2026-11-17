@@ -95,17 +95,4 @@ export const openwebuiProvider: Provider<OpenWebUIRawExtraction> = {
       return `${baseUrl}/c/${chatId}`;
     }
   },
-
-  async checkAvailability(_baseUrl?: string): Promise<{
-    available: boolean;
-    count?: number;
-    tabId?: number;
-    reason?: string;
-  }> {
-    // Availability checking removed - sync is initiated from popup
-    return {
-      available: false,
-      reason: "Use popup to sync from provider page",
-    };
-  },
 };

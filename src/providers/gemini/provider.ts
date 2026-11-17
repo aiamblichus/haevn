@@ -81,17 +81,4 @@ export const geminiProvider: Provider<GeminiConversationData> = {
     // IDs are already normalized (no 'c_' prefix)
     return `https://gemini.google.com/app/${chatId}`;
   },
-
-  async checkAvailability(): Promise<{
-    available: boolean;
-    count?: number;
-    tabId?: number;
-    reason?: string;
-  }> {
-    // Availability checking removed - sync is initiated from popup
-    return {
-      available: false,
-      reason: "Use popup to sync from provider page",
-    };
-  },
 };

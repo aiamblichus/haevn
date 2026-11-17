@@ -65,10 +65,4 @@ export const piProvider: Provider<PiRawExtraction, string> = {
   buildChatUrl(): string {
     return "";
   },
-  async checkAvailability() {
-    return {
-      available: false,
-      reason: "PI is import-only (no live sync)",
-    };
-  },
 };

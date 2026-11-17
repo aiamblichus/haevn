@@ -2,13 +2,6 @@
 
 import type { Extractor, Importer, Transformer } from "./interfaces";
 
-export interface ProviderAvailabilityResult {
-  available: boolean;
-  count?: number;
-  tabId?: number;
-  reason?: string;
-}
-
 /**
  * Sync mode determines how bulk sync fetches individual chats.
  * - 'api': Fast, background fetch via provider API (Claude, ChatGPT, etc.)
@@ -86,7 +79,6 @@ export interface Provider<TRaw = unknown, TImport = unknown> {
 
   // Methods
   setup?(): void;
-  checkAvailability(baseUrl?: string): Promise<ProviderAvailabilityResult>;
   getListUrl(baseUrl?: string): string;
   buildChatUrl(chatId: string, baseUrl?: string): string;
 }

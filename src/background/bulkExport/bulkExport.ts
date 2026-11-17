@@ -454,16 +454,6 @@ export async function startBulkExport(chatIds: string[], options: ExportOptions)
 }
 
 /**
- * Legacy function - no longer needed as worker handles processing
- * Kept for backward compatibility with alarm listener
- */
-export async function handleBulkExportTick(): Promise<void> {
-  // Worker handles all processing now, this is just a no-op
-  // Alarm-based processing is no longer used
-  log.info("[BulkExport] handleBulkExportTick called (no-op in worker mode)");
-}
-
-/**
  * Pauses an ongoing bulk export.
  */
 export async function pauseBulkExport(): Promise<void> {

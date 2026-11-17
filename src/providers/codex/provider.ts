@@ -61,10 +61,4 @@ export const codexProvider: Provider<CodexRawExtraction, string> = {
   buildChatUrl(): string {
     return "";
   },
-  async checkAvailability() {
-    return {
-      available: false,
-      reason: "Codex is import-only (no live sync)",
-    };
-  },
 };

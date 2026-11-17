@@ -81,11 +81,4 @@ export const claudeCodeProvider: Provider<ClaudeCodeRawExtraction> = {
   buildChatUrl(): string {
     return ""; // No web URL
   },
-
-  async checkAvailability() {
-    return {
-      available: false,
-      reason: "Claude Code is import-only (no live sync)",
-    };
-  },
 };

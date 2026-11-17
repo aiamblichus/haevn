@@ -474,22 +474,19 @@ export interface ImageDownloadedMessage {
 /**
  * All messages sent TO the offscreen document from the service worker.
  *
- * The offscreen document manages iframes for DOM extraction and routes messages to Web Workers.
+ * The offscreen document hosts the Web Workers and routes messages to them.
  * This is a discriminated union based on the `type` property.
  *
  * @example
  * ```typescript
  * const request: OffscreenRequest = {
- *   type: "createIframe",
- *   url: "https://example.com"
+ *   type: "createBlobUrl",
+ *   path: "media/example.png"
  * };
  * ```
  */
 export type OffscreenRequest =
   | { type: "ping" }
-  | { type: "createIframe"; url: string }
-  | { type: "navigateIframe"; url: string }
-  | { type: "getIframeInfo" }
   | { type: "deleteStagedFile"; path: string }
   | { type: "createBlobUrl"; path: string }
   | { type: "revokeBlobUrl"; url: string }
@@ -524,17 +521,9 @@ export type OffscreenRequest =
  * Responses are discriminated by the `success` property. Successful responses
  * may include various data shapes depending on the request type.
  */
-export type OffscreenIframeInfo = {
-  iframeId: string | null;
-  url: string | null;
-  ready: boolean;
-};
-
 export type OffscreenResponse =
   // Ping response
-  | { success: true; ready: boolean; iframeInfo: OffscreenIframeInfo }
-  // Iframe operation responses
-  | { success: true; iframeInfo: OffscreenIframeInfo }
+  | { success: true }
   // Worker request responses
   | { success: true; result: unknown; requestId?: string }
   | { success: true; url: string }
@@ -549,33 +538,23 @@ export type OffscreenResponse =
  *
  * These are one-way notifications (not request/response pairs). The service worker
  * listens for these events via `chrome.runtime.onMessage.addListener()` to receive
- * real-time updates about iframe state and worker messages.
+ * real-time updates about worker messages.
  *
  * Unlike OffscreenRequest/OffscreenResponse, these events are fire-and-forget
  * and don't require a response from the listener.
  */
-export type OffscreenEvent =
-  | { type: "offscreenIframeReady"; iframeId: string; url: string }
-  | { type: "offscreenIframeNavigated"; iframeId: string; url: string }
-  | {
-      type: "workerMessage";
-      workerType:
-        | "search"
-        | "stats"
-        | "bulkExport"
-        | "bulkSync"
-        | "thumbnail"
-        | "import"
-        | "starmap";
-      data:
-        | SearchWorkerResponse
-        | StatsWorkerResponse
-        | BulkExportWorkerResponse
-        | BulkSyncWorkerResponse
-        | ThumbnailWorkerResponse
-        | ImportWorkerResponse
-        | StarmapWorkerResponse;
-    };
+export type OffscreenEvent = {
+  type: "workerMessage";
+  workerType: "search" | "stats" | "bulkExport" | "bulkSync" | "thumbnail" | "import" | "starmap";
+  data:
+    | SearchWorkerResponse
+    | StatsWorkerResponse
+    | BulkExportWorkerResponse
+    | BulkSyncWorkerResponse
+    | ThumbnailWorkerResponse
+    | ImportWorkerResponse
+    | StarmapWorkerResponse;
+};
 
 // ======================
 // Type Guards
@@ -602,20 +581,6 @@ export function isOffscreenRequest(message: unknown): message is OffscreenReques
     message !== null &&
     "type" in message &&
     typeof (message as { type: unknown }).type === "string"
-  );
-}
-
-export function isOffscreenEvent(message: unknown): message is OffscreenEvent {
-  if (typeof message !== "object" || message === null) return false;
-
-  const msg = message as { type?: unknown };
-  if (typeof msg.type !== "string") return false;
-
-  // Check for known offscreen event types
-  return (
-    msg.type === "offscreenIframeReady" ||
-    msg.type === "offscreenIframeNavigated" ||
-    msg.type === "workerMessage"
   );
 }
 
