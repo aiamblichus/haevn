@@ -207,6 +207,24 @@ export async function dequeueEmbeddingGeneration(chatId: string): Promise<void> 
 }
 
 /**
+ * A person's edit of a chat's metadata (the archive UI, the CLI). Writes the record as
+ * `manual`, drops the chat from the AI generation queue (it has its metadata now) and queues
+ * the embedding of the new text. Both callers go through here so that they cannot drift.
+ */
+export async function setManualMetadata(
+  chatId: string,
+  metadata: Partial<Omit<ChatMetadataRecord, "chatId">>,
+): Promise<void> {
+  await MetadataRepository.set(chatId, {
+    ...metadata,
+    source: "manual",
+    updatedAt: Date.now(),
+  });
+  await dequeueGeneration(chatId);
+  await queueEmbeddingGeneration(chatId);
+}
+
+/**
  * Process one pending metadata queue item. Called by the alarm listener.
  * Reschedules the alarm if more items remain.
  */

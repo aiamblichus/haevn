@@ -45,7 +45,7 @@ import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
 import { ImportService } from "../services/importService";
 import * as MetadataRepository from "../services/metadataRepository";
-import { generateForChat } from "../services/metadataService";
+import { generateForChat, setManualMetadata } from "../services/metadataService";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
@@ -929,11 +929,7 @@ async function handleSetMetadata(
   id: string,
   req: Extract<WsRequest, { action: "setMetadata" }>,
 ): Promise<WsResponse> {
-  await MetadataRepository.set(req.chatId, {
-    ...req.metadata,
-    source: "manual",
-    updatedAt: Date.now(),
-  });
+  await setManualMetadata(req.chatId, req.metadata);
   const record = await MetadataRepository.get(req.chatId);
   return { id, success: true, data: record };
 }
