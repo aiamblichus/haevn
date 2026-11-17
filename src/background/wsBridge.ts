@@ -30,8 +30,9 @@
  * Two closes get special treatment (see wsBridgeClose.ts). A newer extension connection
  * replacing this one (4002) is final: two extensions sharing a key would otherwise replace each
  * other for ever, so the bridge stops (no alarm, no timers) until the user enables it or changes
- * a setting. A rejected key (4001) is retried slowly (30 s, doubling to 5 min), because the fix
- * is usually a daemon restart that the extension cannot see.
+ * a setting. A rejected key (4001) is retried slowly (30 s, doubling to 5 min, while the service
+ * worker stays awake; the backoff is in memory, so after the worker idles out the 30 s alarm
+ * retries at the base rate), because the fix is usually a daemon restart the extension cannot see.
  */
 
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
