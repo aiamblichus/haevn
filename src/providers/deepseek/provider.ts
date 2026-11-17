@@ -84,17 +84,4 @@ export const deepseekProvider: Provider<DeepseekConversationData> = {
   buildChatUrl(chatId: string, baseUrl?: string): string {
     return `${normalizeBaseUrl(baseUrl)}/a/chat/s/${chatId}`;
   },
-
-  async checkAvailability(): Promise<{
-    available: boolean;
-    count?: number;
-    tabId?: number;
-    reason?: string;
-  }> {
-    // Availability checking is handled via Options/Popup flows
-    return {
-      available: false,
-      reason: "Open DeepSeek and use popup or Options to sync.",
-    };
-  },
 };

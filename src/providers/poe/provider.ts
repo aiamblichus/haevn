@@ -142,17 +142,4 @@ export const poeProvider: Provider<PoeConversationData> = {
   setup: async () => {
     setupPoeListeners();
   },
-
-  async checkAvailability(): Promise<{
-    available: boolean;
-    count?: number;
-    tabId?: number;
-    reason?: string;
-  }> {
-    // Availability checking removed - sync is initiated from popup
-    return {
-      available: false,
-      reason: "Use popup to sync from provider page",
-    };
-  },
 };

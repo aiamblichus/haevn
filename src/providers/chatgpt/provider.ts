@@ -91,17 +91,4 @@ export const chatgptProvider: Provider<ChatGPTRawExtraction> = {
   buildChatUrl(chatId: string): string {
     return `https://chatgpt.com/c/${chatId}`;
   },
-
-  async checkAvailability(): Promise<{
-    available: boolean;
-    count?: number;
-    tabId?: number;
-    reason?: string;
-  }> {
-    // Availability checking removed - sync is initiated from popup
-    return {
-      available: false,
-      reason: "Use popup to sync from provider page",
-    };
-  },
 };
