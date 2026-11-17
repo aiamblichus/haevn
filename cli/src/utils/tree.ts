@@ -121,9 +121,7 @@ export function getMessageRole(message: ChatMessage): "system" | "user" | "assis
     return "assistant";
   }
 
-  const requestParts = message.message
-    .filter((m) => m.kind === "request")
-    .flatMap((m) => m.parts);
+  const requestParts = message.message.filter((m) => m.kind === "request").flatMap((m) => m.parts);
 
   if (requestParts.length === 0) return "user";
 

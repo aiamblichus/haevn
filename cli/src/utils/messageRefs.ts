@@ -41,7 +41,9 @@ export function buildMessageRefIndex(chat: Chat): MessageRefIndex {
     }
     if (!collision) {
       return {
-        fullToRef: new Map(Array.from(candidateMap.entries()).map(([short, full]) => [full, short])),
+        fullToRef: new Map(
+          Array.from(candidateMap.entries()).map(([short, full]) => [full, short]),
+        ),
         refToFull: candidateMap,
       };
     }

@@ -26,9 +26,9 @@
  */
 
 import * as http from "node:http";
-import { WebSocketServer, type WebSocket } from "ws";
-import type { DaemonConfig } from "./config.js";
+import { type WebSocket, WebSocketServer } from "ws";
 import type { CliRequestBody, CliResponse } from "../types.js";
+import type { DaemonConfig } from "./config.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

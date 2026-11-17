@@ -44,7 +44,7 @@ The dev studio is summoned with Goetia from `/studio/dev`, not maintained in thi
 A task is done when these pass on the final tree:
 
 ```bash
-npx vitest run               # tests, single run (`pnpm test` is watch mode)
+pnpm test                    # tests, single run (`pnpm run test:watch` watches)
 pnpm run lint                # biome, src/ only
 pnpm run build               # the extension, into dist/
 pnpm -C cli run typecheck    # when cli/ changed
@@ -54,10 +54,9 @@ pnpm -C cli run lint         # when cli/ changed
 Known gaps, each with a ticket rather than a workaround:
 
 - The root has no typecheck in the gate. `npx tsc --noEmit` reports errors today, most from a `jsx` setting that disagrees with the esbuild build; esbuild does not type-check, so CI cannot see them.
-- `pnpm -C cli run lint` is red on `main` (formatting and import order), and CI does not lint the CLI.
 - The CLI has no tests.
 
-CI (`.github/workflows/ci.yml`) runs `lint`, `test` and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint and typecheck, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
 
 ## Commits and releases
 
