@@ -1,9 +1,29 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
+import { basename } from "node:path";
 
 mkdirSync("dist", { recursive: true });
 
 // manifest
 copyFileSync("src/manifest.json", "dist/manifest.json");
+
+// fonts: the latin subset of the weights the popup, options and viewer CSS declare,
+// from @fontsource (OFL). The CSS loads them from dist/fonts/, so no page fetches a font.
+const fontFiles = [
+  "jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2",
+  "jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2",
+  "jetbrains-mono/files/jetbrains-mono-latin-600-normal.woff2",
+  "jetbrains-mono/files/jetbrains-mono-latin-700-normal.woff2",
+  "crimson-text/files/crimson-text-latin-400-normal.woff2",
+  "crimson-text/files/crimson-text-latin-400-italic.woff2",
+  "crimson-text/files/crimson-text-latin-600-normal.woff2",
+  "playfair-display/files/playfair-display-latin-400-normal.woff2",
+  "playfair-display/files/playfair-display-latin-700-normal.woff2",
+  "playfair-display/files/playfair-display-latin-900-normal.woff2",
+];
+mkdirSync("dist/fonts", { recursive: true });
+for (const file of fontFiles) {
+  copyFileSync(`node_modules/@fontsource/${file}`, `dist/fonts/${basename(file)}`);
+}
 
 // popup.html -> use the compiled popup.js + popup.css
 // (Either change the source to point to popup.js, or do a tiny replace here.)

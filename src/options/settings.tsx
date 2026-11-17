@@ -504,8 +504,9 @@ const AIMetadataSettingsCard = () => {
           <DialogHeader>
             <DialogTitle>Privacy Warning</DialogTitle>
             <DialogDescription>
-              When AI metadata generation is enabled, the full content of your chats will be sent to
-              the configured API URL for analysis. This data leaves your device.
+              When AI metadata generation is enabled, each chat's title, platform and a sampled
+              excerpt of its messages (up to about 15,000 characters) are sent to the configured API
+              URL. Images, files and tool calls are not sent. This data leaves your device.
             </DialogDescription>
           </DialogHeader>
           <div className="text-sm space-y-2">
@@ -861,6 +862,11 @@ const StarmapSettingsCard = () => {
                 Enable embeddings generation
               </Label>
             </div>
+            <p className="pl-7 text-sm text-muted-foreground">
+              When embeddings generation is enabled, the metadata of each chat (title, description,
+              synopsis, categories and keywords) is sent to the embedding API URL you set; the
+              conversation text is not.
+            </p>
 
             <div className="space-y-2">
               <Label htmlFor="starmapEmbeddingUrl">Embedding API URL</Label>

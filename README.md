@@ -22,7 +22,7 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 
 ### Why HAEVN?
 
-- **🔒 Privacy First**: Your archive is stored locally in your browser (IndexedDB + OPFS). HAEVN runs no servers and no analytics. Requests go to the AI platforms you sync from, to Google Fonts when the popup, options page or viewer opens, and to an AI endpoint only if you turn on AI metadata or starmap embeddings.
+- **🔒 Privacy First**: Your archive is stored locally in your browser (IndexedDB + OPFS). HAEVN runs no servers and no analytics. Requests go to the AI platforms you sync from, and to an AI endpoint only if you turn on AI metadata or starmap embeddings.
 - **🌐 Multi-Platform**: Works with 10+ AI platforms from a single interface.
 - **🔍 Full-Text Search**: Find any conversation instantly with Lunr.js-powered search.
 - **📦 Export Anywhere**: Export a full HAEVN ZIP archive, or single chats as HAEVN JSON, HAEVN Markdown or Pi session JSONL. Create backups, migrate, or analyze your conversations.

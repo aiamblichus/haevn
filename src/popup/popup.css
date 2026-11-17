@@ -1,7 +1,75 @@
 /* Brutalist Terminal Typography - Scandinavian Folk Horror + Vaporwave */
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&display=swap");
+/* Fonts ship with the extension (latin subset, OFL). scripts/copy-static.js copies the files to dist/fonts/. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Crimson Text";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/crimson-text-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Crimson Text";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/crimson-text-latin-400-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Crimson Text";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/crimson-text-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/playfair-display-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/playfair-display-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Playfair Display";
+  font-style: normal;
+  font-weight: 900;
+  font-display: swap;
+  src: url("fonts/playfair-display-latin-900-normal.woff2") format("woff2");
+}
 
 /* biome-ignore lint/suspicious/noUnknownAtRules: tailwind plugin */
 @tailwind base;
