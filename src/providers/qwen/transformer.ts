@@ -1,7 +1,5 @@
-import { v4 as uuidv4 } from "uuid";
 import type {
   BinaryContent,
-  Chat,
   ChatMessage,
   HAEVN,
   ImageResponsePart,
@@ -224,7 +222,7 @@ function convertQwenMessage(
     info: qwenMsg.info
       ? {
           openai: qwenMsg.info.openai,
-          input_tokens: qwenMsg.info.input_tokens,
+          prompt_tokens: qwenMsg.info.input_tokens,
           completion_tokens: qwenMsg.info.output_tokens,
           total_tokens: qwenMsg.info.total_tokens,
         }
