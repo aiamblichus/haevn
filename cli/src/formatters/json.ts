@@ -2,9 +2,9 @@
  * JSON formatter for structured output.
  */
 
-import type { BranchInfo, CliResponse, SearchResult } from "../types";
+import type { CliResponse } from "../types";
 import type { Chat } from "../types/chat";
-import { buildMessageRefIndex, createMessageRef, getMessageRef } from "../utils/messageRefs";
+import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
 import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
 
 export interface BranchJsonOptions {
@@ -43,39 +43,6 @@ export function formatBranchAsJson(
         timestamp: msg.timestamp,
       })),
     },
-  };
-}
-
-/**
- * Format search results as JSON.
- */
-export function formatSearchResultsAsJson(results: SearchResult[]): object {
-  return {
-    results: results.map((result) => ({
-      ...result,
-      messageRef: createMessageRef(result.chatId, result.messageId),
-    })),
-    total: results.length,
-    hasMore: false, // TODO: implement pagination
-  };
-}
-
-/**
- * Format branches as JSON.
- */
-export function formatBranchesAsJson(chat: Chat, branches: BranchInfo[]): object {
-  const refs = buildMessageRefIndex(chat);
-  return {
-    chatId: chat.id,
-    title: chat.title,
-    branchCount: branches.length,
-    branches: branches.map((b) => ({
-      leafMessageRef: getMessageRef(refs, b.leafMessageId),
-      messageCount: b.messageCount,
-      firstPrompt: b.firstPrompt,
-      isPrimary: b.isPrimary,
-      path: b.path.map((id) => getMessageRef(refs, id)),
-    })),
   };
 }
 
