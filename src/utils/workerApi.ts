@@ -77,7 +77,11 @@ export type WorkerProgressMap = {
   >;
   import: Extract<
     ImportWorkerResponse,
-    { type: "progress" } | { type: "saved" } | { type: "skipped" } | { type: "postProcess" }
+    | { type: "progress" }
+    | { type: "saved" }
+    | { type: "skipped" }
+    | { type: "failed" }
+    | { type: "postProcess" }
   >;
   starmap: never;
 };
