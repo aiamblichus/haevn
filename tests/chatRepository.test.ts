@@ -1,0 +1,73 @@
+import "fake-indexeddb/auto";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { Chat } from "../src/model/haevn_model";
+import { ChatRepository } from "../src/services/chatRepository";
+import { getDB } from "../src/services/db";
+
+function buildChat(id: string): Chat {
+  return {
+    id,
+    source: "test",
+    sourceId: `src-${id}`,
+    title: `Chat ${id}`,
+    models: ["test-model"],
+    system: undefined,
+    params: {},
+    currentId: "",
+    messages: {},
+    tags: [],
+    timestamp: 1704067200000,
+    files: [],
+    lastSyncedTimestamp: 0,
+    providerLastModifiedTimestamp: undefined,
+    checksum: "",
+    syncStatus: "synced",
+    lastSyncAttemptMessage: undefined,
+  };
+}
+
+async function seedChat(chatId: string): Promise<void> {
+  const db = getDB();
+  await db.chats.put(buildChat(chatId));
+  await db.chatEmbeddings.put({
+    chatId,
+    vector: [0.1, 0.2, 0.3],
+    vectorDim: 3,
+    model: "test-embedding",
+    endpointHash: "endpoint",
+    inputFingerprint: `fp-${chatId}`,
+    updatedAt: 1704067200000,
+  });
+  await db.metadataQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1704067200000 });
+  await db.embeddingQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1704067200000 });
+}
+
+describe("ChatRepository.hardDeleteChats", () => {
+  beforeEach(async () => {
+    const db = getDB();
+    await Promise.all([
+      db.chats.clear(),
+      db.chatEmbeddings.clear(),
+      db.metadataQueue.clear(),
+      db.embeddingQueue.clear(),
+    ]);
+  });
+
+  it("removes the embedding and queue rows of the deleted chat and keeps another chat's rows", async () => {
+    await seedChat("chat-doomed");
+    await seedChat("chat-kept");
+
+    await ChatRepository.hardDeleteChats(["chat-doomed"]);
+
+    const db = getDB();
+    expect(await db.chats.get("chat-doomed")).toBeUndefined();
+    expect(await db.chatEmbeddings.get("chat-doomed")).toBeUndefined();
+    expect(await db.metadataQueue.get("chat-doomed")).toBeUndefined();
+    expect(await db.embeddingQueue.get("chat-doomed")).toBeUndefined();
+
+    expect(await db.chats.get("chat-kept")).toBeDefined();
+    expect(await db.chatEmbeddings.get("chat-kept")).toBeDefined();
+    expect(await db.metadataQueue.get("chat-kept")).toBeDefined();
+    expect(await db.embeddingQueue.get("chat-kept")).toBeDefined();
+  });
+});
