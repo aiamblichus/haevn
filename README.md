@@ -4,9 +4,9 @@
 
 ![HAEVN Logo](./assets/banner.png)
 
-A Chrome extension for exporting and preserving conversations from various AI platforms including Gemini, ChatGPT, and Poe.
+A Chrome extension and CLI that keep your AI conversations from twelve providers in one local archive. Full-text search, AI metadata, a starmap view and terminal access.
 
-[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=google-chrome&logoColor=white)](https://chrome.google.com/webstore)
+[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-4285F4?logo=google-chrome&logoColor=white)](https://github.com/aiamblichus/haevn/releases/latest)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -22,10 +22,10 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 
 ### Why HAEVN?
 
-- **🔒 Privacy First**: All data stored locally in your browser (IndexedDB + OPFS). No cloud, no servers, no tracking.
+- **🔒 Privacy First**: Your archive is stored locally in your browser (IndexedDB + OPFS). HAEVN runs no servers and no analytics. Requests go to the AI platforms you sync from, to Google Fonts when the popup, options page or viewer opens, and to an AI endpoint only if you turn on AI metadata or starmap embeddings.
 - **🌐 Multi-Platform**: Works with 10+ AI platforms from a single interface.
 - **🔍 Full-Text Search**: Find any conversation instantly with Lunr.js-powered search.
-- **📦 Export Anywhere**: Export to JSON, Markdown, or plain text. Create backups, migrate, or analyze your conversations.
+- **📦 Export Anywhere**: Export a full HAEVN ZIP archive, or single chats as HAEVN JSON, HAEVN Markdown or Pi session JSONL. Create backups, migrate, or analyze your conversations.
 - **🌳 Branch Support**: Preserves conversation trees, not just linear chats.
 - **🖼️ Media Handling**: Images, documents, code execution results—all preserved.
 
@@ -66,7 +66,7 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 
 ### 📦 Export
 
-- **Multiple Formats**: Export to JSON, Markdown, or plain text
+- **Multiple Formats**: HAEVN ZIP for the whole archive; HAEVN JSON, HAEVN Markdown and Pi session JSONL for single chats
 - **Bulk Export**: Select multiple chats and export as a single ZIP file
 - **Preserve Structure**: Branching conversations and media references maintained
 
@@ -81,7 +81,7 @@ See the docs site for the exact spec: `Reference → Data Formats → HAEVN Mark
 
 ### 🏷️ AI Metadata
 
-- **Auto-generate**: Titles, descriptions, synopses, categories, and keywords via any OpenAI-compatible LLM
+- **Auto-generate**: Titles, descriptions, synopses, categories, and keywords via any OpenAI-compatible LLM. Each chat's excerpt is sent to the endpoint you set.
 - **Local-model friendly**: Works with Ollama and LM Studio for privacy-first enrichment
 - **Custom categories**: Define your own topic taxonomy with names and descriptions — the AI classifies every chat into them
 - **Category filtering**: Browse your archive by topic using the Category dropdown

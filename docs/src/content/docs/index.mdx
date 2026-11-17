@@ -1,6 +1,6 @@
 ---
 title: Welcome to HAEVN
-description: Archive and preserve your AI conversations locally. Full privacy, full control.
+description: Archive and preserve your AI conversations locally. Nothing goes to an AI endpoint unless you set one up.
 hero:
   tagline: Your AI conversations, archived locally. Private. Searchable. Yours forever.
   image:
@@ -20,7 +20,7 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 ## What is HAEVN?
 
-**HAEVN** is a Chrome extension that archives your AI conversations from ChatGPT, Claude, Gemini, Poe, and other platforms. It stores everything **locally in your browser** — no cloud, no servers, no third-party access.
+**HAEVN** is a Chrome extension that archives your AI conversations from ChatGPT, Claude, Gemini, Poe, and other platforms. It stores everything **locally in your browser**. HAEVN runs no servers of its own. For what leaves your machine, see [Privacy & Storage](/reference/privacy/).
 
 ### Why HAEVN?
 
@@ -40,17 +40,19 @@ HAEVN is built with privacy as the foundation, not an afterthought:
 <CardGrid stagger>
   <Card title="100% Local Storage" icon="lock">
     All conversations are stored in your browser's IndexedDB and Origin Private
-    File System (OPFS). Your data never leaves your device — not for sync, not
-    for search, not for anything.
+    File System (OPFS). Search runs on your device. Conversation text leaves it
+    only when you turn on AI metadata and set its endpoint.
   </Card>
   <Card title="No Cloud, No Servers" icon="server">
-    There is no HAEVN cloud service. No backend. No databases anywhere except on
-    your machine. We literally cannot access your conversations even if we
-    wanted to.
+    There is no HAEVN cloud service and no HAEVN backend. Your archive is kept on
+    your machine. We cannot read your conversations, because they never reach us.
   </Card>
   <Card title="No Telemetry" icon="shield">
-    Zero analytics, zero tracking, zero telemetry. The extension doesn't make
-    any network requests except to the AI platforms you explicitly sync from.
+    Zero analytics, zero tracking, zero telemetry. HAEVN talks to the AI platforms
+    you sync from. It sends data to an AI endpoint only if you turn on AI
+    metadata or starmap embeddings and set one. The popup, the options page and
+    the viewer also load fonts from Google Fonts, so Google sees your IP address
+    when they open.
   </Card>
   <Card title="Open Source" icon="github">
     Every line of code is open for inspection. No hidden data collection, no
@@ -71,7 +73,8 @@ HAEVN is built with privacy as the foundation, not an afterthought:
   </Card>
   <Card title="Import & Export" icon="download">
     Import existing platform backups (ChatGPT exports, Claude exports) or export
-    your entire archive as JSON, Markdown, or plain text.
+    your entire archive as a HAEVN ZIP, or one chat as JSON, Markdown or Pi
+    session JSONL.
   </Card>
   <Card title="Rich Content Support" icon="document">
     Full support for multi-modal content, thinking blocks, code execution
