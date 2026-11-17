@@ -203,7 +203,7 @@ export async function handleGetStarmapData(
     const nodes = layout.points
       .map((point) => {
         const chat = chatById.get(point.chatId);
-        if (!chat) return null;
+        if (!chat || chat.deleted) return null; // embeddings outlive a soft delete
         const meta = metadataMap.get(point.chatId) ?? null;
         return {
           ...point,

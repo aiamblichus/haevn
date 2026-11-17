@@ -202,3 +202,52 @@ describe("search worker: a search during an index rebuild", () => {
     expect([...processedSeen].some((n) => n > 0)).toBe(true);
   });
 });
+
+describe("search worker: soft-deleted chats", () => {
+  async function softDelete(id: string): Promise<void> {
+    await getDB().chats.update(id, { deleted: 1, deletedAt: Date.now() });
+  }
+
+  async function indexTwoPineappleChats(): Promise<void> {
+    await seedChats([buildChat("keep", "pineapple"), buildChat("gone", "pineapple")]);
+    await send({ type: "rebuild" });
+  }
+
+  it("leaves a soft-deleted chat out of id-only results", async () => {
+    await indexTwoPineappleChats();
+    expect(hitIds(await search("pineapple", false)).sort()).toEqual(["gone", "keep"]);
+
+    await softDelete("gone");
+
+    expect(hitIds(await search("pineapple", false))).toEqual(["keep"]);
+  });
+
+  it("leaves a soft-deleted chat out of hydrated results", async () => {
+    await indexTwoPineappleChats();
+    await softDelete("gone");
+
+    const chatIds = new Set(hitIds(await search("pineapple", true)));
+
+    expect([...chatIds]).toEqual(["keep"]);
+  });
+
+  it("finds the chat again once it is no longer deleted (a re-sync restores it)", async () => {
+    await indexTwoPineappleChats();
+    await softDelete("gone");
+    await getDB().chats.update("gone", { deleted: 0, deletedAt: undefined });
+
+    expect(hitIds(await search("pineapple", false)).sort()).toEqual(["gone", "keep"]);
+  });
+
+  it("is not fooled by a delete that happened after the index was written to storage", async () => {
+    await indexTwoPineappleChats();
+    await softDelete("gone");
+
+    // A fresh worker (the offscreen document restarted) loads the persisted segments, which
+    // still hold the deleted chat.
+    await loadWorker();
+    await send({ type: "init" });
+
+    expect(hitIds(await search("pineapple", false))).toEqual(["keep"]);
+  });
+});

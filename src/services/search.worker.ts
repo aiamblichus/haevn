@@ -823,6 +823,17 @@ async function filterResultsByTextPhrases(
 }
 
 /**
+ * Ids of the soft-deleted chats. The index keeps a chat until the Janitor hard-deletes it (up to
+ * about 35 minutes after the delete), and a Lunr index cannot drop one document, so a search
+ * leaves these out of what it returns. The database is the truth: a chat that is synced again
+ * comes back to life without touching the index.
+ */
+async function softDeletedChatIds(): Promise<Set<string>> {
+  const ids = await db.chats.where("deleted").equals(1).primaryKeys();
+  return new Set(ids.map(String));
+}
+
+/**
  * The rebuild's progress while one is running, otherwise undefined. A rebuild empties the index
  * and refills it, so it cannot answer queries until it ends. Keeping the previous index to answer
  * from would double the index's memory for the length of the rebuild (HVN-40).
@@ -901,6 +912,10 @@ async function performSearch(
     if (!existing || existing.score < r.score) {
       uniqueMap.set(r.ref, r);
     }
+  }
+
+  if (uniqueMap.size > 0) {
+    for (const deletedId of await softDeletedChatIds()) uniqueMap.delete(deletedId);
   }
 
   let sortedResults = Array.from(uniqueMap.values()).sort((a, b) => b.score - a.score);
