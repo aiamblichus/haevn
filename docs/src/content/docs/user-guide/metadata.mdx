@@ -29,9 +29,9 @@ For each chat, the AI produces:
 | **Keywords**    | Free-form terms for search and filtering                       |
 
 <Aside>
-  HAEVN sends only the first few messages of a chat to the LLM — enough to
-  classify and summarise it, without the cost of processing entire
-  conversations.
+  Each chat's title, its platform name and an excerpt of its messages go to the
+  LLM endpoint. Long chats are sampled, not sent whole. The Privacy & Storage
+  page lists exactly what is sent.
 </Aside>
 
 ## Setup
@@ -48,7 +48,7 @@ For each chat, the AI produces:
    - LM Studio (local): `http://localhost:1234/v1`
    - OpenAI: `https://api.openai.com/v1`
 
-5. Enter your **API Key** (leave blank for local models that don't require one).
+5. Enter your **API Key** (leave blank for local models that don't require one). HAEVN stores the key in the extension's local storage, unencrypted.
 
 6. Enter the **Model** name (e.g. `qwen3.5-2b`, `llama3.2`, `gpt-4o-mini`).
 
