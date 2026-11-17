@@ -41,11 +41,13 @@ HAEVN CLI uses short message refs in output (stable hash-based IDs), e.g. `a1b2c
 haevn list
 haevn list --platform claude --limit 50
 haevn list --sort messageCount
+haevn list --limit 50 --offset 50   # the next page
 ```
 
 Notes:
 
 - List output includes `msgs` and `br` (branch count).
+- Page with `--offset` plus `--limit`; JSON output has `total` and `hasMore`. `--after` filters within each page.
 - `branched` badge flags chats with heavy branching.
 
 ---
