@@ -84,13 +84,13 @@ const NoSearchResults = ({ rebuild }: { rebuild: SearchIndexRebuildStatus | null
   );
 
 /** Shown above search results after a failed index rebuild: the list may be missing chats. */
-const IndexIncompleteNotice = ({ incomplete }: { incomplete: SearchIndexIncompleteStatus }) => (
+const IndexIncompleteNotice = () => (
   <div
     role="status"
     className="mb-2 flex-shrink-0 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900"
   >
-    Search index is incomplete: the last rebuild failed ({incomplete.error}). Some chats may be
-    missing from these results. Reload the extension to rebuild it.
+    Search index is incomplete: the last rebuild failed. Some chats may be missing from these
+    results. Reload the extension to rebuild it.
   </div>
 );
 
@@ -395,7 +395,7 @@ export const ArchiveView = ({
           </div>
         ) : searchResults ? (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {searchIndexIncomplete && <IndexIncompleteNotice incomplete={searchIndexIncomplete} />}
+            {searchIndexIncomplete && <IndexIncompleteNotice />}
             {!searchResults || searchResults.length === 0 ? (
               <NoSearchResults rebuild={searchIndexRebuild} />
             ) : (

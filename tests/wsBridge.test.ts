@@ -140,7 +140,9 @@ describe("the bridge answering a search after a failed index rebuild (HVN-50)", 
     ]);
 
     expect(reply).toMatchObject({ id: "r1", success: false, code: "INDEX_INCOMPLETE" });
-    expect(reply.error).toContain("boom");
+    // The reader gets the sentence, not the JavaScript error behind it.
+    expect(reply.error).toContain("the last rebuild failed");
+    expect(reply.error).not.toContain("boom");
   });
 
   it("still answers INDEX_REBUILDING while a rebuild runs", async () => {

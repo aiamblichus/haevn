@@ -7,6 +7,21 @@ vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// The worker opens its own database; keep each one so a test can make its writes fail.
+const workerDbs = vi.hoisted(
+  () => [] as Array<{ lunrIndex: { put: (...a: unknown[]) => unknown } }>,
+);
+vi.mock("../src/services/db", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/services/db")>();
+  class TrackedDatabase extends original.HaevnDatabase {
+    constructor() {
+      super();
+      workerDbs.push(this);
+    }
+  }
+  return { ...original, HaevnDatabase: TrackedDatabase };
+});
+
 // The worker talks through `self`; stand one in, import the module (which installs
 // `self.onmessage`), and drive it with the messages the offscreen document would send.
 type Posted = { type: string; requestId?: string; [key: string]: unknown };
@@ -268,9 +283,9 @@ async function settle(done: Promise<unknown>): Promise<void> {
 }
 
 /** Poll with searches until the worker answers without a rebuild status. */
-async function waitUntilIndexReady(): Promise<void> {
+async function waitUntilIndexReady(query = "pineapple"): Promise<void> {
   for (let i = 0; i < 2000; i++) {
-    const [chunk] = await search("pineapple", false);
+    const [chunk] = await search(query, false);
     if (chunk.indexRebuilding === undefined) return;
     await new Promise((r) => setTimeout(r, 5));
   }
@@ -471,3 +486,117 @@ describe("search worker: timers and a second request around a rebuild (HVN-50)",
     expect(replies.every((r) => r.success === true)).toBe(true);
   });
 });
+
+describe("search worker: init, restarts and a failure that stays (HVN-50, round 2)", () => {
+  async function seedGoodChats(count: number, text: string): Promise<void> {
+    await seedChats(
+      Array.from({ length: count }, (_, i) => buildChat(`c${String(i).padStart(3, "0")}`, text)),
+    );
+  }
+
+  function unreadable(id: string, text: string): Chat {
+    const bad = buildChat(id, text);
+    (bad.messages[`${id}-m1`] as { message: unknown }).message = 42;
+    return bad;
+  }
+
+  /** A status check that does not disturb the worker: is a rebuild running right now? */
+  async function statusNow(query = "pineapple"): Promise<Posted> {
+    const chunks = await search(query, false);
+    return chunks[chunks.length - 1];
+  }
+
+  it("does not start another pass when init arrives while a rebuild runs", async () => {
+    await seedGoodChats(300, "pineapple");
+    const rebuild = send({ type: "rebuild" });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 0));
+      const status = (await statusNow()).indexRebuilding as RebuildStatus | undefined;
+      if (!status) throw new Error("the rebuild ended before init could be sent");
+      if (status.total > 0) break;
+    }
+
+    await send({ type: "init" }); // a service worker woke and asked
+    await rebuild;
+
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+    expect(new Set(hitIds(await search("pineapple", false))).size).toBe(300);
+  });
+
+  it("retries a failed rebuild on init once, then leaves it until the worker restarts", async () => {
+    await seedGoodChats(200, "pineapple");
+    await seedChats([unreadable("zzz-bad", "pineapple")]);
+    await send({ type: "rebuild" }); // fails; failure is on record
+
+    await send({ type: "init" });
+    expect((await statusNow()).indexRebuilding).toBeDefined(); // the one retry is running
+    await waitUntilIndexReady();
+    expect((await statusNow()).indexIncomplete).toBeDefined(); // and it failed again
+
+    await send({ type: "init" });
+    const after = await statusNow();
+    expect(after.indexRebuilding).toBeUndefined(); // no third read of the archive
+    expect(after.indexIncomplete).toBeDefined();
+
+    // An explicit rebuild is still honoured.
+    await getDB().chats.delete("zzz-bad");
+    await send({ type: "rebuild" });
+    expect(lastReply().success).toBe(true);
+    expect((await statusNow()).indexIncomplete).toBeUndefined();
+  });
+
+  it("gives a later failure its own retry once a rebuild has succeeded", async () => {
+    await seedGoodChats(200, "pineapple");
+    await seedChats([unreadable("zzz-bad", "pineapple")]);
+    await send({ type: "rebuild" });
+    await getDB().chats.delete("zzz-bad");
+    await send({ type: "init" }); // the retry, and it succeeds
+    await waitUntilIndexReady();
+    expect((await statusNow()).indexIncomplete).toBeUndefined();
+
+    await seedChats([unreadable("zzz-bad", "pineapple")]);
+    await send({ type: "rebuild" }); // fails again
+    await send({ type: "init" });
+
+    expect((await statusNow()).indexRebuilding).toBeDefined();
+    await waitUntilIndexReady();
+  });
+
+  it("rebuilds after a worker restart that follows a failed rebuild, instead of trusting the old segments", async () => {
+    await seedGoodChats(400, "pineapple");
+    await send({ type: "rebuild" }); // a whole index of the old text, in two stored segments
+    await seedGoodChats(399, "mango"); // every chat but the last changes
+    await seedChats([unreadable("c399", "mango")]);
+    await send({ type: "rebuild" });
+    expect(lastReply().success).toBe(false);
+    await seedChats([buildChat("c399", "mango")]); // repaired
+
+    await loadWorker(); // the offscreen document went away and came back
+    await send({ type: "init" });
+    await waitUntilIndexReady("mango");
+
+    const chunks = await search("mango", false);
+    expect(chunks.every((c) => c.indexIncomplete === undefined)).toBe(true);
+    expect(new Set(hitIds(chunks)).size).toBe(400);
+    expect(hitIds(await search("pineapple", false))).toEqual([]);
+  });
+
+  it("counts a failed write of a segment as a failed rebuild", async () => {
+    await seedGoodChats(205, "pineapple");
+    const db = workerDbs[workerDbs.length - 1];
+    vi.spyOn(db.lunrIndex, "put").mockRejectedValue(new Error("QuotaExceededError"));
+
+    await send({ type: "rebuild" });
+
+    const reply = lastReply();
+    expect(reply.success).toBe(false);
+    expect(reply.error).toContain("QuotaExceededError");
+    const chunks = await search("pineapple", false);
+    expect(chunks[chunks.length - 1].indexIncomplete).toEqual({ error: reply.error });
+  });
+});
+
+function lastReply(): Posted {
+  const replies = posted.filter((m) => m.type === "bulkComplete");
+  return replies[replies.length - 1];
+}

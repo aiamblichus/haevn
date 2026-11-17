@@ -621,10 +621,12 @@ async function handleSearch(
   // The last rebuild failed and the index is part-built: a short or empty list may be missing
   // chats, and a script cannot tell. Fail rather than answer.
   if (indexIncomplete) {
+    log.warn("[WsBridge] Search refused: the index is incomplete:", indexIncomplete.error);
     return {
       id,
       success: false,
-      error: `Search index is incomplete: the last rebuild failed (${indexIncomplete.error}). Reload the extension to rebuild it.`,
+      error:
+        "Search index is incomplete: the last rebuild failed, so a search may miss chats. Reload the extension to rebuild it.",
       code: "INDEX_INCOMPLETE",
     };
   }
