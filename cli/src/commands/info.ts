@@ -171,9 +171,7 @@ function formatMetadataText(chatId: string, record: ChatMetadataRecord | null): 
   lines.push(
     `  ${lbl("Categories")}${record.categories?.length ? record.categories.join(", ") : empty}`,
   );
-  lines.push(
-    `  ${lbl("Keywords")}${record.keywords?.length ? record.keywords.join(", ") : empty}`,
-  );
+  lines.push(`  ${lbl("Keywords")}${record.keywords?.length ? record.keywords.join(", ") : empty}`);
   lines.push("");
 
   const sourceLabel = record.source === "ai" ? pc.green("ai") : pc.cyan("manual");

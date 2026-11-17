@@ -3,12 +3,12 @@
  */
 
 import { defineCommand } from "citty";
-import { toJsonString } from "../formatters/json";
 import { daemonRequest } from "../daemon/client.js";
+import { toJsonString } from "../formatters/json";
 import type { TreeNode } from "../types";
 import type { Chat, ChatMessage } from "../types/chat";
-import { consola, pc, truncate } from "../utils/output";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
+import { consola, pc, truncate } from "../utils/output";
 import {
   getAllBranches,
   getMessagePreview,

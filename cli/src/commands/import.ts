@@ -69,8 +69,14 @@ function buildMediaChat(
 
   const responsePart =
     mediaKind === "image"
-      ? { part_kind: "image-response", content: { kind: "binary", data: base64, media_type: mimeType } }
-      : { part_kind: "video-response", content: { kind: "binary", data: base64, media_type: mimeType } };
+      ? {
+          part_kind: "image-response",
+          content: { kind: "binary", data: base64, media_type: mimeType },
+        }
+      : {
+          part_kind: "video-response",
+          content: { kind: "binary", data: base64, media_type: mimeType },
+        };
 
   const modelMessages: unknown[] = [];
   if (prompt) {
@@ -167,7 +173,9 @@ export default defineCommand({
     });
 
     if (!SUPPORTED_FORMATS.includes(format)) {
-      consola.error(`Unsupported format: ${format}. Expected one of: ${SUPPORTED_FORMATS.join(", ")}`);
+      consola.error(
+        `Unsupported format: ${format}. Expected one of: ${SUPPORTED_FORMATS.join(", ")}`,
+      );
       process.exit(1);
     }
 
@@ -196,7 +204,11 @@ export default defineCommand({
               );
             }
 
-            const sha256 = createHash("sha256").update(buffer).update("\0").update(prompt ?? "").digest("hex");
+            const sha256 = createHash("sha256")
+              .update(buffer)
+              .update("\0")
+              .update(prompt ?? "")
+              .digest("hex");
             const mimeType = detectMimeType(filePath, mediaKind);
             const content = buildMediaChat(buffer, sha256, filePath, mimeType, mediaKind, prompt);
             return { name: path.basename(filePath), content };

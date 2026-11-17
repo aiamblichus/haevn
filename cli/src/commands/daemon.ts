@@ -65,9 +65,7 @@ export default defineCommand({
     try {
       daemon = await startDaemon(config);
     } catch (err) {
-      consola.error(
-        `Failed to start daemon: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      consola.error(`Failed to start daemon: ${err instanceof Error ? err.message : String(err)}`);
       if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
         consola.info(`Port ${config.port} is already in use. Is the daemon already running?`);
       }

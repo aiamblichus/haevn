@@ -43,10 +43,17 @@ jobs:
 
       - name: Run linter
         run: pnpm run lint
-        continue-on-error: true
 
       - name: Run tests
         run: pnpm test
+
+      - name: Install CLI dependencies
+        run: pnpm -C cli install --frozen-lockfile
+
+      - name: Lint and typecheck CLI
+        run: |
+          pnpm -C cli run lint
+          pnpm -C cli run typecheck
 
       - name: Build extension
         run: pnpm run build
