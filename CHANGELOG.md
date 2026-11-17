@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Starmap**: an interactive 3D constellation of your chats in the archive, laid out from embeddings of their metadata (UMAP + clustering in a worker), with runtime controls, an embedding queue that can be paused, and rebuild controls.
+- **Exporters**: single chats export as HAEVN JSON, HAEVN Markdown or Pi session JSONL (with thinking signatures); the CLI's exports go through the same exporters.
+- **Search**: `id:` scoped queries in the archive.
+- **Archive and viewer**: `g` opens a chat by id; the viewer header uses the metadata title; viewer widgets collapse; hover previews show the full metadata description.
+- **CLI**: `haevn list --include-metadata` (`-m`) shows each chat's description, synopsis, categories or keywords; `haevn search` shows metadata (`--no-metadata` to hide it); formatted output includes the system prompt.
+
+### Changed
+
+- The extension no longer loads fonts from Google: they ship with the extension.
+- The docs, README and settings say exactly what leaves your machine: the AI platforms you sync from, and an AI metadata or embeddings endpoint only if you turn it on and set one.
+- Imports report chats that failed as errors instead of counting them as skipped.
+- A search during an index rebuild says the index is rebuilding instead of showing no results; the CLI's `haevn search` fails with `INDEX_REBUILDING` and asks you to retry.
+
+### Fixed
+
+- ChatGPT and Open WebUI imports from the archive page now reach search (the bulk-indexing step failed silently).
+- Deleted chats no longer appear in search or on the starmap.
+- Hard delete removes a chat's embeddings and queue rows.
+- The CLI daemon no longer fails your request when an unrelated connection closes.
+- Claude Code tool results export with their tool name; Qwen token counts are saved under the right field; a chat in a HAEVN ZIP without an id gets one.
+- Poe keeps inline images when attachments are missing; attachment types are inferred better for thumbnails; multi-word search behaves as documented; the Grok logo shows on the dark UI.
+
 ## [v1.2.1] - 2026-03-27
 
 ### Added
