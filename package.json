@@ -26,6 +26,8 @@
     "lint": "biome check ./src",
     "lint:fix": "biome check --write ./src",
     "format": "biome format --write ./src",
+    "skills:sync": "node scripts/sync-skills.mjs",
+    "skills:check": "node scripts/sync-skills.mjs --check",
     "test": "vitest",
     "hook:pre-commit": "bash scripts/hooks/pre-commit.sh",
     "hook:pre-push": "bash scripts/hooks/pre-push.sh",

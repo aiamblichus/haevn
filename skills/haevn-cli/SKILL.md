@@ -3,6 +3,7 @@ name: haevn-cli
 description: How to use the HAEVN CLI to search, inspect branches, and export chats efficiently
 ---
 
+<!-- generated from /project/haevn/skills/haevn-cli by pnpm run skills:sync; edit the KB note, not this file -->
 # haevn-cli — Agent Reference
 
 `haevn` is the terminal interface to HAEVN, a local archive for AI conversations across multiple platforms.  
