@@ -18,7 +18,7 @@ HAEVN stores everything locally in your browser. HAEVN runs no servers of its ow
 
 ## What leaves your machine
 
-HAEVN is built so that nothing leaves your machine without your consent. The list below is every case where data does leave it. Item 4 is the exception: you did not choose it, and HAEVN does not yet avoid it.
+HAEVN is built so that nothing leaves your machine without your consent. The list below is every case where data does leave it.
 
 1. **The AI platforms you sync from.** Syncing reads a chat from the platform you are signed in to, using your browser session. HAEVN reads from the platform. It does not write to it. Images and files are downloaded from the platform's file servers. If a download fails, HAEVN keeps the link. The viewer and bulk exports then fetch the file from that link.
 
@@ -30,9 +30,7 @@ HAEVN is built so that nothing leaves your machine without your consent. The lis
 
 3. **A starmap embeddings endpoint, if you turn it on.** This is off by default. It runs only when AI metadata, starmap and embeddings are all on, and an endpoint and a model are set. HAEVN sends batches of up to 10 chats to `{URL}/embeddings`. The input for each chat is its metadata: title, description, synopsis, categories and keywords, whether you wrote them or the AI did. The conversation text itself is not sent, but the metadata summarises it.
 
-4. **Google Fonts.** The popup, the options page and the viewer load fonts from `fonts.googleapis.com` when they open. Google receives your IP address with each request. HAEVN does not yet bundle these fonts with the extension.
-
-5. **Your own machine.** The CLI talks to a daemon on `localhost`. That traffic stays on your machine.
+4. **Your own machine.** The CLI talks to a daemon on `localhost`. That traffic stays on your machine.
 
 HAEVN has no default AI endpoint. You set the URL, and the key if the endpoint needs one.
 
