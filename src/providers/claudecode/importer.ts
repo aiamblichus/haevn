@@ -9,7 +9,7 @@ import type {
   ClaudeCodeRawExtraction,
   ClaudeCodeSessionMetadata,
 } from "./model";
-import { isAssistantMessage, isFileSnapshot, isUserMessage } from "./model";
+import { isAssistantMessage } from "./model";
 
 /**
  * Parse a Claude Code JSONL file.
@@ -78,26 +78,6 @@ export async function parseClaudeCodeJsonl(content: string): Promise<ClaudeCodeR
     messages,
     metadata,
   };
-}
-
-/**
- * Extract the session title from messages.
- * Uses the first user message content (truncated) or "Untitled Session".
- *
- * @param messages - Parsed messages
- * @returns Session title
- */
-export function extractSessionTitle(messages: ClaudeCodeMessage[]): string {
-  const firstUserMessage = messages.find(isUserMessage);
-
-  if (firstUserMessage?.message.content) {
-    const content = firstUserMessage.message.content.trim();
-    // Take first line, max 100 characters
-    const firstLine = content.split("\n")[0];
-    return firstLine.length > 100 ? `${firstLine.substring(0, 97)}...` : firstLine;
-  }
-
-  return "Untitled Claude Code Session";
 }
 
 /**

@@ -87,13 +87,15 @@ function collectAssetPointers(conv: OpenAIConversation): string[] {
   Object.values(conv.mapping || {}).forEach((node: OpenAIConversationNode) => {
     const msg = node.message;
     if (!msg?.content) return;
-    const content = msg.content as { parts?: unknown[] } | undefined;
+    const content = msg.content as { parts?: unknown[] };
     const parts = Array.isArray(content.parts) ? content.parts : [];
     for (const p of parts) {
       if (
-        p &&
         typeof p === "object" &&
+        p !== null &&
+        "content_type" in p &&
         p.content_type === "image_asset_pointer" &&
+        "asset_pointer" in p &&
         typeof p.asset_pointer === "string"
       ) {
         pointers.add(p.asset_pointer);
