@@ -35,6 +35,7 @@ import { parseCodexJsonl } from "../providers/codex/importer";
 import { transformCodexToHaevnChat } from "../providers/codex/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
+import type { ChatMetadataRecord } from "../services/db";
 import { ImportService } from "../services/importService";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateForChat } from "../services/metadataService";
@@ -84,11 +85,18 @@ interface WsGetOptions {
   includeMedia?: boolean;
 }
 
+type WsListMetadataKey = "description" | "synopsis" | "categories" | "keywords";
+
 interface WsListOptions {
   platform?: string;
   limit?: number;
   after?: string;
   sortBy?: "lastSynced" | "title" | "messageCount";
+  /**
+   * Metadata keys to include for each chat. The CLI sends a deduplicated list
+   * of canonical keys
+   */
+  includeMetadata?: WsListMetadataKey[];
 }
 
 type WsExporterId = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
@@ -630,14 +638,40 @@ async function handleList(
   );
 
   const chatIds = chats.map((c) => c.id).filter(Boolean) as string[];
+  const includeMetadataKeys = options.includeMetadata ?? [];
+  const needsFullMeta = includeMetadataKeys.length > 0;
   const metaMap = chatIds.length > 0 ? await MetadataRepository.getMany(chatIds) : new Map();
   const enrichedChats = chats.map((chat) => {
     if (!chat.id) return chat;
     const meta = metaMap.get(chat.id);
-    return meta?.title ? { ...chat, metaTitle: meta.title } : chat;
+    let next: Record<string, unknown> = chat;
+    if (meta?.title) {
+      next = { ...next, metaTitle: meta.title };
+    }
+    if (needsFullMeta) {
+      next = { ...next, metadata: pickListMetadata(meta, includeMetadataKeys) };
+    }
+    return next;
   });
 
   return { id, success: true, data: { chats: enrichedChats, total } };
+}
+
+/**
+ * Project a chat's metadata record onto the requested keys, defaulting a
+ * missing record or field to "" (text) or [] (lists) so JSON consumers see
+ * a stable shape.
+ */
+function pickListMetadata(
+  meta: ChatMetadataRecord | undefined,
+  keys: WsListMetadataKey[],
+): Partial<Record<WsListMetadataKey, string | string[]>> {
+  const out: Partial<Record<WsListMetadataKey, string | string[]>> = {};
+  for (const key of keys) {
+    const isText = key === "description" || key === "synopsis";
+    out[key] = meta?.[key] ?? (isText ? "" : []);
+  }
+  return out;
 }
 
 async function handleGet(

@@ -83,7 +83,18 @@ export interface ListOptions {
   limit?: number;
   after?: string;
   sortBy?: "lastSynced" | "title" | "messageCount";
+  /**
+   * Metadata keys to include for each chat. CLI-friendly aliases:
+   *   - "description"  → metadata.description
+   *   - "synopsis"     → metadata.synopsis
+   *   - "categories"     → metadata.categories
+   *   - "keywords"     → metadata.keywords
+   * The CLI expands "all" to the four concrete keys before sending.
+   */
+  includeMetadata?: ListMetadataKey[];
 }
+
+export type ListMetadataKey = "description" | "synopsis" | "categories" | "keywords";
 
 export interface ExportOptions {
   includeMedia?: boolean;
