@@ -22,7 +22,7 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | The lane's memory | `gnomon note list --dir-prefix /project/haevn/workstreams` |
 | The working agreement (worktrees, branches, merges) | `gnomon read /studio/dev/skills/dev-workflow` |
 
-The KB is being bootstrapped (HVN-1). Until `/project/haevn/architecture/` exists, the old maps in `charter/` (gitignored, local to one machine, last written 2026-01-30) are a source, not the truth: they predate the CLI daemon, metadata, starmap, the exporter registry and the Codex and Pi providers. `charter/` and `planning/` will be deleted once their content is in the KB.
+The project's maps, backlog and design history live only in the KB; there is no `charter/` or `planning/` any more (removed 2026-11-17, HVN-6). Brand assets are in `assets/brand/`.
 
 ## Knowledge and identity
 
@@ -69,7 +69,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 
 - Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
 - `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
-- Gitignored and local-only: `charter/`, `planning/`, `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
+- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
 - Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
 
 ---

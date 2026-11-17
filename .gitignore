@@ -69,7 +69,6 @@ Desktop.ini
 # pnpm-lock.yaml
 # yarn.lock
 
-planning
 openai_export
 
 devdocs/example_data/
@@ -79,7 +78,6 @@ devdocs/example_data/
 .pi/sessions
 /.opencode
 /sample_data
-/charter
 .envrc
 /transcripts
 
