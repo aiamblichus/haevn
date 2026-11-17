@@ -153,7 +153,7 @@ The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /
 5. **Bulk operations** (`src/background/bulkSync/`, `bulkExport/`, `import/`): stateful orchestration under an operation lock
 6. **UI** (`src/popup/`, `src/options/`, `src/viewer/`): popup, archive (options) and viewer
 7. **Content script** (`src/content/content.ts`): injected bridge to the LLM platforms
-8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive. `setMetadata` and `import` call the same operation as the UI handler; a few copies remain (HVN-53), so check that a change to a handler reaches the bridge too
+8. **CLI bridge** (`src/background/wsBridge.ts`, `cli/`): the terminal's view of the archive. Each verb calls the same service-level operation as its UI handler; keep it that way when you add one
 
 ### Data flows
 
