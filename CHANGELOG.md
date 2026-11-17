@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- `haevn import` takes the operation lock (it fails with "Another operation is running" during a bulk sync or an import), indexes small imports as it saves them so search keeps answering, seeds metadata from HAEVN exports, and exits 1 with `index=failed` if indexing could not run; `haevn info` metadata edits queue the same embedding update as the archive.
 - A failed search-index rebuild is no longer silent: search says the index is incomplete, and reloading the extension rebuilds it; a rebuild can no longer be corrupted by a pending index write or a second rebuild request.
 - The CLI bridge stops reconnecting when another extension takes over the daemon connection, and retries slowly after a rejected key.
 - Exports release the file only after Chrome has finished downloading it.
