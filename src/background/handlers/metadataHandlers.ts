@@ -9,9 +9,9 @@ import {
   getQueueItem,
   getQueueStatus,
   pauseEmbeddingQueue,
-  queueEmbeddingGeneration,
   rebuildAllEmbeddings,
   resetFailedQueueItem,
+  setManualMetadata,
   syncMetadataQueueAlarms,
 } from "../../services/metadataService";
 import {
@@ -55,13 +55,7 @@ export async function handleSetChatMetadata(
   sendResponse: (response: BackgroundResponse) => void,
 ): Promise<void> {
   try {
-    await MetadataRepository.set(message.chatId, {
-      ...message.metadata,
-      source: "manual",
-      updatedAt: Date.now(),
-    });
-    await dequeueGeneration(message.chatId);
-    await queueEmbeddingGeneration(message.chatId);
+    await setManualMetadata(message.chatId, message.metadata);
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] setChatMetadata failed", err);

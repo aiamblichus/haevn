@@ -6,6 +6,7 @@ import { fireAndForget } from "../utils/error_utils";
 import { log } from "../utils/logger";
 import { CacheService } from "./cacheService";
 import { ChatService } from "./chatService";
+import * as MetadataRepository from "./metadataRepository";
 import { SyncService } from "./syncService";
 
 export interface SaveImportedChatOptions {
@@ -20,6 +21,7 @@ export interface SaveImportedChatOptions {
  * - Update provider stats for new chats
  * - Trigger thumbnail generation (fire-and-forget)
  * - Broadcast chat synced event
+ * - Seed the metadata record from the chat's haevnMetadata (a failure is logged only)
  */
 async function saveImportedChat(
   chat: Chat,
@@ -82,6 +84,29 @@ async function saveImportedChat(
   // Broadcast chat synced event
   const { broadcastChatSynced } = await import("../background/utils/chatSyncUtils");
   broadcastChatSynced(chat);
+
+  // Seed metadata from the chat's haevnMetadata field (a HAEVN export carries it), but never
+  // over a record the archive already has. Last, and on its own: a failure here must not undo
+  // the count, the thumbnails and the broadcast of a chat that is saved.
+  if (chat.haevnMetadata) {
+    try {
+      const existingMetadata = await MetadataRepository.get(chat.id);
+      if (!existingMetadata) {
+        const m = chat.haevnMetadata;
+        await MetadataRepository.set(chat.id, {
+          title: m.title ?? "",
+          description: m.description ?? "",
+          synopsis: m.synopsis ?? "",
+          categories: m.categories ?? [],
+          keywords: m.keywords ?? [],
+          source: "manual",
+          updatedAt: Date.now(),
+        });
+      }
+    } catch (err) {
+      log.warn(`[ImportService] Failed to seed metadata for ${chat.id}:`, err);
+    }
+  }
 }
 
 // Export as namespace

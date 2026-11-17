@@ -53,7 +53,7 @@ Options:
 - `--after <date>` - Only messages after date (YYYY-MM-DD)
 - `--before <date>` - Only messages before date
 
-While the extension rebuilds its search index (after a bulk sync or an import, including `haevn import`), `search` exits 1 with "Search index is rebuilding (N%). Try again shortly." rather than returning no results.
+While the extension rebuilds its search index (after a bulk sync, or an import of more than 20 chats, including `haevn import`), `search` exits 1 with "Search index is rebuilding (N%). Try again shortly." rather than returning no results.
 
 #### Search Syntax
 
@@ -249,16 +249,18 @@ haevn import --format claude_code ./sessions/*.jsonl
 # Skip existing chat IDs, don't overwrite
 haevn import --format claude_code --no-overwrite ./sessions/*.jsonl
 
-# Skip index rebuild after import
+# Save without indexing for search
 haevn import --format claude_code --skip-index ./sessions/*.jsonl
 ```
 
 Options:
 - `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`)
 - `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
-- `--skip-index` - Skip search indexing after import (default: rebuild index at end)
+- `--skip-index` - Save the chats without indexing them for search; they are not searchable until the extension next rebuilds its index (default: index them as they are saved; more than 20 files rebuild the index once at the end)
 
 Notes:
+- If the chats are saved but the extension cannot bring its search index up to date, `haevn import` prints `index=failed (reason)` and exits 1; the chats are in the archive and the next rebuild of the search index picks them up.
+- An import takes the extension's operation lock. While a bulk sync, another import or a bulk export runs, `haevn import` exits 1 with "Another operation is running"; run it again when that ends.
 - `claude_code`, `codex`, and `pi` are import-only providers (no live sync).
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.
 

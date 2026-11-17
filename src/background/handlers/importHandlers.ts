@@ -1,7 +1,6 @@
 // Import message handlers
 
 import { ImportService } from "../../services/importService";
-import * as MetadataRepository from "../../services/metadataRepository";
 import { SyncService } from "../../services/syncService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import type { ImportSourceType } from "../../types/workerMessages";
@@ -20,23 +19,6 @@ export async function handleSaveImportedChat(
       throw new Error("Missing chat payload or id");
     }
     await ImportService.saveImportedChat(chat, raw, { skipIndexing });
-
-    // Seed metadata from haevnMetadata field if present — only if no existing record
-    if (chat.haevnMetadata && chat.id) {
-      const existing = await MetadataRepository.get(chat.id);
-      if (!existing) {
-        const m = chat.haevnMetadata;
-        await MetadataRepository.set(chat.id, {
-          title: m.title ?? "",
-          description: m.description ?? "",
-          synopsis: m.synopsis ?? "",
-          categories: m.categories ?? [],
-          keywords: m.keywords ?? [],
-          source: "manual",
-          updatedAt: Date.now(),
-        });
-      }
-    }
 
     sendResponse({ success: true });
   } catch (err: unknown) {
