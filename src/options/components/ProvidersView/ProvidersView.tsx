@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BulkSyncState } from "../../../background/bulkSync/types";
 import { Button } from "../../../components/ui/button";
 import {

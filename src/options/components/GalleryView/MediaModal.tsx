@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GalleryMediaItem } from "../../../types/workerMessages";
 import { log } from "../../../utils/logger";
 
