@@ -294,7 +294,9 @@ async function chatExists(chatId: string): Promise<boolean> {
 }
 
 /**
- * Process a single chat: save to DB and request post-processing
+ * Process a single chat: save to DB and request post-processing.
+ * Resolves with saved: false only for a duplicate that is not being overwritten (a skip).
+ * Throws when the chat has no ID or cannot be saved (a failure), so the caller counts an error.
  */
 async function processChat(
   chat: Chat,
@@ -303,7 +305,7 @@ async function processChat(
   requestId?: string,
 ): Promise<{ saved: boolean; reason?: string }> {
   if (!chat.id) {
-    return { saved: false, reason: "Chat missing ID" };
+    throw new Error("Chat missing ID");
   }
 
   // Check if chat already exists
@@ -359,10 +361,7 @@ async function processChat(
     return { saved: true };
   } catch (error) {
     log.error(`[ImportWorker] Error saving chat ${chat.id}:`, error);
-    return {
-      saved: false,
-      reason: error instanceof Error ? error.message : "Unknown error",
-    };
+    throw error;
   }
 }
 
@@ -381,6 +380,7 @@ async function processImport(
   let processed = 0;
   let saved = 0;
   let skipped = 0;
+  let errors = 0;
 
   // Send initial progress
   sendProgress({
@@ -447,9 +447,9 @@ async function processImport(
             }
           } catch (error) {
             log.error("[ImportWorker] Error processing ChatGPT chat:", error);
-            skipped++;
+            errors++;
             self.postMessage({
-              type: "skipped",
+              type: "failed",
               reason: error instanceof Error ? error.message : "Transform error",
               requestId,
             } as ImportWorkerResponse);
@@ -501,9 +501,9 @@ async function processImport(
             }
           } catch (error) {
             log.error("[ImportWorker] Error processing Claude chat:", error);
-            skipped++;
+            errors++;
             self.postMessage({
-              type: "skipped",
+              type: "failed",
               reason: error instanceof Error ? error.message : "Transform error",
               requestId,
             } as ImportWorkerResponse);
@@ -551,9 +551,9 @@ async function processImport(
             }
           } catch (error) {
             log.error("[ImportWorker] Error processing OpenWebUI chat:", error);
-            skipped++;
+            errors++;
             self.postMessage({
-              type: "skipped",
+              type: "failed",
               reason: error instanceof Error ? error.message : "Transform error",
               requestId,
             } as ImportWorkerResponse);
@@ -665,9 +665,9 @@ async function processImport(
             processed++;
             const entry = entries.get(chatEntry.file);
             if (!entry || entry.directory) {
-              skipped++;
+              errors++;
               self.postMessage({
-                type: "skipped",
+                type: "failed",
                 chatId: chatEntry.id,
                 reason: "Chat entry not found in ZIP",
                 requestId,
@@ -717,9 +717,9 @@ async function processImport(
                 }
               } catch (error) {
                 log.error("[ImportWorker] Error processing HAEVN export chat:", error);
-                skipped++;
+                errors++;
                 self.postMessage({
-                  type: "skipped",
+                  type: "failed",
                   chatId: chatEntry.id,
                   reason: error instanceof Error ? error.message : "Transform error",
                   requestId,
@@ -792,9 +792,9 @@ async function processImport(
           });
         } catch (error) {
           log.error("[ImportWorker] Error processing Claude Code session:", error);
-          skipped++;
+          errors++;
           self.postMessage({
-            type: "skipped",
+            type: "failed",
             reason: error instanceof Error ? error.message : "Transform error",
             requestId,
           } as ImportWorkerResponse);
@@ -846,9 +846,9 @@ async function processImport(
           });
         } catch (error) {
           log.error("[ImportWorker] Error processing Codex session:", error);
-          skipped++;
+          errors++;
           self.postMessage({
-            type: "skipped",
+            type: "failed",
             reason: error instanceof Error ? error.message : "Transform error",
             requestId,
           } as ImportWorkerResponse);
@@ -900,9 +900,9 @@ async function processImport(
           });
         } catch (error) {
           log.error("[ImportWorker] Error processing PI session:", error);
-          skipped++;
+          errors++;
           self.postMessage({
-            type: "skipped",
+            type: "failed",
             reason: error instanceof Error ? error.message : "Transform error",
             requestId,
           } as ImportWorkerResponse);
@@ -926,6 +926,7 @@ async function processImport(
         processed,
         saved,
         skipped,
+        errors,
         requestId,
       } as ImportWorkerResponse);
     }
