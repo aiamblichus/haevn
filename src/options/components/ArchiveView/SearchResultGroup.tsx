@@ -132,12 +132,12 @@ export const SearchResultGroup = ({
               </span>
             ) : isExpanded ? (
               <span className="flex items-center justify-center gap-1">
-                <Icon icon={ICONS.chevron_up} className="w-4 h-4" />
+                <Icon icon={ICONS.chevron_up} svgClass="w-4 h-4" />
                 Show less
               </span>
             ) : (
               <span className="flex items-center justify-center gap-1">
-                <Icon icon={ICONS.chevron_down} className="w-4 h-4" />
+                <Icon icon={ICONS.chevron_down} svgClass="w-4 h-4" />
                 Show more
                 {group.items.length > SHOW_MORE_THRESHOLD + 1 && (
                   <span className="ml-1">({group.items.length - SHOW_MORE_THRESHOLD} more)</span>
