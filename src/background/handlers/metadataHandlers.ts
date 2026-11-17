@@ -2,9 +2,8 @@ import { ChatRepository } from "../../services/chatRepository";
 import { getDB } from "../../services/db";
 import * as MetadataRepository from "../../services/metadataRepository";
 import {
-  dequeueGeneration,
   enqueueAllMissing,
-  generateForChat,
+  generateOnRequest,
   getEmbeddingQueueStatus,
   getQueueItem,
   getQueueStatus,
@@ -68,8 +67,7 @@ export async function handleGenerateChatMetadata(
   sendResponse: (response: BackgroundResponse) => void,
 ): Promise<void> {
   try {
-    const record = await generateForChat(message.chatId);
-    await dequeueGeneration(message.chatId);
+    const record = await generateOnRequest(message.chatId);
     sendResponse({ success: true, data: record });
   } catch (err) {
     log.error("[MetadataHandlers] generateChatMetadata failed", err);

@@ -88,25 +88,7 @@ async function saveImportedChat(
   // Seed metadata from the chat's haevnMetadata field (a HAEVN export carries it), but never
   // over a record the archive already has. Last, and on its own: a failure here must not undo
   // the count, the thumbnails and the broadcast of a chat that is saved.
-  if (chat.haevnMetadata) {
-    try {
-      const existingMetadata = await MetadataRepository.get(chat.id);
-      if (!existingMetadata) {
-        const m = chat.haevnMetadata;
-        await MetadataRepository.set(chat.id, {
-          title: m.title ?? "",
-          description: m.description ?? "",
-          synopsis: m.synopsis ?? "",
-          categories: m.categories ?? [],
-          keywords: m.keywords ?? [],
-          source: "manual",
-          updatedAt: Date.now(),
-        });
-      }
-    } catch (err) {
-      log.warn(`[ImportService] Failed to seed metadata for ${chat.id}:`, err);
-    }
-  }
+  await MetadataRepository.seedFromChat(chat);
 }
 
 // Export as namespace

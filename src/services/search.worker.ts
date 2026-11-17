@@ -145,6 +145,9 @@ let rebuildRun: Promise<RebuildOutcome> | null = null;
 // Set by a request that arrives during a run: the run goes once more, so chats written after
 // the running pass read its `count()` are indexed (HVN-50).
 let rebuildAgain = false;
+// Chats an `add` named while a pass ran (HVN-54). The pass owns the segments, so the add only
+// leaves its id here; the pass indexes these from the database before it ends.
+const addedDuringRebuild = new Set<string>();
 // Set when the last rebuild pass failed; the index is then part-built until a rebuild succeeds.
 let rebuildFailure: string | null = null;
 // A failed pass is retried by `init` once per worker lifetime, so a failure that never goes away
@@ -417,7 +420,20 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
   segment.index = builder.build();
 }
 
+/**
+ * Index one chat document. During a rebuild the pass owns the segments (it replaces them and
+ * keeps its own handle on the one it fills), so an add only records the chat; the pass indexes
+ * it before it ends, reading the row as it is then (HVN-54).
+ */
 function addToIndex(doc: SearchDoc): void {
+  if (rebuildRun) {
+    addedDuringRebuild.add(doc.id);
+    return;
+  }
+  indexDocument(doc);
+}
+
+function indexDocument(doc: SearchDoc): void {
   let activeSeg = segments.get(activeSegmentId);
   if (!activeSeg) {
     activeSeg = createNewSegment(activeSegmentId);
@@ -457,7 +473,8 @@ function addToIndex(doc: SearchDoc): void {
   }
 }
 
-function rebuildActiveSegment(seg: Segment) {
+/** Rebuild the active segment from the document cache, in memory. */
+function refreshActiveSegment(seg: Segment) {
   if (!seg.builder) return;
   const builder = new lunr.Builder();
   builder.ref("id");
@@ -471,7 +488,11 @@ function rebuildActiveSegment(seg: Segment) {
   seg.index = builder.build();
   seg.dirty = false;
   log.info(`[SearchWorker] Rebuilt active segment ${seg.id} (${docCache.size} docs)`);
-  persistSegment(seg);
+}
+
+function rebuildActiveSegment(seg: Segment) {
+  refreshActiveSegment(seg);
+  if (seg.builder) persistSegment(seg);
 }
 
 const debounceTimers = new Map<string, number>();
@@ -547,6 +568,33 @@ function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
   return run;
 }
 
+/**
+ * Index the chats an add named during the pass, from the database, into the segments the pass
+ * has just built. An add can name a chat the pass had already read past (an update) or one it
+ * will never read (written after it counted), so the pass cannot rely on its own reads. Adds
+ * that arrive while this reads join the loop; the last check is synchronous, so none can slip
+ * in between it and the end of the run.
+ */
+async function indexChatsAddedDuringRebuild(): Promise<void> {
+  while (addedDuringRebuild.size > 0) {
+    const ids = Array.from(addedDuringRebuild);
+    addedDuringRebuild.clear();
+    const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
+    for (const chat of chats) {
+      const data = extractTextAndMap(chat);
+      if (data) indexDocument(data.doc);
+    }
+    // The debounce is off during a run, so rebuild the active segment and write it now: an
+    // update of a chat it holds only changes the cache until then. A failed write fails the pass,
+    // like the pass's own writes (HVN-50).
+    const active = segments.get(activeSegmentId);
+    if (active?.builder) {
+      refreshActiveSegment(active);
+      await writeSegment(active);
+    }
+  }
+}
+
 async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
   rebuildFailure = null;
   clearDebounceTimers();
@@ -572,8 +620,6 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     const count = await db.chats.count();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
-    // Initialize rebuild state for chunked processing
-    const totalChunks = Math.ceil(count / chunkSize);
     rebuildState.totalChats = count;
 
     let currentSeg = createNewSegment("segment_0");
@@ -581,15 +627,27 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     let processed = 0;
     const FETCH_CHUNK = 50; // Fetch size per DB query
 
+    // Page through the chats by key, not by position, until none is left: a row written or
+    // deleted while the pass runs moves the positions after it, and a position-based page would
+    // read one row twice or skip one (HVN-54). `count` only says how far the progress has to go.
+    let lastKey: string | undefined;
+    let exhausted = false;
+    let chunkIdx = 0;
+
     // Process in large chunks with yielding
-    for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-      const chunkStart = chunkIdx * chunkSize;
-      const chunkEnd = Math.min(chunkStart + chunkSize, count);
+    while (!exhausted) {
+      let chunkRead = 0;
 
       // Process this chunk
-      for (let offset = chunkStart; offset < chunkEnd; offset += FETCH_CHUNK) {
-        const limit = Math.min(FETCH_CHUNK, chunkEnd - offset);
-        const chats = await attachMessages(await db.chats.offset(offset).limit(limit).toArray());
+      while (chunkRead < chunkSize && !exhausted) {
+        const limit = Math.min(FETCH_CHUNK, chunkSize - chunkRead);
+        const page =
+          lastKey === undefined ? db.chats.toCollection() : db.chats.where(":id").above(lastKey);
+        const rows = await page.limit(limit).toArray();
+        if (rows.length > 0) lastKey = rows[rows.length - 1].id;
+        const chats = await attachMessages(rows);
+        if (chats.length < limit) exhausted = true;
+        chunkRead += chats.length;
 
         for (const chat of chats) {
           const data = extractTextAndMap(chat);
@@ -608,26 +666,29 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
           }
         }
         processed += chats.length;
-        rebuildState.processedChats = processed; // a search asked mid-chunk reports this
+        // A search asked mid-chunk reports these. Chats written after the count grow the total.
+        rebuildState.processedChats = processed;
+        rebuildState.totalChats = Math.max(count, processed);
       }
 
-      // Update rebuild state
-      rebuildState.processedChats = processed;
-      rebuildState.currentChunk = chunkIdx + 1;
+      if (chunkRead === 0) break; // the last page was the end of the previous chunk
+
+      const total = rebuildState.totalChats;
+      rebuildState.currentChunk = ++chunkIdx;
 
       // Send progress update
-      const percentage = Math.round((processed / count) * 100);
+      const percentage = Math.round((processed / total) * 100);
       self.postMessage({
         type: "indexRebuildProgress",
         progress: {
           processed,
-          total: count,
+          total,
           percentage,
         },
       });
 
       if (emitProgress) {
-        self.postMessage({ type: "initProgress", processed, total: count, phase: "indexing" });
+        self.postMessage({ type: "initProgress", processed, total, phase: "indexing" });
       }
 
       // Yield to event loop to allow search requests to process
@@ -649,6 +710,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
         });
       }
     }
+
+    await indexChatsAddedDuringRebuild();
 
     log.info("[SearchWorker] Full rebuild complete.");
 

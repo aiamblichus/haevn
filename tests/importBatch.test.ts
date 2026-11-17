@@ -8,19 +8,25 @@ import {
 import { acquireOperationLock, getActiveOperation } from "../src/background/state";
 import type { Chat } from "../src/model/haevn_model";
 
-const { getChat, startBulkSyncIndexing, finishBulkSyncIndexing, saveImportedChat } = vi.hoisted(
-  () => ({
-    getChat: vi.fn(),
-    startBulkSyncIndexing: vi.fn(async () => {}),
-    finishBulkSyncIndexing: vi.fn(async () => {}),
-    saveImportedChat: vi.fn(async () => {}),
-  }),
-);
+const {
+  getChat,
+  startBulkSyncIndexing,
+  finishBulkSyncIndexing,
+  saveImportedChat,
+  queueGenerationForImportedChats,
+} = vi.hoisted(() => ({
+  getChat: vi.fn(),
+  startBulkSyncIndexing: vi.fn(async () => {}),
+  finishBulkSyncIndexing: vi.fn(async () => {}),
+  saveImportedChat: vi.fn(async () => {}),
+  queueGenerationForImportedChats: vi.fn(async (_chatIds: string[]) => {}),
+}));
 
 vi.mock("../src/services/syncService", () => ({
   SyncService: { getChat, startBulkSyncIndexing, finishBulkSyncIndexing },
 }));
 vi.mock("../src/services/importService", () => ({ ImportService: { saveImportedChat } }));
+vi.mock("../src/services/metadataService", () => ({ queueGenerationForImportedChats }));
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -51,6 +57,7 @@ beforeEach(() => {
   saveImportedChat.mockImplementation(async (chat: Chat, _raw: unknown, opts: unknown) => {
     calls.push(`save ${chat.id} ${JSON.stringify(opts)}`);
   });
+  queueGenerationForImportedChats.mockReset();
 });
 
 describe("importing a batch of chats (HVN-38)", () => {
@@ -215,5 +222,22 @@ describe("importing a batch of chats (HVN-38)", () => {
 
     expect(small).not.toHaveProperty("indexError");
     expect(big).not.toHaveProperty("indexError");
+  });
+
+  it("queues the chats it saved for AI metadata once, after the last save (HVN-53)", async () => {
+    getChat.mockImplementation(async (id: string) => (id === "c1" ? { id } : undefined));
+    queueGenerationForImportedChats.mockImplementation(async (chatIds: string[]) => {
+      calls.push(`queue ${chatIds.join(",")}`);
+    });
+    saveImportedChat.mockImplementation(async (chat: Chat) => {
+      calls.push(`save ${chat.id}`);
+      if (chat.id === "c2") throw new Error("disk full");
+    });
+
+    await importChatBatch(items(4), { overwrite: false, index: true });
+
+    // c1 was skipped (already there) and c2 failed: neither is queued.
+    expect(calls).toEqual(["save c0", "save c2", "save c3", "queue c0,c3"]);
+    expect(queueGenerationForImportedChats).toHaveBeenCalledTimes(1);
   });
 });

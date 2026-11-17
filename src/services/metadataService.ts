@@ -153,6 +153,31 @@ export async function dequeueGeneration(chatId: string): Promise<void> {
 }
 
 /**
+ * Queue AI generation for chats that an import has just saved, when the user has turned on
+ * automatic generation. The settings are read once for the batch. Never rejects: the chats are
+ * saved, and a queue failure is logged and costs only the generation. A chat that already has
+ * metadata (one the import seeded from `haevnMetadata`, say) is dropped by `queueGeneration`.
+ * The archive's import job and the CLI's import both call this, so that they cannot drift.
+ */
+export async function queueGenerationForImportedChats(chatIds: string[]): Promise<void> {
+  if (chatIds.length === 0) return;
+  try {
+    const config = await getMetadataAIConfig();
+    if (!config.enabled || !config.autoGenerate) return;
+  } catch (err) {
+    log.warn("[MetadataService] Failed to read the settings for queueing imported chats", err);
+    return;
+  }
+  for (const chatId of chatIds) {
+    try {
+      await queueGeneration(chatId);
+    } catch (err) {
+      log.warn(`[MetadataService] Failed to queue metadata generation for ${chatId}`, err);
+    }
+  }
+}
+
+/**
  * Enqueue a chat for metadata-derived embedding generation.
  * Idempotent; failed entries are terminal until reset/rebuild.
  */
@@ -805,6 +830,18 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   if (!saved) throw new Error(`Failed to read back metadata for chat ${chatId}`);
   await queueEmbeddingGeneration(chatId);
   return saved;
+}
+
+/**
+ * A person's request to generate a chat's metadata now (the archive's button, the CLI). Drops
+ * the chat from the generation queue afterwards: it has its metadata, and the next queue tick
+ * would otherwise generate it a second time. Both callers go through here so that they cannot
+ * drift.
+ */
+export async function generateOnRequest(chatId: string): Promise<ChatMetadataRecord> {
+  const record = await generateForChat(chatId);
+  await dequeueGeneration(chatId);
+  return record;
 }
 
 export async function generateEmbeddingForChat(chatId: string): Promise<ChatEmbeddingRecord> {
