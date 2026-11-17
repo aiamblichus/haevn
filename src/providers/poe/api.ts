@@ -94,9 +94,7 @@ function buildHeaders(tokens: PoeTokens): Record<string, string> {
 /**
  * Execute a GraphQL query against Poe's API
  */
-async function executeQuery<TVariables, TResponse>(
-  body: Query<TVariables, TResponse>,
-): Promise<TResponse> {
+async function executeQuery<TVariables, TResponse>(body: Query<TVariables>): Promise<TResponse> {
   const tokens = await getTokens();
   if (!tokens) {
     throw new Error("No valid Poe tokens available. Please refresh the Poe page.");

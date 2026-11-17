@@ -249,7 +249,14 @@ export function transformPiToHaevnChat(extraction: PiRawExtraction): Chat {
 
     if (isAssistantPayload(line.message) && Array.isArray(line.message.content)) {
       for (const block of line.message.content) {
-        if (block.type === "toolCall" && block.id && block.name) {
+        // (the content union's open arm keeps `block` from narrowing on type, so check the fields)
+        if (
+          block.type === "toolCall" &&
+          typeof block.id === "string" &&
+          typeof block.name === "string" &&
+          block.id &&
+          block.name
+        ) {
           toolNameByCallId.set(block.id, block.name);
         }
       }

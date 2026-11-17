@@ -21,7 +21,7 @@ import type {
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
-import type { Attachment, Message, PoeConversationData } from "./model";
+import type { Message, PoeConversationData } from "./model";
 
 // ============================================================================
 // Main Transform Function
