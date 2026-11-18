@@ -1418,3 +1418,84 @@ describe("search worker: one indexing path (HVN-76)", () => {
     });
   });
 });
+
+describe("search worker: a rebuild leaves soft-deleted chats out (HVN-74)", () => {
+  async function seedThreeLiveOneDeleted(): Promise<void> {
+    await seedChats([
+      buildChat("a", "pineapple"),
+      buildChat("b", "pineapple"),
+      buildChat("c", "pineapple"),
+      { ...buildChat("gone", "pineapple"), deleted: 1, deletedAt: Date.now() },
+    ]);
+  }
+
+  const storedDocIds = async (): Promise<string[]> =>
+    [...((await getDB().lunrIndex.get("segment_0"))?.meta as { docIds: string[] }).docIds].sort();
+
+  it("does not index a chat in its grace period, so it is not there if it comes back by itself", async () => {
+    await seedThreeLiveOneDeleted();
+
+    await send({ type: "rebuild" });
+
+    expect(await storedDocIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it("counts the live chats, in the progress and in the end", async () => {
+    await seedThreeLiveOneDeleted();
+
+    await send({ type: "rebuild" });
+
+    const progress = posted.filter((m) => m.type === "indexRebuildProgress");
+    expect(progress.map((m) => (m.progress as RebuildStatus).total)).toEqual([3]);
+    expect(posted.find((m) => m.type === "indexRebuildComplete")).toMatchObject({ totalChats: 3 });
+  });
+
+  it("is not told at the next start that a chat is missing from the index", async () => {
+    await seedThreeLiveOneDeleted();
+    await send({ type: "rebuild" });
+
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady(); // a rebuild that init started would end here
+
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toEqual([]);
+    expect(posted.filter((m) => m.type === "initProgress")).toEqual([]);
+  });
+
+  it("still starts a rebuild when a live chat is missing from the index", async () => {
+    await seedThreeLiveOneDeleted();
+    await send({ type: "rebuild" });
+    await seedChats([buildChat("late", "pineapple")]);
+
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady();
+
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+    expect(await storedDocIds()).toEqual(["a", "b", "c", "late"]);
+  });
+});
+
+describe("search worker: a rebuild that fails says so as it ends (HVN-74)", () => {
+  it("posts the failure with its reason, and not a completion", async () => {
+    await seedChats([buildChat("a", "pineapple")]);
+    vi.spyOn(workerDbs[workerDbs.length - 1].lunrIndex, "put").mockRejectedValue(
+      new Error("QuotaExceededError"),
+    );
+
+    await send({ type: "rebuild" });
+
+    expect(posted.filter((m) => m.type === "indexRebuildFailed")).toEqual([
+      { type: "indexRebuildFailed", error: "QuotaExceededError" },
+    ]);
+    expect(posted.some((m) => m.type === "indexRebuildComplete")).toBe(false);
+  });
+
+  it("posts nothing of the kind for a rebuild that succeeds", async () => {
+    await seedChats([buildChat("a", "pineapple")]);
+
+    await send({ type: "rebuild" });
+
+    expect(posted.some((m) => m.type === "indexRebuildFailed")).toBe(false);
+  });
+});

@@ -273,6 +273,15 @@ const App = () => {
             rebuildNoticeShownRef.current = false;
             setSearchIndexRebuild(null);
             setStatus("Search index rebuilt. Search again.", "ok");
+          } else if (event.data.type === "indexRebuildFailed") {
+            // The rebuild ended without an index: say it, instead of leaving the last percentage.
+            rebuildNoticeShownRef.current = false;
+            setSearchIndexRebuild(null);
+            setSearchIndexIncomplete({ error: event.data.error });
+            setStatus(
+              "Search index rebuild failed. Some chats may be missing from results.",
+              "error",
+            );
           }
         }
         return undefined;

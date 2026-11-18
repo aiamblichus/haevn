@@ -65,6 +65,8 @@ export type SearchWorkerResponse =
   | { type: "bulkComplete"; success: boolean; indexedCount: number; error?: string }
   | { type: "indexRebuildProgress"; progress: SearchIndexRebuildStatus }
   | { type: "indexRebuildComplete"; totalChats: number }
+  /** A rebuild pass ended in failure: the index is part-built until a rebuild succeeds. */
+  | { type: "indexRebuildFailed"; error: string }
   | { type: "error"; error: string; requestId?: string };
 
 // ======================

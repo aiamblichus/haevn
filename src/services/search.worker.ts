@@ -393,6 +393,19 @@ async function loadSegments(): Promise<void> {
 }
 
 /**
+ * The chats the index is to hold: every one that is not soft-deleted. A rebuild leaves the
+ * deleted ones out (they are gone for the user, and the Janitor removes them within the hour), so
+ * the count the rebuild reports and the consistency check compares against is this one (HVN-74).
+ */
+async function countLiveChats(): Promise<number> {
+  const [all, deleted] = await Promise.all([
+    db.chats.count(),
+    db.chats.where("deleted").equals(1).count(),
+  ]);
+  return all - deleted;
+}
+
+/**
  * Checks if the number of indexed documents matches the number of chats in the database.
  * If there is a mismatch, it triggers a rebuild.
  */
@@ -400,7 +413,7 @@ async function checkIndexConsistency(): Promise<void> {
   // A rebuild running is the cure this check would start; its segments are empty or part-built.
   if (rebuildRun) return;
   try {
-    const actualChatCount = await db.chats.count();
+    const actualChatCount = await countLiveChats();
     const indexedDocCount = Array.from(segments.values()).reduce(
       (sum, seg) => sum + seg.docIds.size,
       0,
@@ -669,7 +682,7 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // leaves a short index, which the next init rebuilds.
     storedFormat = undefined;
     await db.lunrIndex.clear();
-    const count = await db.chats.count();
+    const count = await countLiveChats();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
     rebuildState.totalChats = count;
@@ -697,9 +710,11 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
           lastKey === undefined ? db.chats.toCollection() : db.chats.where(":id").above(lastKey);
         const rows = await page.limit(limit).toArray();
         if (rows.length > 0) lastKey = rows[rows.length - 1].id;
-        const chats = await attachMessages(rows);
-        if (chats.length < limit) exhausted = true;
-        chunkRead += chats.length;
+        // A soft-deleted chat is paged past, not indexed: a search hides it anyway, and it is not
+        // in the count (HVN-74).
+        const chats = await attachMessages(rows.filter((row) => row.deleted !== 1));
+        if (rows.length < limit) exhausted = true;
+        chunkRead += rows.length;
 
         for (const chat of chats) {
           const data = extractTextAndMap(chat);
@@ -785,6 +800,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     log.error("[SearchWorker] Rebuild failed", e);
     // The segments were cleared at the start and are part-built now: say so until a rebuild succeeds.
     rebuildFailure = e instanceof Error ? e.message : String(e);
+    // The archive's rebuild notice stops at its last percentage unless it is told the pass ended.
+    self.postMessage({ type: "indexRebuildFailed", error: rebuildFailure });
     return { error: rebuildFailure };
   }
 }
