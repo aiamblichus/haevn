@@ -14,7 +14,6 @@ import { buildExportStagingRoot, buildExportZipPath } from "../../services/expor
 import type { BulkExportWorkerResponse } from "../../types/workerMessages";
 import { fireAndForget } from "../../utils/error_utils";
 import { log } from "../../utils/logger";
-import { withTimeout } from "../../utils/timeout_utils";
 import { sendWorkerRequest } from "../../utils/workerApi";
 import { getExportJobState, setExportJobState } from "../export/exportState";
 import {
@@ -39,8 +38,15 @@ import type { BulkExportState } from "./types";
  * CRD-003: Implements request/response pattern for browser API access.
  * Workers send requests (e.g., "requestDownload") and receive responses
  * (e.g., "downloadComplete") with matching requestId for correlation.
+ *
+ * `exportId` is the export whose start registered this listener. The state in storage is the
+ * current export's, and a message that arrives late (the answer to a cancel after a forced
+ * cleanup, say) must not act on an export that started since.
  */
-async function handleWorkerMessage(message: BulkExportWorkerResponse): Promise<void> {
+async function handleWorkerMessage(
+  message: BulkExportWorkerResponse,
+  exportId: string,
+): Promise<void> {
   log.info(`[BulkExport] handleWorkerMessage received:`, {
     type: message.type,
     hasRequestId: "requestId" in message,
@@ -48,6 +54,13 @@ async function handleWorkerMessage(message: BulkExportWorkerResponse): Promise<v
   const state = await getBulkExportState();
   if (!state) {
     log.warn("[BulkExport] Received worker message but no state exists");
+    return;
+  }
+  const job = await getExportJobState();
+  if (job && job.exportId !== exportId) {
+    log.warn(
+      `[BulkExport] Ignoring a ${message.type} message from export ${exportId}: export ${job.exportId} is current`,
+    );
     return;
   }
 
@@ -489,8 +502,10 @@ export async function startBulkExport(chatIds: string[], options: ExportOptions)
           },
         },
         {
-          onProgress: handleWorkerMessage,
-          timeout: 600000, // 10 minutes for large exports
+          onProgress: (message) => handleWorkerMessage(message, exportId),
+          // No timeout: the listener of this start carries the job's end (complete, cancelled,
+          // error), however long it runs and however long it is paused.
+          timeout: 0,
         },
       ),
       "Bulk export progress monitoring",
@@ -546,30 +561,49 @@ export async function resumeBulkExport(): Promise<void> {
   }
 }
 
+// How long a cancel waits for the worker's answer before it cleans up itself.
+const CANCEL_GRACE_MS = 2000;
+const CANCEL_POLL_MS = 50;
+
+/** Resolves true once the bulk export state is gone, or false if it is still there at timeoutMs. */
+async function waitForBulkExportEnd(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!(await getBulkExportState())) return true;
+    if (Date.now() >= deadline) return false;
+    await pause(CANCEL_POLL_MS);
+  }
+}
+
 /**
  * Cancels an ongoing bulk export.
+ *
+ * The cancel goes to the worker with no requestId of its own, so the worker answers `cancelled`
+ * on the requestId of the start, and the listener of that start (handleWorkerMessage) cleans up.
+ * If the answer does not come within graceMs (the worker is gone, or has no such job), the
+ * lock and the state are released here, so a cancel never leaves them held until a restart.
  */
-export async function cancelBulkExport(): Promise<void> {
+export async function cancelBulkExport(graceMs = CANCEL_GRACE_MS): Promise<void> {
   const state = await getBulkExportState();
   if (state && (state.status === "running" || state.status === "paused")) {
     try {
-      await withTimeout(
-        sendWorkerRequest("bulkExport", { type: "cancel" }, { expectResponse: false }),
-        2000,
-        "bulk export cancel",
-      );
+      await sendWorkerRequest("bulkExport", { type: "cancel" }, { expectResponse: false });
     } catch (error) {
-      log.warn("[BulkExport] Cancel request timed out, forcing cleanup:", error);
-      const exportState = await getExportJobState();
-      if (exportState) {
-        await setExportJobState({
-          ...exportState,
-          status: "cancelled",
-          lastCheckpointAt: Date.now(),
-        });
-      }
-      await cleanupBulkExport("bulkExportCanceled");
+      log.warn("[BulkExport] Cancel request failed:", error);
     }
+    if (await waitForBulkExportEnd(graceMs)) {
+      return;
+    }
+    log.warn("[BulkExport] The worker did not answer the cancel, forcing cleanup");
+    const exportState = await getExportJobState();
+    if (exportState) {
+      await setExportJobState({
+        ...exportState,
+        status: "cancelled",
+        lastCheckpointAt: Date.now(),
+      });
+    }
+    await cleanupBulkExport("bulkExportCanceled");
   }
 }
 

@@ -39,6 +39,8 @@ const db = new HaevnDatabase();
 // Worker state
 interface WorkerState {
   status: "running" | "paused" | "cancelled";
+  /** The start's requestId: what every message the job posts is answered on. */
+  requestId: string | undefined;
   remainingChatIds: string[];
   options: ExportOptions;
   currentBatchNumber: number;
@@ -188,7 +190,8 @@ async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState)
 
   const attachments = extractAttachmentsFromChat(chat, options.messageIds);
   for (const attachment of attachments) {
-    if (state.status !== "running") {
+    // A pause waits for the chat boundary (a chat is staged whole); only a cancel cuts it short.
+    if (state.status === "cancelled") {
       break;
     }
     const filename = generateAttachmentFilename(
@@ -436,6 +439,8 @@ async function processBatch(
 ): Promise<{
   processedCount: number;
   skippedCount: number;
+  /** How many of batchChatIds were dealt with, from the front: staged, missing or failed. */
+  consumedCount: number;
   nextAttachmentIndex: number;
 }> {
   log.info(
@@ -444,6 +449,7 @@ async function processBatch(
 
   let batchProcessedCount = 0;
   let batchSkippedCount = 0;
+  let batchConsumedCount = 0;
   const attachmentIndex = globalAttachmentIndex;
 
   // Process each chat in the batch
@@ -457,6 +463,7 @@ async function processBatch(
     if (!chat) {
       log.warn(`[BulkExportWorker] Chat ${chatId} not found, skipping`);
       batchSkippedCount++;
+      batchConsumedCount++;
       continue;
     }
 
@@ -491,6 +498,7 @@ async function processBatch(
       batchSkippedCount++;
       // Continue with other chats in the batch
     }
+    batchConsumedCount++;
   }
 
   log.info(
@@ -500,20 +508,32 @@ async function processBatch(
   return {
     processedCount: batchProcessedCount,
     skippedCount: batchSkippedCount,
+    consumedCount: batchConsumedCount,
     nextAttachmentIndex: attachmentIndex,
   };
 }
 
 /**
  * Process the next batch
+ *
+ * Everything this posts carries the requestId of the job's start, which is the listener the
+ * service worker holds for it. A resume (or a processNextBatch message) arrives with none of its
+ * own, so the message's requestId is not used.
+ *
+ * The job is over once workerState is no longer `state`: a cancel nulls it, and a start accepted
+ * after that replaces it. Every await below can end the job, so each is followed by that check
+ * before anything touches the state or posts.
  */
-async function processNextBatch(requestId?: string): Promise<void> {
-  if (!workerState) {
+async function processNextBatch(): Promise<void> {
+  const state = workerState;
+  if (!state) {
     return;
   }
+  const requestId = state.requestId;
+  const isCurrent = () => workerState === state;
 
   // Check status
-  if (workerState.status === "cancelled") {
+  if (state.status === "cancelled") {
     self.postMessage({
       type: "cancelled",
       requestId,
@@ -522,7 +542,7 @@ async function processNextBatch(requestId?: string): Promise<void> {
     return;
   }
 
-  if (workerState.status === "paused") {
+  if (state.status === "paused") {
     self.postMessage({
       type: "paused",
       requestId,
@@ -530,13 +550,13 @@ async function processNextBatch(requestId?: string): Promise<void> {
     return;
   }
 
-  if (workerState.remainingChatIds.length === 0) {
+  if (state.remainingChatIds.length === 0) {
     // All batches complete
     self.postMessage({
       type: "complete",
-      processed: workerState.processedChats,
-      skipped: workerState.skippedCount,
-      batches: workerState.currentBatchNumber,
+      processed: state.processedChats,
+      skipped: state.skippedCount,
+      batches: state.currentBatchNumber,
       requestId,
     } as BulkExportWorkerResponse);
     cleanupPendingRequests("Export operation completed");
@@ -544,20 +564,22 @@ async function processNextBatch(requestId?: string): Promise<void> {
     return;
   }
 
-  // Take the next batch
-  const batchChatIds = workerState.remainingChatIds.slice(0, BATCH_SIZE);
-  const batchNumber = workerState.currentBatchNumber + 1;
+  // Take the next batch. Batches are fixed windows of BATCH_SIZE over the original list, so a
+  // batch that a pause cut short is finished first: what is left of its window is the next batch.
+  const done = state.totalChats - state.remainingChatIds.length;
+  const batchChatIds = state.remainingChatIds.slice(0, BATCH_SIZE - (done % BATCH_SIZE));
+  const batchNumber = state.currentBatchNumber + 1;
 
   // Send progress update
   self.postMessage({
     type: "progress",
-    processed: workerState.processedChats,
-    total: workerState.totalChats,
-    status: `Processing batch ${batchNumber}/${workerState.totalBatches}...`,
-    processedMedia: workerState.processedMedia,
-    bytesWritten: workerState.totalSizeBytes,
+    processed: state.processedChats,
+    total: state.totalChats,
+    status: `Processing batch ${batchNumber}/${state.totalBatches}...`,
+    processedMedia: state.processedMedia,
+    bytesWritten: state.totalSizeBytes,
     currentBatch: batchNumber,
-    totalBatches: workerState.totalBatches,
+    totalBatches: state.totalBatches,
     requestId,
   } as BulkExportWorkerResponse);
 
@@ -566,17 +588,28 @@ async function processNextBatch(requestId?: string): Promise<void> {
     const result = await processBatch(
       batchChatIds,
       batchNumber,
-      workerState.totalBatches,
-      workerState.options,
-      workerState.globalAttachmentIndex,
-      workerState,
+      state.totalBatches,
+      state.options,
+      state.globalAttachmentIndex,
+      state,
     );
 
-    // Update state
-    workerState.currentBatchNumber = batchNumber;
-    workerState.skippedCount += result.skippedCount;
-    workerState.remainingChatIds = workerState.remainingChatIds.slice(BATCH_SIZE);
-    workerState.globalAttachmentIndex = result.nextAttachmentIndex;
+    if (!isCurrent()) {
+      return;
+    }
+
+    // Update state. Only the chats the batch dealt with leave the queue: a pause that lands
+    // mid-batch stops it early, and the rest must still be there when the export resumes.
+    state.skippedCount += result.skippedCount;
+    state.remainingChatIds = state.remainingChatIds.slice(result.consumedCount);
+    state.globalAttachmentIndex = result.nextAttachmentIndex;
+
+    if (result.consumedCount < batchChatIds.length) {
+      // The batch is not finished: no batch-complete, and the next call reports the pause.
+      await processNextBatch();
+      return;
+    }
+    state.currentBatchNumber = batchNumber;
 
     // Send batch complete message (staging-only)
     self.postMessage({
@@ -589,67 +622,75 @@ async function processNextBatch(requestId?: string): Promise<void> {
     // Send progress update after batch completion
     self.postMessage({
       type: "progress",
-      processed: workerState.processedChats,
-      total: workerState.totalChats,
-      status: `Completed batch ${batchNumber}/${workerState.totalBatches}. ${workerState.remainingChatIds.length} chats remaining.`,
-      processedMedia: workerState.processedMedia,
-      bytesWritten: workerState.totalSizeBytes,
+      processed: state.processedChats,
+      total: state.totalChats,
+      status: `Completed batch ${batchNumber}/${state.totalBatches}. ${state.remainingChatIds.length} chats remaining.`,
+      processedMedia: state.processedMedia,
+      bytesWritten: state.totalSizeBytes,
       currentBatch: batchNumber,
-      totalBatches: workerState.totalBatches,
+      totalBatches: state.totalBatches,
       requestId,
     } as BulkExportWorkerResponse);
 
     // Continue with next batch if there are more
-    if (workerState.remainingChatIds.length > 0) {
+    if (state.remainingChatIds.length > 0) {
       // Small delay before next batch
       await yieldToEventLoop();
-      await processNextBatch(requestId);
+      if (!isCurrent()) {
+        return;
+      }
+      await processNextBatch();
     } else {
       self.postMessage({
         type: "progress",
-        processed: workerState.processedChats,
-        total: workerState.totalChats,
+        processed: state.processedChats,
+        total: state.totalChats,
         status: "Finalizing manifest...",
-        processedMedia: workerState.processedMedia,
-        bytesWritten: workerState.totalSizeBytes,
+        processedMedia: state.processedMedia,
+        bytesWritten: state.totalSizeBytes,
         currentBatch: batchNumber,
-        totalBatches: workerState.totalBatches,
+        totalBatches: state.totalBatches,
         requestId,
       } as BulkExportWorkerResponse);
-      await workerState.manifestWriter.writeMeta({
-        haevn_version: workerState.meta.haevnVersion,
-        export_version: workerState.meta.exportVersion,
-        export_id: workerState.exportId,
-        export_timestamp: workerState.meta.exportTimestamp,
-        total_chats: workerState.totalChats,
-        total_media_items: workerState.totalMediaItems,
-        total_size_bytes: workerState.totalSizeBytes,
-        provider_stats: workerState.providerStats,
+      await state.manifestWriter.writeMeta({
+        haevn_version: state.meta.haevnVersion,
+        export_version: state.meta.exportVersion,
+        export_id: state.exportId,
+        export_timestamp: state.meta.exportTimestamp,
+        total_chats: state.totalChats,
+        total_media_items: state.totalMediaItems,
+        total_size_bytes: state.totalSizeBytes,
+        provider_stats: state.providerStats,
       });
-      await buildManifestJson(workerState);
+      if (!isCurrent()) {
+        return;
+      }
+      await buildManifestJson(state);
+      if (!isCurrent()) {
+        return;
+      }
       self.postMessage({
         type: "progress",
-        processed: workerState.processedChats,
-        total: workerState.totalChats,
+        processed: state.processedChats,
+        total: state.totalChats,
         status: "Building ZIP archive...",
-        processedMedia: workerState.processedMedia,
-        bytesWritten: workerState.totalSizeBytes,
+        processedMedia: state.processedMedia,
+        bytesWritten: state.totalSizeBytes,
         currentBatch: batchNumber,
-        totalBatches: workerState.totalBatches,
+        totalBatches: state.totalBatches,
         requestId,
       } as BulkExportWorkerResponse);
       log.info("[BulkExportWorker] Starting buildZipFromStaging...");
-      await withTimeout(
-        buildZipFromStaging(workerState),
-        ZIP_BUILD_TIMEOUT_MS,
-        "buildZipFromStaging",
-      );
+      await withTimeout(buildZipFromStaging(state), ZIP_BUILD_TIMEOUT_MS, "buildZipFromStaging");
+      if (!isCurrent()) {
+        return;
+      }
       log.info("[BulkExportWorker] buildZipFromStaging completed, sending complete message");
       // All done
       self.postMessage({
         type: "complete",
-        processed: workerState.processedChats,
-        skipped: workerState.skippedCount,
+        processed: state.processedChats,
+        skipped: state.skippedCount,
         batches: batchNumber,
         requestId,
       } as BulkExportWorkerResponse);
@@ -658,6 +699,11 @@ async function processNextBatch(requestId?: string): Promise<void> {
       workerState = null;
     }
   } catch (error) {
+    if (!isCurrent()) {
+      // The job was cancelled, and what it was doing failed on the way out: nothing to report.
+      log.warn("[BulkExportWorker] A cancelled export's batch failed:", error);
+      return;
+    }
     log.error("[BulkExportWorker] Error processing batch:", error);
     self.postMessage({
       type: "error",
@@ -759,6 +805,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
         // Initialize state
         workerState = {
           status: "running",
+          requestId,
           remainingChatIds: msg.chatIds,
           options: msg.options,
           currentBatchNumber: 0,
@@ -777,7 +824,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
         };
 
         // Start processing
-        await processNextBatch(requestId);
+        await processNextBatch();
         break;
       }
 
@@ -795,7 +842,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
       case "resume": {
         if (workerState && workerState.status === "paused") {
           workerState.status = "running";
-          await processNextBatch(requestId);
+          await processNextBatch();
         }
         break;
       }
@@ -803,9 +850,11 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
       case "cancel": {
         if (workerState) {
           workerState.status = "cancelled";
+          // The service worker's cancel has no requestId of its own, and `cancelled` is how the
+          // start's listener learns the job is over, so it answers on the start's.
           self.postMessage({
             type: "cancelled",
-            requestId,
+            requestId: workerState.requestId,
           } as BulkExportWorkerResponse);
           cleanupPendingRequests("Export operation cancelled");
           workerState = null;
@@ -814,7 +863,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
       }
 
       case "processNextBatch": {
-        await processNextBatch(requestId);
+        await processNextBatch();
         break;
       }
 
