@@ -396,12 +396,12 @@ const App = () => {
                 );
               } else if (event.indexIncomplete) {
                 setStatus(
-                  `Found ${event.totalResults} results, but the search index is incomplete (the last rebuild failed). Some chats may be missing.`,
+                  `Found ${event.totalResults} ${event.totalResults === 1 ? "result" : "results"}, but the search index is incomplete (the last rebuild failed). Some chats may be missing.`,
                   "warn",
                 );
               } else {
                 setStatus(
-                  `Found ${event.totalResults} results in ${event.durationMs.toFixed(0)}ms (scanned ${
+                  `Found ${event.totalResults} ${event.totalResults === 1 ? "result" : "results"} in ${event.durationMs.toFixed(0)}ms (scanned ${
                     event.chatsScanned
                   } chats)`,
                   "ok",
