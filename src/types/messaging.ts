@@ -131,6 +131,12 @@ export type AllProviderRawData =
   | CodexRawExtraction
   | PiRawExtraction;
 
+/**
+ * How long a delete can be undone: the Janitor keeps a soft-deleted chat this long before it
+ * hard-deletes it, and an undo is refused after it. The archive's undo toast runs on the same clock.
+ */
+export const SOFT_DELETE_GRACE_MS = 5 * 60 * 1000;
+
 // ======================
 // Background Request Messages
 // ======================
@@ -191,6 +197,7 @@ export type BackgroundRequest =
     }
   | { action: "getSyncedChatContent"; chatId: string }
   | { action: "deleteSyncedChats"; chatIds: string[] }
+  | { action: "restoreSyncedChats"; chatIds: string[] }
   | { action: "existsChat"; chatId: string }
   | {
       action: "checkCurrentChatSynced";
@@ -354,6 +361,7 @@ export type BackgroundResponse =
   | { success: true; synced: boolean; chatId?: string | null }
   | { success: true; exists: boolean }
   | { success: true; count: number }
+  | { success: true; chatIds: string[] } // restoreSyncedChats: the chats that came back
   | { success: true; total: number; data: unknown[] }
   | { success: true; total: number; items: unknown[] } // Gallery media response
   | {

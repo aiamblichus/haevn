@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { Chat } from "../../model/haevn_model";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
+import { logNoResponse } from "../../utils/noResponse";
 import { useStatus } from "../context/StatusContext";
 import type { ExportOptions } from "../types";
 import { buildChatUrl } from "../utils";
@@ -16,7 +17,8 @@ export const useApi = () => {
           chatId,
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
-        if (!resp?.success || !("data" in resp) || !resp.data)
+        if (!resp?.success || !("data" in resp) || !resp.data) {
+          if (resp == null) await logNoResponse("syncChatById");
           throw new Error(
             resp && "error" in resp
               ? resp.error
@@ -24,6 +26,7 @@ export const useApi = () => {
                 ? "No response from background"
                 : "Not found",
           );
+        }
         const chat = resp.data as Chat;
         const url = buildChatUrl(chat.source, chat.sourceId);
         if (!url) {
@@ -36,7 +39,8 @@ export const useApi = () => {
           url,
         };
         const syncResp = (await chrome.runtime.sendMessage(syncRequest)) as BackgroundResponse;
-        if (!syncResp?.success)
+        if (!syncResp?.success) {
+          if (syncResp == null) await logNoResponse("syncChatById (sync)");
           throw new Error(
             syncResp && "error" in syncResp
               ? syncResp.error
@@ -44,6 +48,7 @@ export const useApi = () => {
                 ? "No response from background"
                 : "Sync failed",
           );
+        }
         setStatus("Chat synced.", "ok");
         return true;
       } catch (e: unknown) {
@@ -76,7 +81,8 @@ export const useApi = () => {
           chatId,
         };
         const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
-        if (!resp?.success || !("data" in resp) || !resp.data)
+        if (!resp?.success || !("data" in resp) || !resp.data) {
+          if (resp == null) await logNoResponse("openChatInProvider");
           throw new Error(
             resp && "error" in resp
               ? resp.error
@@ -84,6 +90,7 @@ export const useApi = () => {
                 ? "No response from background"
                 : "Chat not found",
           );
+        }
         const chat = resp.data as Chat;
         let url = buildChatUrl(chat.source, chat.sourceId);
         if (!url && chat.source?.includes("openwebui")) {

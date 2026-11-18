@@ -568,6 +568,64 @@ export namespace ChatRepository {
   }
 
   /**
+   * Undoes a soft delete that is still inside its grace period: clears the deleted flag and
+   * timestamp, then indexes the chat again. A chat whose grace has run out stays deleted, so
+   * the Janitor can still clean it up.
+   * @param chatIds The chats to restore.
+   * @param graceMs The grace period the Janitor applies to a soft delete.
+   * @returns The IDs that were restored; empty when none was inside its grace period.
+   */
+  export async function restoreChats(chatIds: string[], graceMs: number): Promise<string[]> {
+    if (chatIds.length === 0) return [];
+    try {
+      const db = getDB();
+      const threshold = Date.now() - graceMs;
+
+      // Read and write in one transaction, so the Janitor cannot remove a row between the two.
+      const restoredIds = await db.transaction("rw", db.chats, async () => {
+        const rows = await db.chats.bulkGet(chatIds);
+        const ids = rows
+          .filter(
+            (c): c is Chat =>
+              !!c && c.deleted === 1 && typeof c.deletedAt === "number" && c.deletedAt >= threshold,
+          )
+          .map((c) => c.id)
+          .filter((id): id is string => !!id);
+        if (ids.length > 0) {
+          await db.chats
+            .where("id")
+            .anyOf(ids)
+            .modify((c) => {
+              c.deleted = 0;
+              delete c.deletedAt;
+            });
+        }
+        return ids;
+      });
+
+      // Index the chats again through the normal path. The search reads the deleted flag, so
+      // the flag alone brings a chat back; the index call covers one that is missing from it.
+      for (const id of restoredIds) {
+        const chat = await getChatWithMessages(id);
+        if (!chat) continue;
+        try {
+          await SearchIndexManager.addOrUpdateChatInIndex(chat);
+        } catch (e) {
+          log.warn(`Failed to re-index restored chat '${id}'`, e);
+        }
+      }
+
+      log.info(`Restored ${restoredIds.length} of ${chatIds.length} soft-deleted chats`);
+      return restoredIds;
+    } catch (error) {
+      log.error(`Failed to restore chats ${chatIds.join(", ")}`, error);
+      throw new Error(
+        `Failed to restore chats: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /**
    * Hard-deletes one or more chats from the local archive.
    * Performs actual cleanup: removes DB rows, thumbnails, mediaContent, OPFS files, and search index entries.
    * This is called by the Janitor service after the grace period.

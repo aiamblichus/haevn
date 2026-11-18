@@ -37,6 +37,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   getSyncedChatsMetadata: chatHandlers.handleGetSyncedChatsMetadata as HandlerFunction,
   getSyncedChatContent: chatHandlers.handleGetSyncedChatContent as HandlerFunction,
   deleteSyncedChats: chatHandlers.handleDeleteSyncedChats as HandlerFunction,
+  restoreSyncedChats: chatHandlers.handleRestoreSyncedChats as HandlerFunction,
   existsChat: chatHandlers.handleExistsChat as HandlerFunction,
   checkCurrentChatSynced: chatHandlers.handleCheckCurrentChatSynced as HandlerFunction,
   getProviderStats: chatHandlers.handleGetProviderStats as HandlerFunction,

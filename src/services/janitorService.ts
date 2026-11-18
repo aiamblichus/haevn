@@ -8,16 +8,17 @@
  * - OPFS media files
  * - Search index entries
  *
- * The grace period allows for potential "undo" functionality in the future
+ * The grace period is the undo window (the archive's undo toast and ChatRepository.restoreChats)
  * and ensures we don't immediately commit to expensive file operations.
  */
 
+import { SOFT_DELETE_GRACE_MS } from "../types/messaging";
 import { log } from "../utils/logger";
 import { ChatRepository } from "./chatRepository";
 
 // Default grace period: 5 minutes
 // Chats must be soft-deleted for at least this long before permanent cleanup
-const DEFAULT_GRACE_PERIOD_MS = 5 * 60 * 1000;
+const DEFAULT_GRACE_PERIOD_MS = SOFT_DELETE_GRACE_MS;
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace JanitorService {

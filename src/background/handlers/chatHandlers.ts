@@ -75,6 +75,22 @@ export async function handleDeleteSyncedChats(
   }
 }
 
+/** Undo a delete. `chatIds` lists the chats restored; one past its grace period is not among them. */
+export async function handleRestoreSyncedChats(
+  message: Extract<BackgroundRequest, { action: "restoreSyncedChats" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const restoredIds = await ChatService.restoreChatsWithCleanup(message.chatIds || []);
+    sendResponse({ success: true, chatIds: restoredIds });
+  } catch (err: unknown) {
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to restore",
+    });
+  }
+}
+
 export async function handleExistsChat(
   message: Extract<BackgroundRequest, { action: "existsChat" }>,
   sendResponse: (response: BackgroundResponse) => void,
