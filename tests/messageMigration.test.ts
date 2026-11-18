@@ -5,7 +5,6 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
-import * as MetadataRepository from "../src/services/metadataRepository";
 import * as MetadataService from "../src/services/metadataService";
 import { MESSAGE_MIGRATION_FLAG, runMessageMigration } from "../src/services/messageMigration";
 import { resetMemorySqliteHost } from "../src/services/searchIndex";
@@ -304,7 +303,7 @@ describe("the metadata excerpt of a migrated chat (HVN-31)", () => {
   });
 });
 
-describe("the queue ticks wait for the move (HVN-31)", () => {
+describe("the metadata queue holds a chat until its messages have moved (HVN-31)", () => {
   const refused = () =>
     vi
       .spyOn(globalThis, "fetch")
@@ -318,62 +317,70 @@ describe("the queue ticks wait for the move (HVN-31)", () => {
       model: "m",
       categories: [{ name: "travel", description: "trips" }],
     });
-    getStarmapConfig.mockResolvedValue({
-      enabled: true,
-      embeddingsEnabled: true,
-      embeddingUrl: "http://embed.test",
-      embeddingApiKey: "",
-      embeddingModel: "embed-model",
-    });
   });
 
-  it("the metadata tick sends no old-layout chat to the model, and re-arms itself until the move", async () => {
+  it("an old-layout chat stays pending, and the tick goes on to a moved chat behind it", async () => {
+    const fetchSpy = refused();
+    await putLegacy(legacyChat("old", ["the held recipe"]));
+    const moved = { ...message("new", "new-m0", "the moved recipe"), chatId: "new" };
+    await getDB().chatMessages.bulkPut([moved]);
+    await getDB().chats.put(chatRow("new", {}));
+    await getDB().metadataQueue.bulkPut([
+      { chatId: "old", status: "pending", retries: 0, addedAt: 1 },
+      { chatId: "new", status: "pending", retries: 0, addedAt: 2 },
+    ]);
+
+    await MetadataService.processQueueTick();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    expect(body.messages[0].content).toContain("the moved recipe");
+    expect(await getDB().metadataQueue.get("old")).toMatchObject({ status: "pending", retries: 0 });
+  });
+
+  it("a tick with only held chats sends nothing, and looks again at the queue period", async () => {
     const fetchSpy = refused();
     const alarm = vi.spyOn(chrome.alarms, "create");
-    await putLegacy(legacyChat("old", ["the pineapple recipe"]));
+    await putLegacy(legacyChat("old", ["the held recipe"]));
     await getDB().metadataQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
 
     await MetadataService.processQueueTick();
 
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect((await getDB().metadataQueue.get("old"))?.status).toBe("pending");
+    expect(await getDB().metadataQueue.get("old")).toMatchObject({ status: "pending", retries: 0 });
     expect(alarm).toHaveBeenCalledWith(
       MetadataService.METADATA_PROCESS_ALARM,
       expect.objectContaining({ delayInMinutes: 5 }),
     );
-
-    await runMessageMigration();
-    await MetadataService.processQueueTick();
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
-    expect(body.messages[0].content).toContain("the pineapple recipe");
   });
 
-  it("the embedding tick leaves a chat's embedding pending until the move", async () => {
+  it("generateOnRequest answers with the move message for an old-layout chat, and writes nothing", async () => {
     const fetchSpy = refused();
-    await putLegacy(legacyChat("old", ["the pineapple recipe"]));
-    await MetadataRepository.set("old", {
-      title: "Pineapples",
-      description: "a recipe",
-      synopsis: "pineapple",
-      categories: ["travel"],
-      keywords: [],
-      source: "ai",
-      generatedAt: 1,
-      updatedAt: 1,
-    });
-    await getDB().embeddingQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
+    await putLegacy(legacyChat("old", ["the held recipe"]));
+    await getDB().metadataQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
 
-    await MetadataService.processEmbeddingQueueTick();
+    await expect(MetadataService.generateOnRequest("old")).rejects.toThrow(
+      "still being moved to the new layout; try again in a minute",
+    );
 
-    // Untouched: not sent, not marked processing, and no failed attempt counted
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(await getDB().embeddingQueue.get("old")).toMatchObject({ status: "pending", retries: 0 });
+    expect(await getDB().chatMetadata.get("old")).toBeUndefined();
+    expect(await getDB().metadataQueue.get("old")).toMatchObject({ status: "pending", retries: 0 });
+  });
 
+  it("after the move, the tick and the request both generate from the messages", async () => {
+    const fetchSpy = refused();
+    await putLegacy(legacyChat("old", ["the moved recipe"]));
+    await getDB().metadataQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
     await runMessageMigration();
-    await MetadataService.processEmbeddingQueueTick();
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await MetadataService.processQueueTick();
+    await expect(MetadataService.generateOnRequest("old")).rejects.toThrow("LLM API error 500");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    for (const call of fetchSpy.mock.calls) {
+      const body = JSON.parse(String(call[1]?.body));
+      expect(body.messages[0].content).toContain("the moved recipe");
+    }
   });
 });

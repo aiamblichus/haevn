@@ -2,6 +2,7 @@ import { Type } from "@sinclair/typebox";
 import objectHash from "object-hash";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
+import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
 import type {
   ChatEmbeddingRecord,
@@ -11,7 +12,6 @@ import type {
   StoredChatMessage,
 } from "./db";
 import { getDB } from "./db";
-import { isMessageMigrationDone } from "./messageMigrationFlag";
 import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
 import { getMetadataAIConfig, getStarmapConfig } from "./settingsService";
@@ -254,6 +254,14 @@ export async function setManualMetadata(
  * Process one pending metadata queue item. Called by the alarm listener.
  * Reschedules the alarm if more items remain.
  */
+/**
+ * Whether a chat row still holds its messages inline. The move of messages into their table
+ * (HVN-31) has not reached such a chat, and an excerpt read from the table would be empty.
+ */
+function isHeldForMove(chat: Chat | undefined): boolean {
+  return Object.keys(chat?.messages ?? {}).length > 0;
+}
+
 export async function processQueueTick(): Promise<void> {
   const db = getDB();
   const config = await getMetadataAIConfig();
@@ -263,22 +271,24 @@ export async function processQueueTick(): Promise<void> {
     return;
   }
 
-  // A chat saved before v17 keeps its messages in its row until the move runs (HVN-31), so its
-  // excerpt would be empty. The tick waits for the move. The alarm is one-shot, so the tick re-arms
-  // it for the queue period, or the queue would stall until something else scheduled a tick.
-  if (!(await isMessageMigrationDone())) {
-    if ((await db.metadataQueue.where("status").equals("pending").count()) > 0) {
-      chrome.alarms.create(METADATA_PROCESS_ALARM, {
-        delayInMinutes: METADATA_QUEUE_PERIOD_MINUTES,
-      });
-    }
+  const pending = await db.metadataQueue.where("status").equals("pending").sortBy("addedAt");
+  if (pending.length === 0) {
+    await chrome.alarms.clear(METADATA_PROCESS_ALARM);
     return;
   }
 
-  const item = (await db.metadataQueue.where("status").equals("pending").sortBy("addedAt"))[0];
-
+  // The first pending chat whose messages are in their table. A held chat keeps its place and its
+  // retries, and the tick goes on to the next one.
+  let item: MetadataQueueRecord | undefined;
+  for (const candidate of pending) {
+    if (!isHeldForMove(await db.chats.get(candidate.chatId))) {
+      item = candidate;
+      break;
+    }
+  }
   if (!item) {
-    await chrome.alarms.clear(METADATA_PROCESS_ALARM);
+    // Every pending chat is held: look again at the queue period, not on every tick
+    chrome.alarms.create(METADATA_PROCESS_ALARM, { delayInMinutes: METADATA_QUEUE_PERIOD_MINUTES });
     return;
   }
 
@@ -513,16 +523,6 @@ export async function processEmbeddingQueueTick(): Promise<void> {
     }
 
     await syncMetadataQueueAlarms();
-    return;
-  }
-
-  // Waits for the move as the metadata tick does (HVN-31), and re-arms its one-shot alarm.
-  if (!(await isMessageMigrationDone())) {
-    if ((await db.embeddingQueue.where("status").equals("pending").count()) > 0) {
-      chrome.alarms.create(EMBEDDING_PROCESS_ALARM, {
-        delayInMinutes: EMBEDDING_QUEUE_PERIOD_MINUTES,
-      });
-    }
     return;
   }
 
@@ -786,6 +786,12 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
   const chat = await getDB().chats.get(chatId);
   if (!chat) throw new Error(`Chat ${chatId} not found`);
+  // Written with an empty excerpt otherwise (HVN-31): the request is refused until the move reaches it
+  if (isHeldForMove(chat)) {
+    throw new Error(
+      "This chat's messages are still being moved to the new layout; try again in a minute",
+    );
+  }
 
   const messages = await getDB().chatMessages.where("chatId").equals(chatId).toArray();
 
