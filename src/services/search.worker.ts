@@ -41,15 +41,15 @@ function toMessageDict(rows: ChatMessage[]): Record<string, ChatMessage> {
   return Object.fromEntries(rows.map((row) => [row.id, row]));
 }
 
+/**
+ * The chats with their messages from the `chatMessages` table. A row's own `messages` is never
+ * read: a chat with none in the table has none (HVN-31).
+ */
 async function attachMessages(chats: Chat[]): Promise<Chat[]> {
   const chatIds = chats.map((chat) => chat.id).filter((id): id is string => !!id);
-  if (chatIds.length === 0) return chats;
+  if (chatIds.length === 0) return chats.map((chat) => ({ ...chat, messages: {} }));
 
   const rows = await db.chatMessages.where("chatId").anyOf(chatIds).toArray();
-  if (rows.length === 0) {
-    return chats;
-  }
-
   const byChatId = new Map<string, ChatMessage[]>();
   for (const row of rows) {
     const current = byChatId.get(row.chatId);
@@ -60,31 +60,19 @@ async function attachMessages(chats: Chat[]): Promise<Chat[]> {
     }
   }
 
-  return chats.map((chat) => {
-    const migratedRows = chat.id ? byChatId.get(chat.id) : undefined;
-    if (!migratedRows || migratedRows.length === 0) {
-      return chat;
-    }
-    return {
-      ...chat,
-      messages: toMessageDict(migratedRows),
-    };
-  });
+  return chats.map((chat) => ({
+    ...chat,
+    messages: toMessageDict(chat.id ? (byChatId.get(chat.id) ?? []) : []),
+  }));
 }
 
-/** The chat row, with its messages from the `chatMessages` table when they were migrated there. */
+/** The chat row, with its messages from the `chatMessages` table (see attachMessages). */
 async function attachMessageRows(chat: Chat): Promise<Chat> {
-  const migratedRows = await db.chatMessages
+  const rows = await db.chatMessages
     .where("chatId")
     .equals(chat.id as string)
     .toArray();
-  if (migratedRows.length === 0) {
-    return chat;
-  }
-  return {
-    ...chat,
-    messages: toMessageDict(migratedRows),
-  };
+  return { ...chat, messages: toMessageDict(rows) };
 }
 
 async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {

@@ -106,8 +106,7 @@ export const haevnDebug = {
     console.log(`Debug: Fetching chat ${chatId}...`);
     const chat = await db.chats.get(chatId);
     if (chat) {
-      const storedRows = await db.chatMessages.where("chatId").equals(chatId).toArray();
-      const messages = storedRows.length > 0 ? storedRows : Object.values(chat.messages || {});
+      const messages = await db.chatMessages.where("chatId").equals(chatId).toArray();
       console.log("Chat found:", chat);
       console.log(`  Title: ${chat.title}`);
       console.log(`  Source: ${chat.source}`);

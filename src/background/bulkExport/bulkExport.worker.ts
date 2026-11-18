@@ -259,9 +259,10 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
       }
     : undefined;
 
+  // The messages are the table's: a row's own `messages` is not read (HVN-31)
   return {
     ...chat,
-    ...(rows.length > 0 ? { messages: toMessageDict(rows) } : {}),
+    messages: toMessageDict(rows),
     ...(haevnMetadata ? { haevnMetadata } : {}),
   };
 }

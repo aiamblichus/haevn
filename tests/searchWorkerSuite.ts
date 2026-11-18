@@ -149,8 +149,18 @@ function buildChat(id: string, text: string): Chat {
   };
 }
 
+/** Chats as a save writes them: the messages in their table, and the row with none (HVN-31). */
 async function seedChats(chats: Chat[]): Promise<void> {
-  await getDB().chats.bulkPut(chats);
+  const db = getDB();
+  await db.transaction("rw", db.chats, db.chatMessages, async () => {
+    for (const chat of chats) {
+      const chatId = chat.id as string;
+      await db.chatMessages.where("chatId").equals(chatId).delete();
+      const rows = Object.values(chat.messages || {}).map((message) => ({ ...message, chatId }));
+      if (rows.length > 0) await db.chatMessages.bulkPut(rows);
+      await db.chats.put({ ...chat, messages: {} });
+    }
+  });
 }
 
 beforeEach(async () => {

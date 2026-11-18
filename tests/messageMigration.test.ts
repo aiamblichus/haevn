@@ -255,6 +255,19 @@ describe("moving messages out of chat rows (HVN-31)", () => {
   });
 });
 
+describe("what the index reads of a chat (HVN-31)", () => {
+  it("indexes the table's messages, and not the messages a row still carries inline", async () => {
+    await putLegacy(legacyChat("old", ["a pineapple on pizza"]));
+    const tart = { ...message("new", "new-m0", "a pineapple tart"), chatId: "new" };
+    await getDB().chatMessages.bulkPut([tart]);
+    await getDB().chats.put(chatRow("new", {}));
+
+    await toWorker.send?.({ type: "rebuild" });
+
+    expect(await search("pineapple")).toEqual(["new"]);
+  });
+});
+
 describe("the metadata excerpt of a migrated chat (HVN-31)", () => {
   it("carries the chat's messages, which generateForChat reads from the table", async () => {
     getMetadataAIConfig.mockResolvedValue({

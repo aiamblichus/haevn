@@ -393,16 +393,10 @@ export namespace ChatRepository {
     }
   }
 
+  /** A chat's messages, from the chatMessages table; a row's own `messages` is never read (HVN-31). */
   export async function getChatMessages(chatId: string): Promise<Record<string, ChatMessage>> {
-    const db = getDB();
-    const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
-    if (rows.length > 0) {
-      return toMessageDict(rows);
-    }
-
-    // Legacy fallback while lazy migration is still in-progress.
-    const chat = await db.chats.get(chatId);
-    return (chat?.messages || {}) as Record<string, ChatMessage>;
+    const rows = await getDB().chatMessages.where("chatId").equals(chatId).toArray();
+    return toMessageDict(rows);
   }
 
   export async function getChatWithMessages(chatId: string): Promise<Chat | undefined> {
@@ -457,13 +451,7 @@ export namespace ChatRepository {
   }
 
   export async function getChatMessageCount(chatId: string): Promise<number> {
-    const db = getDB();
-    const migratedCount = await db.chatMessages.where("chatId").equals(chatId).count();
-    if (migratedCount > 0) {
-      return migratedCount;
-    }
-    const chat = await db.chats.get(chatId);
-    return Object.keys(chat?.messages || {}).length;
+    return getDB().chatMessages.where("chatId").equals(chatId).count();
   }
 
   export async function saveChatMessages(
