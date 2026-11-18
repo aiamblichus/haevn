@@ -134,10 +134,12 @@ async function attachMessages(chats: Chat[]): Promise<Chat[]> {
   });
 }
 
-async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
-  const chat = await db.chats.get(chatId);
-  if (!chat) return undefined;
-  const migratedRows = await db.chatMessages.where("chatId").equals(chatId).toArray();
+/** The chat row, with its messages from the `chatMessages` table when they were migrated there. */
+async function attachMessageRows(chat: Chat): Promise<Chat> {
+  const migratedRows = await db.chatMessages
+    .where("chatId")
+    .equals(chat.id as string)
+    .toArray();
   if (migratedRows.length === 0) {
     return chat;
   }
@@ -145,6 +147,11 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
     ...chat,
     messages: toMessageDict(migratedRows),
   };
+}
+
+async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
+  const chat = await db.chats.get(chatId);
+  return chat ? attachMessageRows(chat) : undefined;
 }
 
 // --- Global State ---
@@ -1257,12 +1264,15 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           let wasLimited = false;
 
           for (const r of lunrResults) {
-            const chat = await loadChatWithMessages(r.ref);
-            if (!chat) continue;
-            if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
+            // The row and the metadata say whether the chat is a result; its messages are read
+            // only for the ones that are, so a filter few chats pass does not read them all.
+            const row = await db.chats.get(r.ref);
+            if (!row) continue;
+            if (filterProvider && filterProvider !== "all" && row.source !== filterProvider) {
               continue;
             }
-            if (!(await chatPassesFilters(chat, filters))) continue;
+            if (!(await chatPassesFilters(row, filters))) continue;
+            const chat = await attachMessageRows(row);
 
             const snippets = needsExactPhraseHydration
               ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })

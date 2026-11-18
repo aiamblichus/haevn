@@ -33,6 +33,7 @@ const workerDbs = vi.hoisted(
     [] as Array<{
       lunrIndex: { put: (...a: unknown[]) => unknown };
       chats: { offset: (n: number) => unknown };
+      chatMessages: { where: (...a: unknown[]) => unknown };
     }>,
 );
 vi.mock("../src/services/db", async (importOriginal) => {
@@ -1642,6 +1643,16 @@ describe("search worker: the limit counts chats (HVN-77)", () => {
       expect(chatsOf(results)).toHaveLength(1);
       expect(chatsOf(results)[0]).toMatch(/^old/);
       expect(wasLimited).toBe(true);
+    });
+
+    it("reads the messages of the chats that pass the filter, and of no other", async () => {
+      await index(...crowd());
+      const messageReads = vi.spyOn(workerDbs[workerDbs.length - 1].chatMessages, "where");
+
+      const { results } = await limited({ filters: { after: NOW - DAY } });
+
+      expect(chatsOf(results)).toEqual(["new"]);
+      expect(messageReads).toHaveBeenCalledTimes(1);
     });
 
     describe("by category", () => {
