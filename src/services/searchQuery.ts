@@ -1,3 +1,5 @@
+import { wordBounds } from "./searchSnippet";
+
 export type ParsedQuery = {
   phrases: string[];
   terms: string[];
@@ -5,6 +7,16 @@ export type ParsedQuery = {
 
 export function normalizeSearchToken(value: string): string {
   return value.trim().toLowerCase();
+}
+
+/**
+ * A query term without the punctuation typed against it (`wombat,` is `wombat`): the index trims
+ * the words of the text the same way (`wordBounds`), so a term that keeps its comma matches
+ * nothing the index holds and no text that has the word bare (HVN-71).
+ */
+export function trimSearchTerm(term: string): string {
+  const { start, end } = wordBounds(term);
+  return term.slice(start, end);
 }
 
 export function normalizeSearchText(value: string): string {
@@ -51,7 +63,7 @@ export function parseSearchQuery(query: string): ParsedQuery {
   const terms: string[] = [];
 
   for (const rawTerm of cleaned.split(/\s+/)) {
-    const normalized = normalizeSearchToken(rawTerm);
+    const normalized = trimSearchTerm(normalizeSearchToken(rawTerm));
     if (normalized && !seen.has(normalized)) {
       seen.add(normalized);
       terms.push(normalized);

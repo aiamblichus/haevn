@@ -22,7 +22,7 @@ import {
   INDEX_FORMAT_VERSION,
 } from "./searchPipeline";
 import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
-import { buildSnippet, type TextRange, trimToWord } from "./searchSnippet";
+import { buildSnippet, lowerCaseRangeMapper, type TextRange, trimToWord } from "./searchSnippet";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 import {
   buildLunrQueryPlan,
@@ -322,6 +322,19 @@ async function loadSegments(): Promise<void> {
       // Nothing is stored in an old format, so a first run needs no rebuild for it; a chat that
       // exists without an index is found by the count check.
       await stampIndexFormat();
+      activeSegmentId = "segment_0";
+      segments.set("segment_0", createNewSegment("segment_0"));
+      return;
+    }
+
+    if (storedFormat !== INDEX_FORMAT_VERSION) {
+      // The consistency check forces a rebuild for this, and the rebuild clears what is stored:
+      // deserializing the segments and rehydrating the active one would only spend the time of
+      // init's window on a large archive (HVN-71). Start empty; the format record is left as it
+      // is, so the check still sees it stale.
+      log.info(
+        `[SearchWorker] ${segmentKeys.length} stored segments are in format ${storedFormat ?? "unrecorded"}, not ${INDEX_FORMAT_VERSION}. Not loading them; a rebuild replaces them.`,
+      );
       activeSegmentId = "segment_0";
       segments.set("segment_0", createNewSegment("segment_0"));
       return;
@@ -812,7 +825,14 @@ function generateSnippets(
   // marks the hits that fall in that part.
   const msgHits = new Map<string, { entry: SourceMapEntry; hits: TextRange[] }>();
 
-  for (const [posStart, posLen] of positions) {
+  // The positions are in the lower-cased text; the source map and the snippet are in the text as
+  // written, and the two differ in length for an "İ" (HVN-57).
+  const toWritten = lowerCaseRangeMapper(fullText);
+
+  for (const [lowerStart, lowerLen] of positions) {
+    const { start: posStart, length: posLen } = toWritten
+      ? toWritten({ start: lowerStart, length: lowerLen })
+      : { start: lowerStart, length: lowerLen };
     const entry = sourceMap.find((m) => posStart >= m[0] && posStart < m[0] + m[1]);
     if (!entry) continue;
     const found = msgHits.get(entry[2]);

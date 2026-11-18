@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
 
+// A heavy file: every test re-imports the worker and most run full index rebuilds, so the 5 s
+// default fails it on a loaded machine while it passes alone (HVN-70). The other files keep it.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -945,6 +949,53 @@ describe("search worker: snippets hold and mark the match (HVN-20)", () => {
     expect(result.messageSnippet).toContain("{{HIGHLIGHT}}running{{/HIGHLIGHT}}, late");
   });
 
+  // Lunr reports positions in the lower-cased text, where "İ" is two units (HVN-57).
+  it("holds a match that follows text whose lower case is longer", async () => {
+    await indexTurn("dotted", "question", `${"İ".repeat(80)} pineapple`);
+
+    const [result] = await snippetsFor("pineapple");
+
+    expect(result.messageRole).toBe("assistant");
+    expect(result.messageSnippet).toContain(MARK);
+  });
+
+  it("marks the word, not its neighbours, when İ comes before it in the same message", async () => {
+    await indexTurn(
+      "dotted2",
+      "question",
+      `${"İ".repeat(30)} ${filler(40)} pineapple ${filler(80)}`,
+    );
+
+    const [result] = await snippetsFor("pineapple", 15);
+
+    expect(result.messageSnippet).toContain(`${MARK} lorem`);
+    expect(result.messageSnippet.split(MARK)).toHaveLength(2);
+  });
+
+  it("finds the right message when an earlier one has İ", async () => {
+    const chat = buildTurn("dotted3", "question", "answer");
+    const message = chat.messages["dotted3-m1"];
+    message.message = [
+      {
+        kind: "request",
+        parts: [{ part_kind: "user-prompt", content: "İ".repeat(60), timestamp: "t" }],
+      },
+      {
+        kind: "response",
+        parts: [{ part_kind: "text", content: "a pineapple here" }],
+        timestamp: "t",
+      },
+    ] as ChatMessage["message"];
+    await seedChats([chat]);
+    await send({ type: "rebuild" });
+
+    const results = await snippetsFor("pineapple");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].messageRole).toBe("assistant");
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
   it("holds and marks a match in multi-byte text", async () => {
     await indexTurn("cjk", "question", `${"字".repeat(300)} pineapple ${"字".repeat(300)}`);
 
@@ -1015,6 +1066,24 @@ describe("search worker: punctuation and scripts in the index (HVN-65)", () => {
     await indexChats(["comma", "I saw a wombat, then left"], ["plain", "a wombat sat down"]);
 
     expect(await ids("wombat,")).toEqual(["comma", "plain"]);
+  });
+
+  it("finds the chats that have the word bare when the search is typed with punctuation, hydrated too (HVN-71)", async () => {
+    await indexChats(["comma", "I saw a wombat, then left"], ["plain", "a wombat sat down"]);
+
+    expect([...new Set((await hydrated("wombat,")).map((r) => r.chatId))].sort()).toEqual([
+      "comma",
+      "plain",
+    ]);
+    const plain = (await hydrated("(wombat),")).find((r) => r.chatId === "plain");
+    expect(marksOf(plain?.messageSnippet ?? "", "wombat")).toBe(1);
+  });
+
+  it("falls back to the prefix of a word typed with punctuation after it (HVN-71)", async () => {
+    await indexChats(["run", "we were running late"], ["other", "a wombat sat down"]);
+
+    expect(await ids("runn,")).toEqual(["run"]);
+    expect((await hydrated("runn,")).map((r) => r.chatId)).toEqual(["run"]);
   });
 
   it("finds a quoted phrase that has punctuation after it", async () => {
@@ -1122,6 +1191,24 @@ describe("search worker: the index format version (HVN-65)", () => {
     await restart();
     expect(rebuilds()).toBe(0);
     expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+  });
+
+  it("does not load the stored segments of another version, which the rebuild discards (HVN-71)", async () => {
+    await seedOldArchive();
+    const load = vi.spyOn(lunr.Index, "load");
+    await loadWorker();
+
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+
+    expect(rebuilds()).toBe(1);
+    expect(load).not.toHaveBeenCalled();
+    expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+
+    // The control: a start on the index that rebuild wrote does load it.
+    await restart();
+    expect(rebuilds()).toBe(0);
+    expect(load).toHaveBeenCalled();
   });
 
   it("tells a search that comes right after the start that the index is rebuilding", async () => {

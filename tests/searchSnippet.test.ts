@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildSnippet, type TextRange, trimToWord } from "../src/services/searchSnippet";
+import {
+  buildSnippet,
+  lowerCaseRangeMapper,
+  type TextRange,
+  trimToWord,
+} from "../src/services/searchSnippet";
 
 /** Where each occurrence of `word` starts, as ranges. */
 function rangesOf(text: string, word: string): TextRange[] {
@@ -193,5 +198,53 @@ describe("trimToWord", () => {
 
   it("leaves a range of nothing but punctuation as it was", () => {
     expect(trimToWord("a ++ b", { start: 2, length: 2 })).toEqual({ start: 2, length: 2 });
+  });
+});
+
+describe("lowerCaseRangeMapper (HVN-57)", () => {
+  // What lunr reports for a word: its place in the lower-cased text, where "İ" is two units.
+  const lowerRangeOf = (text: string, word: string): TextRange => ({
+    start: text.toLowerCase().indexOf(word),
+    length: word.length,
+  });
+
+  it("needs no mapping for text whose lower case is as long", () => {
+    expect(lowerCaseRangeMapper("Hello WORLD, ÄÖ 字 😀")).toBeNull();
+  });
+
+  it("moves a range back over every İ before it", () => {
+    const text = `${"İ".repeat(80)} pineapple`;
+    const map = lowerCaseRangeMapper(text);
+
+    expect(lowerRangeOf(text, "pineapple").start).toBe(161);
+    expect(map?.(lowerRangeOf(text, "pineapple"))).toEqual({ start: 81, length: 9 });
+  });
+
+  it("takes the whole of an İ that the range starts or ends inside", () => {
+    const map = lowerCaseRangeMapper("aİb");
+
+    // lower case: "a", "i", U+0307, "b"
+    expect(map?.({ start: 1, length: 1 })).toEqual({ start: 1, length: 1 });
+    expect(map?.({ start: 2, length: 1 })).toEqual({ start: 1, length: 1 });
+    expect(map?.({ start: 1, length: 3 })).toEqual({ start: 1, length: 2 });
+    expect(map?.({ start: 3, length: 1 })).toEqual({ start: 2, length: 1 });
+  });
+
+  it("counts a character outside the BMP as the two units it is", () => {
+    const text = "😀 İ 😀 pineapple";
+    const map = lowerCaseRangeMapper(text);
+
+    const mapped = map?.(lowerRangeOf(text, "pineapple")) ?? { start: -1, length: 0 };
+    expect(text.slice(mapped.start, mapped.start + mapped.length)).toBe("pineapple");
+  });
+
+  it("marks the word in a snippet of text with an İ before it", () => {
+    const text = `İstanbul İzmir ${filler(40)} pineapple ${filler(40)}`;
+    const map = lowerCaseRangeMapper(text);
+    const range = map?.(lowerRangeOf(text, "pineapple"));
+
+    expect(buildSnippet(text, range ? [range] : [], { radius: 10 })).toContain(
+      "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}",
+    );
   });
 });
