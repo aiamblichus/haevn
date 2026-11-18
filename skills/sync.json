@@ -1,6 +1,7 @@
 [
-  { "note": "/project/haevn/skills/dev-guide", "file": "dev-guide/SKILL.md", "name": "dev-guide", "frontmatter": true },
-  { "note": "/project/haevn/skills/dev-guide-reference", "file": "dev-guide/REFERENCE.md", "frontmatter": false },
-  { "note": "/project/haevn/skills/dev-guide-extending", "file": "dev-guide/EXTENDING.md", "frontmatter": false },
-  { "note": "/project/haevn/skills/haevn-cli", "file": "haevn-cli/SKILL.md", "name": "haevn-cli", "frontmatter": true }
+  {"note": "/project/haevn/skills/dev-guide", "file": "dev-guide/SKILL.md", "name": "dev-guide", "frontmatter": true},
+  {"note": "/project/haevn/skills/dev-guide-reference", "file": "dev-guide/REFERENCE.md", "frontmatter": false},
+  {"note": "/project/haevn/skills/dev-guide-extending", "file": "dev-guide/EXTENDING.md", "frontmatter": false},
+  {"note": "/project/haevn/skills/haevn-cli", "file": "haevn-cli/SKILL.md", "name": "haevn-cli", "frontmatter": true},
+  {"note": "/project/haevn/skills/browser-check", "file": "browser-check/SKILL.md", "name": "browser-check", "frontmatter": true}
 ]

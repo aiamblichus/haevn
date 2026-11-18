@@ -23,6 +23,7 @@ Do **not** use the old relay/HTTP bridge workflow.
 3. Prefer deterministic checks (exact state queries) over visual assumptions.
 4. After code changes: rebuild, reload extension, verify behavior in UI and via state queries.
 5. If there is a mismatch between UI and data, trust direct data queries first (`haevnDebug`, DB, storage, logs).
+- Which browser to use, how to reach it, fixtures and the known traps: the `browser-check` skill (`skills/browser-check/SKILL.md`). Checks run in the dev profile (`chrome-devtools-haevn`), never in αιamblichus's own browser (`chrome-devtools`) without his say-so.
 
 ## Core Runtime Entry Point
 

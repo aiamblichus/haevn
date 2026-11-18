@@ -16,6 +16,7 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | Architecture | `gnomon read /project/haevn/architecture/index` |
 | Product: who it is for, what is in and out | `gnomon read /project/haevn/product/index` |
 | Run, drive and debug the extension | `skills/dev-guide/SKILL.md` (Chrome MCP + `haevnDebug`) |
+| See a change run in a real browser: the dev and prod Chrome profiles, their MCP servers, fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
 | The CLI | `skills/haevn-cli/SKILL.md`, `cli/README.md` |
 | Current work | `gnomon ticket view working --namespace HVN`, `gnomon ticket view active --namespace HVN` |
 | Blocked on a human | `gnomon ticket view needs_human --namespace HVN` |
@@ -56,7 +57,7 @@ Known gaps, each with a ticket rather than a workaround:
 
 - The root has no typecheck in the gate yet. `npx tsc --noEmit --jsx react-jsx` is clean; plain `npx tsc --noEmit` still reports errors in the TSX files, because `tsconfig.json` says `"jsx": "react"` while esbuild builds with the automatic runtime (HVN-8, then HVN-46 puts `pnpm run typecheck` in CI). Until then, run the `--jsx react-jsx` form by hand.
 
-CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension (`skills/dev-guide/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension, in the dev profile (`skills/browser-check/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
 
 ## Commits and releases
 
@@ -68,8 +69,8 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 ## Generated and local-only
 
 - Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
-- `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` is a symlink to `skills/dev-guide`.
-- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`. Nothing there is shared or backed up.
+- `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` and `.claude/skills/browser-check` are symlinks to their `skills/` folders, so Claude Code loads them.
+- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`, `.mcp.json` (the browser MCP servers; its contents are in the `browser-check` skill). Nothing there is shared or backed up.
 - Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
 
 ---
