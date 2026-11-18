@@ -6,8 +6,10 @@ import { wordBounds } from "./searchSnippet";
  * when this is the version it was built with; any other (older, newer, or none written) is
  * rebuilt once (HVN-65). Raise it when the pipeline or the fields change what the index holds.
  *   1: terms are trimmed of punctuation (before it, a term kept its comma and its brackets).
+ *   2: one builder makes the text of every chat, and it no longer stops at 100,000 characters
+ *      (before it, a chat added on its own kept its line breaks and a rebuilt one lost its end).
  */
-export const INDEX_FORMAT_VERSION = 1;
+export const INDEX_FORMAT_VERSION = 2;
 
 const TRIMMER_LABEL = "haevnTrimmer";
 

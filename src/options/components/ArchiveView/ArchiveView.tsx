@@ -33,6 +33,8 @@ interface ArchiveViewProps {
   /** Set when the last search found the index being rebuilt (it did not run). */
   searchIndexRebuild: SearchIndexRebuildStatus | null;
   searchIndexIncomplete: SearchIndexIncompleteStatus | null;
+  /** More chats matched than the search returned. */
+  searchLimited: boolean;
   selectedIds: Set<string>;
   filterProvider: string;
   setFilterProvider: (provider: string) => void;
@@ -83,6 +85,13 @@ const NoSearchResults = ({ rebuild }: { rebuild: SearchIndexRebuildStatus | null
     <p className="text-sm text-slate-500">No results.</p>
   );
 
+/** The last line of the search results when more chats matched than the search returned. */
+const MoreResultsNote = () => (
+  <p role="status" className="text-sm text-slate-500">
+    More results match than are listed here. Add a word to narrow the search.
+  </p>
+);
+
 /** Shown above search results after a failed index rebuild: the list may be missing chats. */
 const IndexIncompleteNotice = () => (
   <div
@@ -104,6 +113,7 @@ export const ArchiveView = ({
   isSearching,
   searchIndexRebuild,
   searchIndexIncomplete,
+  searchLimited,
   selectedIds,
   filterProvider,
   setFilterProvider,
@@ -434,6 +444,9 @@ export const ArchiveView = ({
                         }
                       />
                     ))}
+                    {searchLimited && searchPage * searchPageSize >= searchTotalGroups && (
+                      <MoreResultsNote />
+                    )}
                   </div>
                 </div>
                 <div className="flex-shrink-0 mt-2">

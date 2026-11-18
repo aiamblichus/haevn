@@ -46,7 +46,7 @@ haevn search "api design" --after 2024-01-01 --format json
 
 Options:
 - `-p, --platform <name>` - Filter by platform (claude, chatgpt, gemini, etc.)
-- `-l, --limit <n>` - Max chats to scan (default: 20)
+- `-l, --limit <n>` - Max chats to return (default: 20), with at most 4 matching messages from each. `--platform`, `--category`, `--after` and `--before` narrow the chats first, so the limit counts the chats that pass them. When more chats matched, the text output ends with a line saying so and the JSON has `"hasMore": true`
 - `-c, --context <chars>` - Context on each side of a match (default: 120); a result shows up to three such passages when matches are far apart
 - `-f, --format <fmt>` - Output format (text, json)
 - `--no-metadata` - Skip chat metadata in output (default includes metadata)
@@ -68,15 +68,15 @@ haevn search '"you may not recognize me"'
 
 When you run an unquoted multi-word query, CLI text output shows a tip, and JSON output includes a top-level `hint` field.
 
-HAEVN uses **Lunr.js** query syntax with these operators:
+HAEVN reads these operators itself (it does not pass the query to Lunr.js as typed). Nothing else is syntax: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
 
 | Operator | Example | Description |
 |----------|---------|-------------|
 | (none) | `term1 term2` | Multi-term query (default term matching) |
 | `"..."` | `"exact phrase"` | Phrase must appear consecutively |
-| `-` | `-exclude` | Term must NOT be present |
-| `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, etc. |
-| `~` | `roam~2` | Fuzzy match with edit distance 2 |
+| `-` | `-exclude` | Word must NOT be present. A phrase cannot be left out: `-"a phrase"` exits 1 with the reason |
+| `*` | `react*` | Prefix at the end of a word: matches `react`, `reactive`, etc. A star inside a word splits it, like a hyphen |
+| `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 (a larger number counts as 2) |
 | `^` | `api^10` | Boost term relevance |
 
 **Examples:**
@@ -101,7 +101,9 @@ haevn search "async* await*"
 haevn search "api^5 design documentation"
 ```
 
-If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics).
+If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics) on the words that say something: stop words such as `how` or `should` are left out of the retry.
+
+A query with nothing to look for (only words to leave out, no words at all, or a phrase typed to be left out) exits 1 with the reason instead of printing no results.
 
 ### `get` - Fetch a chat branch
 

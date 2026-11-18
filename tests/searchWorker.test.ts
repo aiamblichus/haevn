@@ -12,12 +12,28 @@ vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// SearchIndexManager reaches the worker through the offscreen document; these tests give it the
+// worker itself, so an add is the message the manager really sends (HVN-76).
+const toWorker = vi.hoisted(() => ({
+  send: undefined as undefined | ((message: unknown) => Promise<void>),
+}));
+vi.mock("../src/utils/workerApi", () => ({
+  sendWorkerRequest: async (_worker: string, message: unknown) => {
+    await toWorker.send?.(message);
+    return undefined;
+  },
+}));
+vi.mock("../src/background/utils/offscreenUtils", () => ({
+  ensureOffscreenDocument: async () => undefined,
+}));
+
 // The worker opens its own database; keep each one so a test can make its writes fail.
 const workerDbs = vi.hoisted(
   () =>
     [] as Array<{
       lunrIndex: { put: (...a: unknown[]) => unknown };
       chats: { offset: (n: number) => unknown };
+      chatMessages: { where: (...a: unknown[]) => unknown };
     }>,
 );
 vi.mock("../src/services/db", async (importOriginal) => {
@@ -48,6 +64,7 @@ async function loadWorker(): Promise<void> {
   workerSelf = { postMessage: (message) => posted.push(message) };
   vi.stubGlobal("self", workerSelf);
   await import("../src/services/search.worker");
+  toWorker.send = (message) => send(message as Record<string, unknown>);
 }
 
 function send(message: Record<string, unknown>): Promise<void> {
@@ -415,13 +432,18 @@ describe("search worker: init and the rebuild it starts (HVN-50)", () => {
 });
 
 describe("search worker: timers and a second request around a rebuild (HVN-50)", () => {
-  const doc = { id: "stale", title: "Stale", content: "pineapple" };
+  const staleId = "stale";
 
   it("drops the debounce timer of an earlier add when a rebuild starts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      await seedChats([buildChat("c1", "pineapple"), buildChat("c2", "pineapple")]);
-      await send({ type: "add", doc });
+      await seedChats([
+        buildChat("c1", "pineapple"),
+        buildChat("c2", "pineapple"),
+        buildChat(staleId, "pineapple"),
+      ]);
+      await send({ type: "add", chatId: staleId });
+      await getDB().chats.delete(staleId); // gone by the time the rebuild reads
       expect(vi.getTimerCount()).toBe(1);
 
       const rebuild = send({ type: "rebuild" });
@@ -446,7 +468,7 @@ describe("search worker: timers and a second request around a rebuild (HVN-50)",
       await seedChats([buildChat("c1", "pineapple")]);
 
       const rebuild = send({ type: "rebuild" });
-      await send({ type: "add", doc });
+      await send({ type: "add", chatId: staleId });
       expect(vi.getTimerCount()).toBe(0);
 
       await settle(rebuild);
@@ -458,7 +480,8 @@ describe("search worker: timers and a second request around a rebuild (HVN-50)",
   it("still debounces an add when no rebuild is running", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      await send({ type: "add", doc });
+      await seedChats([buildChat(staleId, "pineapple")]);
+      await send({ type: "add", chatId: staleId });
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -694,7 +717,7 @@ describe("search worker: an add or a remove during an index rebuild (HVN-54)", (
   /** What a save does: write the row, then send the add. */
   async function rewriteAndAdd(id: string, text: string): Promise<void> {
     await seedChats([buildChat(id, text)]);
-    await send({ type: "add", doc: { id, title: `Chat ${id}`, content: text } });
+    await send({ type: "add", chatId: id });
   }
 
   it("indexes a chat written after the rebuild counted the chats", async () => {
@@ -1243,7 +1266,7 @@ describe("search worker: the index format version (HVN-65)", () => {
     // The chats that arrive later are indexed into the current format, so the next start has
     // nothing to rebuild.
     await seedChats([buildChat("late", "a wombat")]);
-    await send({ type: "add", doc: { id: "late", title: "Chat late", content: "a wombat" } });
+    await send({ type: "add", chatId: "late" });
     await send({ type: "endBulk" });
     await restart();
     expect(rebuilds()).toBe(0);
@@ -1282,5 +1305,555 @@ describe("search worker: the index format version (HVN-65)", () => {
     await send({ type: "init" });
     await send({ type: "init" });
     expect(passes).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** A chat of messages, each with one prompt; the reply says nothing that is searched for. */
+function buildThread(id: string, prompts: string[]): Chat {
+  const chat = buildChat(id, "unused");
+  const messages: Record<string, ChatMessage> = {};
+  prompts.forEach((prompt, i) => {
+    const msgId = `${id}-m${i + 1}`;
+    messages[msgId] = {
+      ...chat.messages[`${id}-m1`],
+      id: msgId,
+      message: [
+        {
+          kind: "request",
+          parts: [{ part_kind: "user-prompt", content: prompt, timestamp: "t" }],
+        },
+        { kind: "response", parts: [{ part_kind: "text", content: "noted" }], timestamp: "t" },
+      ] as ChatMessage["message"],
+    };
+  });
+  chat.messages = messages;
+  chat.currentId = `${id}-m${prompts.length}`;
+  return chat;
+}
+
+describe("search worker: one indexing path (HVN-76)", () => {
+  const MARK = "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}";
+
+  /** What a save does: write the row, then tell the index through the manager. */
+  async function saveAndIndex(chat: Chat): Promise<void> {
+    await seedChats([chat]);
+    const { SearchIndexManager } = await import("../src/services/searchIndexManager");
+    await SearchIndexManager.addOrUpdateChatInIndex(chat.id as string);
+  }
+
+  async function hydrated(query: string): Promise<SearchResult[]> {
+    return (await search(query, true)).flatMap((c) => c.results as SearchResult[]);
+  }
+
+  // Blank lines in a message are collapsed in the text a snippet is cut from; the add used to
+  // index the text as it was, so every position after a newline was off by that much.
+  const SPACED = ["first line\n\n\nsecond line\n\n\nthird line\n\n\n".repeat(4), "the pineapple"];
+
+  it("finds a chat saved on its own in the message that holds the word, marked on the word", async () => {
+    await saveAndIndex(buildThread("one", SPACED));
+
+    const results = await hydrated("pineapple");
+
+    expect(results.map((r) => r.messageId)).toEqual(["one-m2"]);
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
+  it("finds the chat in the same message after a rebuild as after a save", async () => {
+    await saveAndIndex(buildThread("one", SPACED));
+    const saved = (await hydrated("pineapple")).map((r) => [r.messageId, r.messageSnippet]);
+
+    await send({ type: "rebuild" });
+    const rebuilt = (await hydrated("pineapple")).map((r) => [r.messageId, r.messageSnippet]);
+
+    expect(saved).toHaveLength(1);
+    expect(saved).toEqual(rebuilt);
+  });
+
+  it("finds the word of a chat that has a system prompt and a title before its messages", async () => {
+    const chat = buildThread("sys", ["a\n\nb\n\nc", "the pineapple"]);
+    chat.system = "You are\n\nhelpful.\n\nVery.";
+    await saveAndIndex(chat);
+
+    const results = await hydrated("pineapple");
+
+    expect(results.map((r) => r.messageId)).toEqual(["sys-m2"]);
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
+  it("indexes the text the database holds when the add arrives, not what the sender had", async () => {
+    await seedChats([buildThread("one", ["a first draft", "pineapple"])]);
+    await seedChats([buildThread("one", ["the final text", "a wombat"])]);
+    const { SearchIndexManager } = await import("../src/services/searchIndexManager");
+    await SearchIndexManager.addOrUpdateChatInIndex("one");
+
+    expect(await hydrated("wombat")).toHaveLength(1);
+    expect(await hydrated("pineapple")).toHaveLength(0);
+  });
+
+  it("indexes nothing for a chat the database does not have", async () => {
+    await send({ type: "add", chatId: "ghost" });
+
+    expect(hitIds(await search("ghost", false))).toEqual([]);
+  });
+
+  describe("text past 100,000 characters", () => {
+    const FILLER = "filler words here ".repeat(7000); // 126,000 characters
+
+    it("is found after a rebuild, in its own message", async () => {
+      await seedChats([buildThread("long", [FILLER, "the pineapple"])]);
+      await send({ type: "rebuild" });
+
+      const results = await hydrated("pineapple");
+
+      expect(results.map((r) => r.messageId)).toEqual(["long-m2"]);
+      expect(results[0].messageSnippet).toContain(MARK);
+    });
+
+    it("is found after a save, in the message that holds it", async () => {
+      await saveAndIndex(buildThread("long", [`${FILLER} pineapple`]));
+
+      const results = await hydrated("pineapple");
+
+      expect(results.map((r) => r.messageId)).toEqual(["long-m1"]);
+      expect(results[0].messageSnippet).toContain(MARK);
+    });
+  });
+});
+
+describe("search worker: a rebuild leaves soft-deleted chats out (HVN-74)", () => {
+  async function seedThreeLiveOneDeleted(): Promise<void> {
+    await seedChats([
+      buildChat("a", "pineapple"),
+      buildChat("b", "pineapple"),
+      buildChat("c", "pineapple"),
+      { ...buildChat("gone", "pineapple"), deleted: 1, deletedAt: Date.now() },
+    ]);
+  }
+
+  const storedDocIds = async (): Promise<string[]> =>
+    [...((await getDB().lunrIndex.get("segment_0"))?.meta as { docIds: string[] }).docIds].sort();
+
+  it("does not index a chat in its grace period, so it is not there if it comes back by itself", async () => {
+    await seedThreeLiveOneDeleted();
+
+    await send({ type: "rebuild" });
+
+    expect(await storedDocIds()).toEqual(["a", "b", "c"]);
+  });
+
+  it("counts the live chats, in the progress and in the end", async () => {
+    await seedThreeLiveOneDeleted();
+
+    await send({ type: "rebuild" });
+
+    const progress = posted.filter((m) => m.type === "indexRebuildProgress");
+    expect(progress.map((m) => (m.progress as RebuildStatus).total)).toEqual([3]);
+    expect(posted.find((m) => m.type === "indexRebuildComplete")).toMatchObject({ totalChats: 3 });
+  });
+
+  it("is not told at the next start that a chat is missing from the index", async () => {
+    await seedThreeLiveOneDeleted();
+    await send({ type: "rebuild" });
+
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady(); // a rebuild that init started would end here
+
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toEqual([]);
+    expect(posted.filter((m) => m.type === "initProgress")).toEqual([]);
+  });
+
+  it("still starts a rebuild when a live chat is missing from the index", async () => {
+    await seedThreeLiveOneDeleted();
+    await send({ type: "rebuild" });
+    await seedChats([buildChat("late", "pineapple")]);
+
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady();
+
+    expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+    expect(await storedDocIds()).toEqual(["a", "b", "c", "late"]);
+  });
+});
+
+describe("search worker: a rebuild that fails says so as it ends (HVN-74)", () => {
+  it("posts the failure with its reason, and not a completion", async () => {
+    await seedChats([buildChat("a", "pineapple")]);
+    vi.spyOn(workerDbs[workerDbs.length - 1].lunrIndex, "put").mockRejectedValue(
+      new Error("QuotaExceededError"),
+    );
+
+    await send({ type: "rebuild" });
+
+    expect(posted.filter((m) => m.type === "indexRebuildFailed")).toEqual([
+      { type: "indexRebuildFailed", error: "QuotaExceededError" },
+    ]);
+    expect(posted.some((m) => m.type === "indexRebuildComplete")).toBe(false);
+  });
+
+  it("posts nothing of the kind for a rebuild that succeeds", async () => {
+    await seedChats([buildChat("a", "pineapple")]);
+
+    await send({ type: "rebuild" });
+
+    expect(posted.some((m) => m.type === "indexRebuildFailed")).toBe(false);
+  });
+});
+
+describe("search worker: the limit counts chats (HVN-77)", () => {
+  beforeEach(async () => {
+    await getDB().chatMetadata.clear();
+  });
+
+  type Answer = { results: SearchResult[]; wasLimited: boolean | undefined; chunks: Posted[] };
+
+  /** A hydrated search for "pineapple", with the limits and filters a caller can send. */
+  async function limited(extra: Record<string, unknown> = {}): Promise<Answer> {
+    const requestId = `test-${++requestCounter}`;
+    await send({ type: "search", query: "pineapple", requestId, hydrate: true, ...extra });
+    const chunks = posted.filter(
+      (m) => m.type === "searchResultChunk" && m.requestId === requestId,
+    );
+    return {
+      results: chunks.flatMap((c) => c.results as SearchResult[]),
+      wasLimited: chunks[chunks.length - 1]?.wasLimited as boolean | undefined,
+      chunks,
+    };
+  }
+
+  const chatsOf = (results: SearchResult[]) => [...new Set(results.map((r) => r.chatId))].sort();
+
+  /** A chat with `messages` messages that each hold the word. */
+  const manyMatches = (id: string, messages: number) =>
+    buildThread(
+      id,
+      Array.from({ length: messages }, (_, i) => `pineapple number ${i}`),
+    );
+
+  async function index(...chats: Chat[]): Promise<void> {
+    await seedChats(chats);
+    await send({ type: "rebuild" });
+  }
+
+  describe("the limit", () => {
+    it("is a number of chats: five matching chats of six passages each, limit three, give three chats", async () => {
+      await index(...["a", "b", "c", "d", "e"].map((id) => manyMatches(id, 6)));
+
+      const { results, wasLimited } = await limited({ maxChats: 3 });
+
+      expect(chatsOf(results)).toHaveLength(3);
+      expect(wasLimited).toBe(true);
+    });
+
+    it("says it was not limited when the chats that match are exactly the limit", async () => {
+      await index(...["a", "b", "c"].map((id) => manyMatches(id, 2)));
+
+      const { results, wasLimited } = await limited({ maxChats: 3 });
+
+      expect(chatsOf(results)).toEqual(["a", "b", "c"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("says it was not limited when fewer chats match than the limit", async () => {
+      await index(manyMatches("a", 2));
+
+      expect((await limited({ maxChats: 10 })).wasLimited).toBe(false);
+    });
+
+    it("does not count a chat the index holds but whose text no longer has the word", async () => {
+      await index(manyMatches("a", 1), manyMatches("b", 1), manyMatches("c", 1));
+      await seedChats([buildThread("a", ["nothing to find here"])]); // saved, not yet re-indexed
+
+      const { results, wasLimited } = await limited({ maxChats: 2 });
+
+      expect(chatsOf(results)).toEqual(["b", "c"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("does not count a chat that was deleted after it was indexed", async () => {
+      await index(manyMatches("a", 1), manyMatches("b", 1), manyMatches("gone", 1));
+      await getDB().chats.update("gone", { deleted: 1, deletedAt: Date.now() });
+
+      const { results, wasLimited } = await limited({ maxChats: 2 });
+
+      expect(chatsOf(results)).toEqual(["a", "b"]);
+      expect(wasLimited).toBe(false);
+    });
+  });
+
+  describe("passages per chat", () => {
+    it("sends at most that many from a chat, whatever the limit on chats is", async () => {
+      await index(manyMatches("a", 6), manyMatches("b", 1));
+
+      const { results } = await limited({ passagesPerChat: 2 });
+
+      expect(results.filter((r) => r.chatId === "a")).toHaveLength(2);
+      expect(results.filter((r) => r.chatId === "b")).toHaveLength(1);
+    });
+
+    it("sends every passage when none is asked for", async () => {
+      await index(manyMatches("a", 6));
+
+      expect((await limited()).results).toHaveLength(6);
+    });
+  });
+
+  describe("filters, which run before the cut", () => {
+    const at = (chat: Chat, timestamp: number): Chat => ({ ...chat, timestamp });
+    const DAY = 86_400_000;
+    const NOW = 1_800_000_000_000;
+
+    // Four chats match; the one that passes the filter has the longest text, so it ranks last.
+    const crowd = (): Chat[] => [
+      at(manyMatches("old1", 1), NOW - 30 * DAY),
+      at(manyMatches("old2", 1), NOW - 31 * DAY),
+      at(manyMatches("old3", 1), NOW - 32 * DAY),
+      at(buildThread("new", ["pineapple", "filler ".repeat(400)]), NOW),
+    ];
+
+    it("finds the one chat inside a date range that is outranked by chats outside it", async () => {
+      await index(...crowd());
+
+      const { results, wasLimited } = await limited({
+        maxChats: 2,
+        filters: { after: NOW - DAY },
+      });
+
+      expect(chatsOf(results)).toEqual(["new"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("keeps the chats before a date with before", async () => {
+      await index(...crowd());
+
+      const { results } = await limited({ filters: { before: NOW - 30.5 * DAY } });
+
+      expect(chatsOf(results)).toEqual(["old2", "old3"]);
+    });
+
+    it("limits the chats that pass the filter, and says so", async () => {
+      await index(...crowd());
+
+      const { results, wasLimited } = await limited({
+        maxChats: 1,
+        filters: { before: NOW - 29 * DAY },
+      });
+
+      expect(chatsOf(results)).toHaveLength(1);
+      expect(chatsOf(results)[0]).toMatch(/^old/);
+      expect(wasLimited).toBe(true);
+    });
+
+    it("reads the messages of the chats that pass the filter, and of no other", async () => {
+      await index(...crowd());
+      const messageReads = vi.spyOn(workerDbs[workerDbs.length - 1].chatMessages, "where");
+
+      const { results } = await limited({ filters: { after: NOW - DAY } });
+
+      expect(chatsOf(results)).toEqual(["new"]);
+      expect(messageReads).toHaveBeenCalledTimes(1);
+    });
+
+    describe("by category", () => {
+      const meta = (chatId: string, categories: string[], source: "manual" | "unset" = "manual") =>
+        getDB().chatMetadata.put({
+          chatId,
+          title: "",
+          description: "",
+          synopsis: "",
+          categories,
+          keywords: [],
+          source,
+          updatedAt: 1,
+        });
+
+      it("finds the chat in a category that the other matching chats are not in", async () => {
+        await index(...crowd());
+        await meta("old1", ["travel"]);
+        await meta("old2", ["travel"]);
+        await meta("new", ["code"]);
+
+        const { results, wasLimited } = await limited({
+          maxChats: 2,
+          filters: { category: "code" },
+        });
+
+        expect(chatsOf(results)).toEqual(["new"]);
+        expect(wasLimited).toBe(false);
+      });
+
+      it("finds the chats that have no metadata for _unset", async () => {
+        await index(...crowd());
+        await meta("old1", ["travel"]);
+        await meta("old2", [], "unset");
+
+        const { results } = await limited({ filters: { category: "_unset" } });
+
+        expect(chatsOf(results)).toEqual(["new", "old2", "old3"]);
+      });
+    });
+  });
+});
+
+describe("search worker: the query is parsed by us, not by Lunr (HVN-78)", () => {
+  async function indexChats(...pairs: [string, string][]): Promise<void> {
+    await seedChats(pairs.map(([id, text]) => buildChat(id, text)));
+    await send({ type: "rebuild" });
+  }
+
+  const found = async (query: string): Promise<string[]> =>
+    [...new Set(hitIds(await search(query, false)))].sort();
+
+  const passages = async (query: string): Promise<SearchResult[]> =>
+    (await search(query, true)).flatMap((c) => c.results as SearchResult[]);
+
+  describe("a hyphen", () => {
+    const CHATS: [string, string][] = [
+      ["joined", "I like local-first software"],
+      ["apart", "first the cat, then local"],
+      ["only-local", "a local shop"],
+      ["only-first", "the first shop"],
+    ];
+
+    it("means the same as a space: both words, and not either", async () => {
+      await indexChats(...CHATS);
+
+      expect(await found("local-first")).toEqual(["apart", "joined"]);
+      expect(await found("local first")).toEqual(await found("local-first"));
+    });
+
+    it("means the same inside a phrase", async () => {
+      await indexChats(...CHATS);
+
+      expect(await found('"local-first"')).toEqual(["joined"]);
+      expect(await found('"local first"')).toEqual(["joined"]);
+    });
+  });
+
+  describe("punctuation that Lunr takes for syntax", () => {
+    it("finds a word with a colon in it, and does not fail", async () => {
+      await indexChats(["colon", "set foo:bar in the config"], ["other", "set foo and bar"]);
+
+      expect(await found("foo:bar")).toEqual(["colon"]);
+      expect((await passages("foo:bar")).map((p) => p.chatId)).toEqual(["colon"]);
+    });
+
+    it("breaks a word at a star inside it, and answers the same id-only and hydrated", async () => {
+      await indexChats(["a", "foo and bar"], ["b", "foobar only"]);
+
+      expect(await found("foo*bar")).toEqual(["a"]);
+      expect([...new Set((await passages("foo*bar")).map((p) => p.chatId))]).toEqual(["a"]);
+    });
+
+    it("breaks a phrase at a star inside it too, and answers the same both ways", async () => {
+      await indexChats(["w", "a wombat here"], ["x", "wombats galore"]);
+
+      expect(await found('"wombat*"')).toEqual(["w"]);
+      expect([...new Set((await passages('"wombat*"')).map((p) => p.chatId))]).toEqual(["w"]);
+    });
+
+    it("takes c++ templates as two words that both have to be there", async () => {
+      await indexChats(
+        ["both", "c++ templates are generic"],
+        ["templates-only", "html templates are generic"],
+        ["c-only", "learning c++ today"],
+      );
+
+      expect(await found("c++ templates")).toEqual(["both"]);
+    });
+
+    it("takes a plus, a caret or a tilde that is not an operator as part of the typing", async () => {
+      await indexChats(["a", "the wombat sat"], ["b", "a numbat sat"]);
+
+      expect(await found("wombat+")).toEqual(["a"]);
+      expect(await found("(wombat)")).toEqual(["a"]);
+      expect(await found("wombat~")).toEqual(["a"]);
+    });
+  });
+
+  describe("the operators the CLI documents", () => {
+    it("leaves out a word with a leading minus", async () => {
+      await indexChats(["a", "alignment and rlhf"], ["b", "alignment alone"]);
+
+      expect(await found("alignment -rlhf")).toEqual(["b"]);
+    });
+
+    it("matches a prefix typed with a trailing star", async () => {
+      await indexChats(["a", "recursion is recursive"], ["b", "a rectangle"]);
+
+      expect(await found("recurs*")).toEqual(["a"]);
+    });
+
+    it("finds a nearby spelling with ~N, and shows the passage that has it", async () => {
+      await indexChats(["a", "we run kubernetes at work"], ["b", "we run nothing"]);
+
+      expect(await found("kubernates~2")).toEqual(["a"]);
+      const [passage] = await passages("kubernates~2");
+      expect(passage.messageSnippet).toContain("{{HIGHLIGHT}}kubernetes{{/HIGHLIGHT}}");
+    });
+
+    it("takes ^N as a boost and still needs every word", async () => {
+      await indexChats(["a", "api design notes"], ["b", "api only"]);
+
+      expect(await found("api^5 design")).toEqual(["a"]);
+    });
+
+    it("keeps a quoted phrase exact", async () => {
+      await indexChats(["a", "you may not recognize me"], ["b", "me not recognize may you"]);
+
+      expect(await found('"may not recognize"')).toEqual(["a"]);
+    });
+  });
+
+  describe("when the strict search finds nothing", () => {
+    it("falls back to the prefixes of the words, without the stop words", async () => {
+      await indexChats(["db", "how we migrate the database"], ["cook", "how to cook rice"]);
+
+      // "quickly" is in neither, so the strict search is empty; "how" is in both, and says nothing.
+      expect(await found("how should I migrate my database quickly")).toEqual(["db"]);
+    });
+
+    it("keeps the stop words when they are all the query has", async () => {
+      await indexChats(["a", "to be or not to be"], ["b", "something else"]);
+
+      expect(await found("to be or not")).toEqual(["a"]);
+    });
+  });
+
+  describe("a phrase of stop words", () => {
+    it("finds the chats that have the phrase", async () => {
+      await indexChats(["a", "to be or not"], ["b", "not to be"], ["c", "do be well"]);
+
+      expect(await found('"to be"')).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("a query with nothing to look for", () => {
+    const problemOf = async (query: string) => {
+      const [chunk] = await search(query, true);
+      return chunk.queryProblem as string | undefined;
+    };
+
+    it("says so, rather than answering with no results", async () => {
+      await indexChats(["a", "alignment"]);
+
+      expect(await problemOf("-alignment")).toMatch(/not only words to leave out/);
+      expect(await problemOf("* - ~2")).toMatch(/Type a word/);
+      expect(await problemOf("alignment")).toBeUndefined();
+    });
+
+    it("does not return the chats that have a phrase typed to be left out", async () => {
+      await indexChats(["a", "install wombat now"], ["b", "install a numbat"]);
+
+      expect(await problemOf('install -"install wombat"')).toMatch(/Leaving out a phrase/);
+      expect(await found('install -"install wombat"')).toEqual([]);
+    });
+
+    it("posts the problem as the last chunk, with no results", async () => {
+      const [chunk] = await search("-alignment", true);
+
+      expect(chunk).toMatchObject({ results: [], done: true });
+    });
   });
 });

@@ -17,18 +17,33 @@ export interface SearchIndexIncompleteStatus {
   error: string;
 }
 
+/** What a chat must satisfy to be a result; checked before the chat counts toward the limit. */
+export interface SearchFilters {
+  /** Earliest chat timestamp, in milliseconds. */
+  after?: number;
+  /** Latest chat timestamp, in milliseconds. */
+  before?: number;
+  /** A category of the chat's metadata, or "_unset" for a chat with none. */
+  category?: string;
+}
+
 export type SearchWorkerMessage =
   | { type: "init" }
-  | { type: "add"; doc: { id: string; title: string; content: string } }
+  /** The worker reads the chat from the database and makes the indexed text itself (HVN-76). */
+  | { type: "add"; chatId: string }
   | { type: "remove"; chatId: string }
   | { type: "removeMany"; chatIds: string[] }
   | {
       type: "search";
       query: string;
-      maxResults?: number;
+      /** Hydrated search: the most chats to return. */
+      maxChats?: number;
+      /** Hydrated search: the most passages to return from one chat. */
+      passagesPerChat?: number;
       requestId: string;
       hydrate?: boolean;
       filterProvider?: string;
+      filters?: SearchFilters;
       contextChars?: number;
     }
   | { type: "rebuild" }
@@ -51,6 +66,15 @@ export type SearchWorkerResponse =
       results: string[] | import("../model/haevn_model").SearchResult[];
       done: boolean;
       /**
+       * On the last chunk of a hydrated search: more chats matched than the limit let through.
+       */
+      wasLimited?: boolean;
+      /**
+       * The query has nothing to look for (only punctuation, or only words to leave out), so
+       * the search did not run: a sentence for the reader, and `results` is empty.
+       */
+      queryProblem?: string;
+      /**
        * Set when the index is being rebuilt and the search was not run. An empty `results` then
        * means "not searched", never "no matches".
        */
@@ -64,6 +88,8 @@ export type SearchWorkerResponse =
   | { type: "bulkComplete"; success: boolean; indexedCount: number; error?: string }
   | { type: "indexRebuildProgress"; progress: SearchIndexRebuildStatus }
   | { type: "indexRebuildComplete"; totalChats: number }
+  /** A rebuild pass ended in failure: the index is part-built until a rebuild succeeds. */
+  | { type: "indexRebuildFailed"; error: string }
   | { type: "error"; error: string; requestId?: string };
 
 // ======================

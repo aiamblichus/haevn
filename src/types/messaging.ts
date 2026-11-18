@@ -367,6 +367,8 @@ export type BackgroundResponse =
   | {
       success: true;
       results: unknown[];
+      /** More chats matched than the search's limit let through. */
+      wasLimited?: boolean;
       indexRebuilding?: SearchIndexRebuildStatus;
       indexIncomplete?: SearchIndexIncompleteStatus;
     }
@@ -799,6 +801,8 @@ export type BackgroundEvent =
       query: string;
       filterProvider?: string;
       error: string;
+      /** The query has nothing to look for; `error` says why, for the reader to act on. */
+      queryProblem?: boolean;
     }
   | {
       action: "providerStatsUpdated";

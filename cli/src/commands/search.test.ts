@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SearchResult } from "../types/chat";
-import { formatSearchResultsText } from "./search";
+import { formatSearchResultsText, searchJson } from "./search";
 
 function hit(overrides: Partial<SearchResult>): SearchResult {
   return {
@@ -54,5 +54,25 @@ describe("haevn search text output", () => {
     expect(withoutMetadata).toContain("Platform title");
     expect(withoutMetadata).not.toContain("Meta title");
     expect(withoutMetadata).not.toContain("Desc text");
+  });
+});
+
+describe("haevn search and the chats the limit cut off (HVN-77)", () => {
+  it("says in JSON whether more chats matched", () => {
+    const results = [hit({})];
+    const json = (hasMore: boolean) =>
+      JSON.parse(searchJson(results, { includeMetadata: true, hasMore }));
+
+    expect(json(true)).toMatchObject({ total: 1, hasMore: true });
+    expect(json(false)).toMatchObject({ total: 1, hasMore: false });
+  });
+
+  it("ends the text output with a line about the limit, only when chats were cut off", () => {
+    const cut = formatSearchResultsText([hit({})], { hasMore: true });
+    const whole = formatSearchResultsText([hit({})], { hasMore: false });
+
+    expect(cut).toContain("More chats match than were returned. Raise --limit");
+    expect(whole).not.toContain("More chats match");
+    expect(formatSearchResultsText([hit({})])).not.toContain("More chats match");
   });
 });

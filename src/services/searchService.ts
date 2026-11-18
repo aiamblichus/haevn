@@ -14,6 +14,7 @@
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type { Chat, SearchResult } from "../model/haevn_model";
 import type {
+  SearchFilters,
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
   SearchWorkerMessage,
@@ -23,7 +24,8 @@ import { fireAndForget } from "../utils/error_utils";
 import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
 import { getDB } from "./db";
-import { parseSearchQuery } from "./searchQuery";
+import { inCategory, inDateRange, needsCategory } from "./searchFilters";
+import { parseSearchQuery, SearchQueryError } from "./searchQuery";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 
 // --- Worker Communication ---
@@ -98,23 +100,26 @@ function chatIdMatchesFilter(chatId: string | undefined, idFilter: string | unde
 
 async function findChatsByIdFilter(
   idFilter: string,
-  options: { filterProvider?: string; limit?: number } = {},
+  options: { filterProvider?: string; filters?: SearchFilters; limit?: number } = {},
 ): Promise<Chat[]> {
-  const { filterProvider, limit = 1000 } = options;
+  const { filterProvider, filters = {}, limit = 1000 } = options;
+  // A category is read from the metadata of each chat, so the cut waits for it.
+  const byCategory = needsCategory(filters);
 
-  const chats = await getDB()
+  const matching = getDB()
     .chats.where("deleted")
     .equals(0)
     .filter((chat) => {
       if (!chatIdMatchesFilter(chat.id, idFilter)) return false;
       if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider)
         return false;
-      return true;
-    })
-    .limit(limit)
-    .toArray();
+      return inDateRange(chat.timestamp, filters);
+    });
+  const chats = await (byCategory ? matching : matching.limit(limit)).toArray();
+  if (!byCategory) return chats;
 
-  return chats;
+  const metadata = await getDB().chatMetadata.bulkGet(chats.map((chat) => chat.id as string));
+  return chats.filter((_chat, i) => inCategory(metadata[i], filters.category)).slice(0, limit);
 }
 
 function buildIdSearchResult(chat: Chat): SearchResult {
@@ -214,9 +219,12 @@ export namespace SearchService {
     options: {
       onResults: (batch: SearchResult[]) => void;
       onComplete: (stats: {
+        /** Passages delivered to `onResults`. */
         totalResults: number;
+        /** Chats those passages belong to. */
         chatsScanned: number;
         durationMs: number;
+        /** More chats matched than the limit let through. */
         wasLimited: boolean;
         /** Set when the index was being rebuilt: the search did not run, so 0 results means nothing. */
         indexRebuilding?: SearchIndexRebuildStatus;
@@ -225,9 +233,13 @@ export namespace SearchService {
       }) => void;
       onError?: (error: Error) => void;
       streamBatchSize?: number;
+      /** The most chats to return. */
       maxChatsToScan?: number;
+      /** The most passages to return from one chat. */
       resultsPerChat?: number;
       filterProvider?: string;
+      /** Only chats inside the date range or the category; applied before the limit. */
+      filters?: SearchFilters;
       contextChars?: number;
     },
   ): { cancel: () => void } {
@@ -236,7 +248,9 @@ export namespace SearchService {
       onComplete,
       onError,
       maxChatsToScan = 1000,
+      resultsPerChat,
       filterProvider,
+      filters,
       contextChars,
     } = options;
 
@@ -261,7 +275,8 @@ export namespace SearchService {
       const requestId = `streaming_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
       let totalResults = 0;
-      let chatsScanned = 0; // Worker handles this, but we can track results count
+      const chatIds = new Set<string>();
+      let chatsScanned = 0;
       let indexRebuilding: SearchIndexRebuildStatus | undefined;
       let indexIncomplete: SearchIndexIncompleteStatus | undefined;
 
@@ -288,11 +303,14 @@ export namespace SearchService {
         fireAndForget(
           (async () => {
             try {
-              const chats = await findChatsByIdFilter(scoped.idFilter as string, {
+              // One more than the limit, to know whether the limit cut anything.
+              const found = await findChatsByIdFilter(scoped.idFilter as string, {
                 filterProvider,
-                limit: maxChatsToScan,
+                filters,
+                limit: maxChatsToScan + 1,
               });
               if (cancelled) return;
+              const chats = found.slice(0, maxChatsToScan);
 
               const results = chats
                 .filter((chat) => !!chat.id)
@@ -304,7 +322,7 @@ export namespace SearchService {
                 onResults(results);
               }
 
-              finish(chats.length >= maxChatsToScan);
+              finish(found.length > maxChatsToScan);
             } catch (err) {
               log.error(`[SearchService] Error during ID-only search:`, {
                 query,
@@ -326,8 +344,10 @@ export namespace SearchService {
             type: "search",
             query: scoped.textQuery || query,
             requestId,
-            maxResults: maxChatsToScan,
+            maxChats: maxChatsToScan,
+            passagesPerChat: resultsPerChat,
             filterProvider,
+            filters,
             contextChars,
             hydrate: true,
           },
@@ -337,6 +357,12 @@ export namespace SearchService {
 
               if (chunk.indexRebuilding) indexRebuilding = chunk.indexRebuilding;
               if (chunk.indexIncomplete) indexIncomplete = chunk.indexIncomplete;
+
+              if (chunk.queryProblem) {
+                // The query has nothing to look for: a failure the reader can fix, not zero results.
+                if (onError) onError(new SearchQueryError(chunk.queryProblem));
+                return;
+              }
 
               // The worker now returns SearchResult[] when hydrate: true
               let results = chunk.results as SearchResult[];
@@ -349,12 +375,13 @@ export namespace SearchService {
 
               if (results.length > 0) {
                 totalResults += results.length;
-                chatsScanned += results.length; // Approximation
+                for (const result of results) chatIds.add(result.chatId);
+                chatsScanned = chatIds.size;
                 onResults(results);
               }
 
               if (chunk.done) {
-                finish();
+                finish(chunk.wasLimited === true);
               }
             },
             timeout: 60000,

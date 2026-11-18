@@ -41,8 +41,8 @@ describe("undoing a delete (ChatService.restoreChatsWithCleanup)", () => {
     // A fresh count, so the delete and the undo move it and nothing recalculates it.
     await db.cache.put({ id: CLAUDE_COUNT_KEY, value: 5, lastUpdated: Date.now() });
     indexed = [];
-    vi.spyOn(SearchIndexManager, "addOrUpdateChatInIndex").mockImplementation(async (chat) => {
-      indexed.push(chat.id ?? "");
+    vi.spyOn(SearchIndexManager, "addOrUpdateChatInIndex").mockImplementation(async (chatId) => {
+      indexed.push(chatId);
     });
   });
 

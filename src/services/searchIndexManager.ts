@@ -11,14 +11,7 @@
  */
 
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
-import type {
-  Chat,
-  SearchResult,
-  SystemPromptPart,
-  TextPart,
-  ThinkingPart,
-  UserPromptPart,
-} from "../model/haevn_model";
+import type { SearchResult } from "../model/haevn_model";
 import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
@@ -65,58 +58,6 @@ async function _ensureWorkerReady(): Promise<void> {
   // Worker initialization happens lazily in offscreen document
 }
 
-/**
- * Helper function to prepare chat for indexing.
- * Extracts searchable content from the chat structure.
- */
-function _prepareChatForIndexing(
-  chat: Chat,
-): { id: string; title: string; content: string } | null {
-  if (!chat.id) return null;
-  const combined: string[] = [];
-  // Include optional system prompt and title for better recall
-  if (chat.system) combined.push(chat.system);
-  if (chat.title) combined.push(chat.title);
-
-  const messages = Object.values(chat.messages || {});
-  for (const cm of messages) {
-    const arr = cm?.message || [];
-    for (const mm of arr) {
-      if (mm.kind === "request") {
-        const req = mm;
-        for (const part of req.parts) {
-          const partAny = part as { part_kind?: string };
-          if (partAny.part_kind === "user-prompt") {
-            const up = part as UserPromptPart;
-            if (typeof up.content === "string") {
-              combined.push(up.content);
-            } else if (Array.isArray(up.content)) {
-              for (const c of up.content) {
-                if (typeof c === "string") combined.push(c);
-              }
-            }
-          } else if (partAny.part_kind === "system-prompt") {
-            const sp = part as SystemPromptPart;
-            if (typeof sp.content === "string") {
-              combined.push(sp.content);
-            }
-          }
-        }
-      } else if (mm.kind === "response") {
-        const res = mm;
-        for (const part of res.parts) {
-          const partAny = part as { part_kind?: string };
-          const pk = partAny.part_kind;
-          if (pk === "text") combined.push((part as TextPart).content);
-          else if (pk === "thinking") combined.push((part as ThinkingPart).content);
-        }
-      }
-    }
-  }
-
-  return { id: chat.id, title: chat.title, content: combined.join(" ").trim() };
-}
-
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace SearchIndexManager {
   /**
@@ -136,13 +77,13 @@ export namespace SearchIndexManager {
   }
 
   /**
-   * Add or update a chat document in the Lunr index.
+   * Add or update a chat in the Lunr index. The chat must already be saved: the worker reads it
+   * from the database and makes the indexed text itself, so a chat is indexed the same way
+   * whether it is added here or found by a rebuild.
    */
-  export async function addOrUpdateChatInIndex(chat: Chat): Promise<void> {
-    const doc = _prepareChatForIndexing(chat);
-    if (!doc) return;
+  export async function addOrUpdateChatInIndex(chatId: string): Promise<void> {
     await _ensureWorkerReady();
-    await _sendWorkerMessage({ type: "add", doc });
+    await _sendWorkerMessage({ type: "add", chatId });
   }
 
   /**

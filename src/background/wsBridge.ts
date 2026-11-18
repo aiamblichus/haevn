@@ -45,10 +45,12 @@ import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateOnRequest, setManualMetadata } from "../services/metadataService";
+import { SearchQueryError } from "../services/searchQuery";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
 import type {
+  SearchFilters,
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
 } from "../types/workerMessages";
@@ -168,7 +170,13 @@ interface WsImportResult {
 }
 
 type WsResponse<T = unknown> =
-  | { id: string; success: true; data: T }
+  | {
+      id: string;
+      success: true;
+      data: T;
+      /** A search only: more chats matched than the limit let through. */
+      hasMore?: boolean;
+    }
   | { id: string; success: false; error: string; code?: string };
 
 function toMessageDict<T extends { id: string }>(messages: T[]): Record<string, T> {
@@ -633,28 +641,51 @@ async function handleSearch(
     return { id, success: false, error: "Query is required", code: "BAD_REQUEST" };
   }
 
-  const { results, indexRebuilding, indexIncomplete } = await new Promise<{
-    results: SearchResult[];
-    indexRebuilding?: SearchIndexRebuildStatus;
-    indexIncomplete?: SearchIndexIncompleteStatus;
-  }>((resolve, reject) => {
-    const collected: SearchResult[] = [];
-    SyncService.searchChatsStreaming(query, {
-      streamBatchSize: 50,
-      maxChatsToScan: options.limit ?? 1000,
-      resultsPerChat: 4,
-      filterProvider: options.platform,
-      contextChars: options.contextChars,
-      onResults: (batch) => collected.push(...batch),
-      onComplete: (stats) =>
-        resolve({
-          results: collected,
-          indexRebuilding: stats.indexRebuilding,
-          indexIncomplete: stats.indexIncomplete,
-        }),
-      onError: reject,
+  // The date range and the category go down with the search, so the limit is a limit on the chats
+  // that pass them; a date that does not parse is no filter, as it always was.
+  const afterMs = options.after ? new Date(options.after).getTime() : Number.NaN;
+  const beforeMs = options.before ? new Date(options.before).getTime() : Number.NaN;
+  const filters: SearchFilters = {
+    ...(Number.isFinite(afterMs) ? { after: afterMs } : {}),
+    ...(Number.isFinite(beforeMs) ? { before: beforeMs } : {}),
+    ...(options.category ? { category: options.category } : {}),
+  };
+
+  const { results, wasLimited, queryProblem, indexRebuilding, indexIncomplete } =
+    await new Promise<{
+      results: SearchResult[];
+      wasLimited: boolean;
+      queryProblem?: string;
+      indexRebuilding?: SearchIndexRebuildStatus;
+      indexIncomplete?: SearchIndexIncompleteStatus;
+    }>((resolve, reject) => {
+      const collected: SearchResult[] = [];
+      SyncService.searchChatsStreaming(query, {
+        streamBatchSize: 50,
+        maxChatsToScan: options.limit ?? 1000,
+        resultsPerChat: 4,
+        filterProvider: options.platform,
+        filters,
+        contextChars: options.contextChars,
+        onResults: (batch) => collected.push(...batch),
+        onComplete: (stats) =>
+          resolve({
+            results: collected,
+            wasLimited: stats.wasLimited,
+            indexRebuilding: stats.indexRebuilding,
+            indexIncomplete: stats.indexIncomplete,
+          }),
+        onError: (err) =>
+          err instanceof SearchQueryError
+            ? resolve({ results: [], wasLimited: false, queryProblem: err.message })
+            : reject(err),
+      });
     });
-  });
+
+  // A query with nothing to look for is the caller's to fix, not an empty answer.
+  if (queryProblem) {
+    return { id, success: false, error: queryProblem, code: "BAD_QUERY" };
+  }
 
   // An empty list during a rebuild is not "no matches": say so, so the caller can retry.
   if (indexRebuilding) {
@@ -679,27 +710,15 @@ async function handleSearch(
     };
   }
 
-  const afterMs = options.after ? new Date(options.after).getTime() : undefined;
-  const beforeMs = options.before ? new Date(options.before).getTime() : undefined;
-
-  const filtered = results.filter((r) => {
-    if (afterMs && (r.messageTimestamp ?? 0) < afterMs) return false;
-    if (beforeMs && (r.messageTimestamp ?? 0) > beforeMs) return false;
-    return true;
-  });
-
   const includeMetadata = options.includeMetadata !== false;
-  const category = options.category;
-  const needsMetadataLookup = includeMetadata || (!!category && category !== "all");
-
-  const uniqueChatIds = [...new Set(filtered.map((r) => r.chatId))];
+  const uniqueChatIds = [...new Set(results.map((r) => r.chatId))];
   const metaMap =
-    needsMetadataLookup && uniqueChatIds.length > 0
+    includeMetadata && uniqueChatIds.length > 0
       ? await MetadataRepository.getMany(uniqueChatIds)
       : new Map();
 
   const enriched = includeMetadata
-    ? filtered.map((r) => {
+    ? results.map((r) => {
         const meta = metaMap.get(r.chatId);
         if (!meta) return r;
         return {
@@ -717,19 +736,10 @@ async function handleSearch(
           },
         };
       })
-    : filtered;
+    : results;
 
-  // Apply category filter if requested
-  const categoryFiltered =
-    category && category !== "all"
-      ? enriched.filter((r) => {
-          const meta = metaMap.get(r.chatId);
-          if (category === "_unset") return !meta || meta.source === "unset";
-          return Array.isArray(meta?.categories) && meta.categories.includes(category);
-        })
-      : enriched;
-
-  return { id, success: true, data: categoryFiltered };
+  // `data` stays the list of results, so a CLI that does not know `hasMore` still reads it.
+  return { id, success: true, data: enriched, hasMore: wasLimited };
 }
 
 async function handleList(

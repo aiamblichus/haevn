@@ -76,6 +76,8 @@ const App = () => {
   // Set when the last index rebuild failed: the search ran, on an index that may miss chats.
   const [searchIndexIncomplete, setSearchIndexIncomplete] =
     useState<SearchIndexIncompleteStatus | null>(null);
+  // Set when the last search matched more chats than it returned (the limit cut it).
+  const [searchLimited, setSearchLimited] = useState(false);
   // Whether the rebuild notice is on screen. Rebuild progress updates it only then. The message
   // listener reads this ref, not the state: it is set up once, in an effect that ignores the notice.
   const rebuildNoticeShownRef = React.useRef(false);
@@ -273,6 +275,15 @@ const App = () => {
             rebuildNoticeShownRef.current = false;
             setSearchIndexRebuild(null);
             setStatus("Search index rebuilt. Search again.", "ok");
+          } else if (event.data.type === "indexRebuildFailed") {
+            // The rebuild ended without an index: say it, instead of leaving the last percentage.
+            rebuildNoticeShownRef.current = false;
+            setSearchIndexRebuild(null);
+            setSearchIndexIncomplete({ error: event.data.error });
+            setStatus(
+              "Search index rebuild failed. Some chats may be missing from results.",
+              "error",
+            );
           }
         }
         return undefined;
@@ -397,6 +408,7 @@ const App = () => {
               setIsSearching(false);
               setSearchIndexRebuild(event.indexRebuilding ?? null);
               setSearchIndexIncomplete(event.indexIncomplete ?? null);
+              setSearchLimited(event.wasLimited);
               if (event.indexRebuilding) {
                 setStatus(
                   `Search index is rebuilding (${event.indexRebuilding.percentage}%). Search again when it finishes.`,
@@ -409,9 +421,9 @@ const App = () => {
                 );
               } else {
                 setStatus(
-                  `Found ${event.totalResults} ${event.totalResults === 1 ? "result" : "results"} in ${event.durationMs.toFixed(0)}ms (scanned ${
-                    event.chatsScanned
-                  } chats)`,
+                  `Found ${event.totalResults} ${event.totalResults === 1 ? "result" : "results"} in ${event.chatsScanned} ${
+                    event.chatsScanned === 1 ? "chat" : "chats"
+                  } in ${event.durationMs.toFixed(0)}ms${event.wasLimited ? " (more chats match)" : ""}`,
                   "ok",
                 );
               }
@@ -427,16 +439,22 @@ const App = () => {
           case "searchStreamingFailed":
             // Search failed
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
-              log.error(`[Options] Search streaming failed:`, {
-                query: event.query,
-                filterProvider: event.filterProvider,
-                error: event.error,
-              });
+              if (!event.queryProblem) {
+                log.error(`[Options] Search streaming failed:`, {
+                  query: event.query,
+                  filterProvider: event.filterProvider,
+                  error: event.error,
+                });
+              }
               setIsSearching(false);
               setSearchResults([]);
               setSearchIndexRebuild(null);
               setSearchIndexIncomplete(null);
-              setStatus(`Search failed: ${event.error}`, "error");
+              setSearchLimited(false);
+              // A query with nothing to look for (a quote, a minus, typed on the way to a word)
+              // is a hint, not a failure: the search as you type meets it on every pause.
+              if (event.queryProblem) setStatus(event.error, "work");
+              else setStatus(`Search failed: ${event.error}`, "error");
             } else {
               log.warn(`[Options] Received failure for different query:`, {
                 receivedQuery: event.query,
@@ -478,6 +496,7 @@ const App = () => {
       setIsSearching(false);
       setSearchIndexRebuild(null);
       setSearchIndexIncomplete(null);
+      setSearchLimited(false);
       setExpandedChats(new Set());
       setLoadingExpandedChats(new Set());
       searchResultIds.current.clear();
@@ -507,6 +526,7 @@ const App = () => {
     setSearchResults([]);
     setSearchIndexRebuild(null);
     setSearchIndexIncomplete(null);
+    setSearchLimited(false);
     searchResultIds.current.clear();
     setIsSearching(true);
 
@@ -928,6 +948,7 @@ const App = () => {
                 isSearching={isSearching}
                 searchIndexRebuild={searchIndexRebuild}
                 searchIndexIncomplete={searchIndexIncomplete}
+                searchLimited={searchLimited}
                 selectedIds={selectedIds}
                 filterProvider={filterProvider}
                 setFilterProvider={setFilterProvider}

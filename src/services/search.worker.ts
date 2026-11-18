@@ -10,12 +10,14 @@ import type {
   UserPromptPart,
 } from "../model/haevn_model";
 import type {
+  SearchFilters,
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
   SearchWorkerMessage,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import { inCategory, inDateRange, needsCategory } from "./searchFilters";
 import {
   createIndexBuilder,
   createQueryTermPipeline,
@@ -25,17 +27,19 @@ import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searc
 import { buildSnippet, lowerCaseRangeMapper, type TextRange, trimToWord } from "./searchSnippet";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 import {
-  buildLunrQueryPlan,
-  buildRelaxedPrefixQuery,
+  applyClauses,
+  buildQueryPlan,
+  buildRelaxedPlan,
   type PhraseConstraint,
+  type QueryClause,
   queryNeedsExactPhrasePath,
 } from "./searchWorkerQuery";
 
 // --- Configuration ---
 const SEGMENT_SIZE = 200; // Chats per segment
 const REBUILD_DEBOUNCE_MS = 2000;
-const MAX_CONTENT_LENGTH = 100000; // Increased limit since we segment
 const SNIPPET_RADIUS = 60; // Context characters around match
+const DEFAULT_MAX_CHATS = 1000; // Chats a hydrated search returns when the caller names no limit
 // The record in `lunrIndex` that says which format the segments are in (HVN-65). A rebuild
 // removes it with the segments and writes it back as its last step, so only a pass that ended
 // well leaves it.
@@ -130,10 +134,12 @@ async function attachMessages(chats: Chat[]): Promise<Chat[]> {
   });
 }
 
-async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
-  const chat = await db.chats.get(chatId);
-  if (!chat) return undefined;
-  const migratedRows = await db.chatMessages.where("chatId").equals(chatId).toArray();
+/** The chat row, with its messages from the `chatMessages` table when they were migrated there. */
+async function attachMessageRows(chat: Chat): Promise<Chat> {
+  const migratedRows = await db.chatMessages
+    .where("chatId")
+    .equals(chat.id as string)
+    .toArray();
   if (migratedRows.length === 0) {
     return chat;
   }
@@ -141,6 +147,11 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
     ...chat,
     messages: toMessageDict(migratedRows),
   };
+}
+
+async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
+  const chat = await db.chats.get(chatId);
+  return chat ? attachMessageRows(chat) : undefined;
 }
 
 // --- Global State ---
@@ -175,6 +186,12 @@ interface RebuildOutcome {
 
 // --- Helper: Text Extraction & Mapping ---
 
+/**
+ * The one place that decides what text of a chat is searchable: the index is built from `doc`,
+ * and a snippet is cut from the same `doc` by the positions the index kept, so every site that
+ * indexes a chat, and the one that shows a hit, goes through here (HVN-76). Nothing is cut off:
+ * the text of a long chat is searchable to its end.
+ */
 function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | null {
   if (!chat.id) return null;
 
@@ -187,15 +204,10 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
     const clean = text.replace(/\s+/g, " ");
     if (!clean) return;
 
-    if (currentOffset >= MAX_CONTENT_LENGTH) return;
+    combined.push(clean);
+    map.push([currentOffset, clean.length, msgId, role]);
 
-    const remaining = MAX_CONTENT_LENGTH - currentOffset;
-    const finalTxt = clean.length > remaining ? clean.slice(0, remaining) : clean;
-
-    combined.push(finalTxt);
-    map.push([currentOffset, finalTxt.length, msgId, role]);
-
-    currentOffset += finalTxt.length + 1;
+    currentOffset += clean.length + 1;
   };
 
   if (chat.title) append(chat.title, "title", "user");
@@ -254,6 +266,10 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
 }
 
 function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
+  // A word typed with `~` matches a spelling the text has, not the one typed: only the index
+  // knows which, and it has already placed the match in this message.
+  if (parsed.required.some((term) => term.editDistance)) return true;
+
   const hay = text.toLowerCase();
 
   if (parsed.phrases.length > 0) {
@@ -393,6 +409,19 @@ async function loadSegments(): Promise<void> {
 }
 
 /**
+ * The chats the index is to hold: every one that is not soft-deleted. A rebuild leaves the
+ * deleted ones out (they are gone for the user, and the Janitor removes them within the hour), so
+ * the count the rebuild reports and the consistency check compares against is this one (HVN-74).
+ */
+async function countLiveChats(): Promise<number> {
+  const [all, deleted] = await Promise.all([
+    db.chats.count(),
+    db.chats.where("deleted").equals(1).count(),
+  ]);
+  return all - deleted;
+}
+
+/**
  * Checks if the number of indexed documents matches the number of chats in the database.
  * If there is a mismatch, it triggers a rebuild.
  */
@@ -400,7 +429,7 @@ async function checkIndexConsistency(): Promise<void> {
   // A rebuild running is the cure this check would start; its segments are empty or part-built.
   if (rebuildRun) return;
   try {
-    const actualChatCount = await db.chats.count();
+    const actualChatCount = await countLiveChats();
     const indexedDocCount = Array.from(segments.values()).reduce(
       (sum, seg) => sum + seg.docIds.size,
       0,
@@ -469,16 +498,27 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
 }
 
 /**
- * Index one chat document. During a rebuild the pass owns the segments (it replaces them and
- * keeps its own handle on the one it fills), so an add only records the chat; the pass indexes
- * it before it ends, reading the row as it is then (HVN-54).
+ * Index one chat, read from the database as it is now. The caller has written the row before it
+ * asks (a save, a bulk sync's post-processing), and the worker makes the text itself, so a chat
+ * added on its own is indexed exactly as a rebuild would index it (HVN-76). During a rebuild the
+ * pass owns the segments (it replaces them and keeps its own handle on the one it fills), so an
+ * add only records the chat; the pass indexes it before it ends, reading the row as it is then
+ * (HVN-54).
  */
-function addToIndex(doc: SearchDoc): void {
+async function addToIndex(chatId: string): Promise<void> {
   if (rebuildRun) {
-    addedDuringRebuild.add(doc.id);
+    addedDuringRebuild.add(chatId);
     return;
   }
-  indexDocument(doc);
+  const chat = await loadChatWithMessages(chatId);
+  const data = chat && extractTextAndMap(chat);
+  // A rebuild that began while the chat was read has taken the segments; it reads this chat
+  // from the database itself.
+  if (rebuildRun) {
+    addedDuringRebuild.add(chatId);
+    return;
+  }
+  if (data) indexDocument(data.doc);
 }
 
 function indexDocument(doc: SearchDoc): void {
@@ -658,7 +698,7 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // leaves a short index, which the next init rebuilds.
     storedFormat = undefined;
     await db.lunrIndex.clear();
-    const count = await db.chats.count();
+    const count = await countLiveChats();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
     rebuildState.totalChats = count;
@@ -686,9 +726,11 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
           lastKey === undefined ? db.chats.toCollection() : db.chats.where(":id").above(lastKey);
         const rows = await page.limit(limit).toArray();
         if (rows.length > 0) lastKey = rows[rows.length - 1].id;
-        const chats = await attachMessages(rows);
-        if (chats.length < limit) exhausted = true;
-        chunkRead += chats.length;
+        // A soft-deleted chat is paged past, not indexed: a search hides it anyway, and it is not
+        // in the count (HVN-74).
+        const chats = await attachMessages(rows.filter((row) => row.deleted !== 1));
+        if (rows.length < limit) exhausted = true;
+        chunkRead += rows.length;
 
         for (const chat of chats) {
           const data = extractTextAndMap(chat);
@@ -774,6 +816,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     log.error("[SearchWorker] Rebuild failed", e);
     // The segments were cleared at the start and are part-built now: say so until a rebuild succeeds.
     rebuildFailure = e instanceof Error ? e.message : String(e);
+    // The archive's rebuild notice stops at its last percentage unless it is told the pass ended.
+    self.postMessage({ type: "indexRebuildFailed", error: rebuildFailure });
     return { error: rebuildFailure };
   }
 }
@@ -992,6 +1036,19 @@ async function softDeletedChatIds(): Promise<Set<string>> {
 }
 
 /**
+ * Whether a chat is inside the date range and the category a search asked for. These run on each
+ * chat before it counts toward the limit, so a filtered search is cut from the chats that pass,
+ * not from all that matched (HVN-77). The date is the chat's, as it has always been for results.
+ */
+async function chatPassesFilters(chat: Chat, filters: SearchFilters): Promise<boolean> {
+  if (!inDateRange(chat.timestamp, filters)) return false;
+  if (needsCategory(filters) && chat.id) {
+    return inCategory(await db.chatMetadata.get(chat.id), filters.category);
+  }
+  return true;
+}
+
+/**
  * The rebuild's progress while one is running, otherwise undefined. A rebuild empties the index
  * and refills it, so it cannot answer queries until it ends. Keeping the previous index to answer
  * from would double the index's memory for the length of the rebuild (HVN-40).
@@ -1015,16 +1072,14 @@ function currentIndexIncomplete(): { indexIncomplete: SearchIndexIncompleteStatu
 }
 
 async function performSearch(
-  query: string,
+  parsed: ParsedQuery,
   hydrate: boolean = false,
   options: { exactTextFilter?: boolean } = {},
 ): Promise<string[] | LunrResult[]> {
-  if (!query) return [];
-
   if (segments.size === 0) await loadSegments();
 
-  // 1. Normalize the query path before handing it to Lunr.
-  const { finalQuery, hasPhrases, phraseConstraints } = buildLunrQueryPlan(query);
+  // 1. What to ask the index for. The query text never reaches Lunr's own parser (HVN-78).
+  const { clauses, hasPhrases, phraseConstraints } = buildQueryPlan(parsed);
   const metadataPhraseConstraints = phraseConstraints.filter(
     (constraint) => !constraint.requiresTextVerification,
   );
@@ -1032,15 +1087,15 @@ async function performSearch(
     (constraint) => constraint.requiresTextVerification,
   );
 
-  if (!finalQuery.trim()) {
+  if (clauses.length === 0) {
     return [];
   }
 
-  const runSegmentSearch = (queryText: string): LunrResult[] => {
+  const runSegmentSearch = (queryClauses: QueryClause[]): LunrResult[] => {
     const found: LunrResult[] = [];
     for (const [id, seg] of segments) {
       try {
-        const results = seg.index.search(queryText) as LunrResult[];
+        const results = seg.index.query((q) => applyClauses(q, queryClauses)) as LunrResult[];
         const filtered = hasPhrases
           ? results.filter((r) =>
               metadataPhraseConstraints.every((constraint) =>
@@ -1061,13 +1116,13 @@ async function performSearch(
   };
 
   // 2. Search (Get IDs and Metadata)
-  let rawResults: LunrResult[] = runSegmentSearch(finalQuery);
+  let rawResults: LunrResult[] = runSegmentSearch(clauses);
 
   // Relaxed fallback: if strict query returns nothing, retry with prefix matching (OR semantics).
   if (rawResults.length === 0 && !hasPhrases) {
-    const relaxedQuery = buildRelaxedPrefixQuery(query);
-    if (relaxedQuery) {
-      rawResults = runSegmentSearch(relaxedQuery);
+    const relaxed = buildRelaxedPlan(parsed);
+    if (relaxed) {
+      rawResults = runSegmentSearch(relaxed.clauses);
     }
   }
 
@@ -1119,7 +1174,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "add") {
-      if (msg.doc) addToIndex(msg.doc);
+      await addToIndex(msg.chatId);
       self.postMessage({ type: "addComplete", success: true });
       return;
     }
@@ -1146,12 +1201,27 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         typeof msg.contextChars === "number" && msg.contextChars > 0
           ? Math.min(500, msg.contextChars)
           : SNIPPET_RADIUS;
-      // maxResults is used to limit total hydration
-      const maxResults = msg.maxResults || 1000;
+      // The limit is a number of chats (HVN-77); a chat sends at most `passagesPerChat` passages.
+      const maxChats = msg.maxChats && msg.maxChats > 0 ? msg.maxChats : DEFAULT_MAX_CHATS;
+      const passagesPerChat =
+        msg.passagesPerChat && msg.passagesPerChat > 0 ? msg.passagesPerChat : Infinity;
+      const filters = msg.filters ?? {};
       const parsedQuery = parseSearchQuery(msg.query);
-      const needsExactPhraseHydration = queryNeedsExactPhrasePath(msg.query);
+      if (parsedQuery.problem) {
+        // Nothing to look for is not "no results": say why, so the caller can tell the reader.
+        self.postMessage({
+          type: "searchResultChunk",
+          requestId: msg.requestId,
+          results: [],
+          done: true,
+          queryProblem: parsedQuery.problem,
+          ...incomplete,
+        });
+        return;
+      }
+      const needsExactPhraseHydration = queryNeedsExactPhrasePath(parsedQuery);
 
-      const results = await performSearch(msg.query, hydrate, {
+      const results = await performSearch(parsedQuery, hydrate, {
         exactTextFilter: !hydrate && needsExactPhraseHydration,
       });
 
@@ -1166,15 +1236,14 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           ...incomplete,
         });
       } else {
-        let sentCount = 0;
-
-        // Helper to send chunk
-        const sendChunk = (chunk: string[] | SearchResult[], done: boolean) => {
+        // Helper to send chunk. The last one says whether more chats matched than were sent.
+        const sendChunk = (chunk: string[] | SearchResult[], done: boolean, wasLimited = false) => {
           self.postMessage({
             type: "searchResultChunk",
             requestId: msg.requestId,
             results: chunk,
             done,
+            ...(done && hydrate ? { wasLimited } : {}),
             ...(done ? incomplete : {}),
           });
         };
@@ -1191,29 +1260,35 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           // 'results' is array of Lunr Result objects with matchData
           const lunrResults = results as LunrResult[];
           let currentChunk: SearchResult[] = [];
+          let chatsSent = 0;
+          let wasLimited = false;
 
-          for (let i = 0; i < lunrResults.length; i++) {
-            if (sentCount >= maxResults) break;
-
-            const r = lunrResults[i];
-            const chatId = r.ref;
-
-            const chat = await loadChatWithMessages(chatId);
-            if (chat) {
-              if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
-                continue;
-              }
-
-              const snippets = needsExactPhraseHydration
-                ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
-                : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
-                    (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
-                  );
-
-              const limitedSnippets = snippets.slice(0, Math.max(0, maxResults - sentCount));
-              currentChunk.push(...limitedSnippets);
-              sentCount += limitedSnippets.length;
+          for (const r of lunrResults) {
+            // The row and the metadata say whether the chat is a result; its messages are read
+            // only for the ones that are, so a filter few chats pass does not read them all.
+            const row = await db.chats.get(r.ref);
+            if (!row) continue;
+            if (filterProvider && filterProvider !== "all" && row.source !== filterProvider) {
+              continue;
             }
+            if (!(await chatPassesFilters(row, filters))) continue;
+            const chat = await attachMessageRows(row);
+
+            const snippets = needsExactPhraseHydration
+              ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
+              : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
+                  (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
+                );
+            // A chat counts when it has a passage to show, so a chat after the limit that has
+            // none is not "more results". The first one that has one is the proof there are more.
+            if (snippets.length === 0) continue;
+            if (chatsSent >= maxChats) {
+              wasLimited = true;
+              break;
+            }
+
+            currentChunk.push(...snippets.slice(0, passagesPerChat));
+            chatsSent++;
 
             // Flush chunk
             if (currentChunk.length >= CHUNK) {
@@ -1224,7 +1299,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           }
 
           // Final chunk
-          sendChunk(currentChunk, true);
+          sendChunk(currentChunk, true, wasLimited);
         }
       }
       return;
