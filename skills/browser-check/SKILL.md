@@ -72,6 +72,7 @@ Delete `transcripts/browser-check/` when the check is done. The dev profile can 
 - **Native confirms:** `press_key` accepts a `window.confirm` silently. To test the dismiss branch, trigger it inside `evaluate_script` with `dialogAction: "dismiss"`.
 - **The Import dialog swaps its file input** when the provider changes. Choose the provider, take a fresh snapshot, then `upload_file` to the new "Choose File" uid.
 - **The search worker's logs do not reach the page's `haevnDebug.getLogs()`.** To prove that no index rebuild ran, put a sentinel row in IndexedDB `lunrIndex` (`haevnDebug.db.table('lunrIndex').put({id:'zz-sentinel'})`). A rebuild clears the table at its start, so if the row survives a reload, no rebuild happened. Delete the row afterwards. The `format` record (`{id:"format", format:N}`) is written only at the end of a successful pass.
+- **Not every seat has the browser tools.** The read-only seats (Mechanic, Reviewer, Cartographer) have files and a shell but no `mcp__chrome-devtools-haevn__*` tools. Give browser reproduction to a seat with all tools (Limner, Builder, Journeyman), or do it yourself, and tell the read-only seat to diagnose from code and say what a browser run should show.
 
 ## CLI checks
 

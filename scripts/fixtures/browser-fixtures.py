@@ -189,6 +189,11 @@ for i in range(N_FILLER):
     last = b.linear(turns)
     chats.append(b.chat(last))
 
+# HVN-59: a link whose text and URL both contain "https"
+b = ChatBuilder("fx-links", "Fixture links https", ts + 8000)
+last = b.linear([("user", "Show me the https link. " + words(10)), ("assistant", "Here: [https://example.test/docs](https://example.test/docs) and the plain https://example.test/plain address.")])
+chats.append(b.chat(last))
+
 manifest = {
     "haevn_version": "fixture", "export_version": "1.0", "export_id": "fixture",
     "export_timestamp": iso(BASE_TS), "total_chats": len(chats), "total_media_items": len(media),
