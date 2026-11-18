@@ -95,7 +95,11 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
     });
 
     it("finds a phrase of stop words", async () => {
-      await openWith(chat("a", ["to be or not"]), chat("b", ["not to be"]), chat("c", ["do be well"]));
+      await openWith(
+        chat("a", ["to be or not"]),
+        chat("b", ["not to be"]),
+        chat("c", ["do be well"]),
+      );
 
       expect(ids('"to be"')).toEqual(["a", "b"]);
     });
@@ -233,7 +237,9 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
     it("mark an accented word by what the text has, not by what was typed", async () => {
       await openWith(chat("a", ["the Café and İstanbul"]));
 
-      expect(index.passages(plan("cafe istanbul"), "a").map(marked)).toEqual([["Café", "İstanbul"]]);
+      expect(index.passages(plan("cafe istanbul"), "a").map(marked)).toEqual([
+        ["Café", "İstanbul"],
+      ]);
     });
 
     it("hold a match after text whose lower case is longer, at the place the text has it", async () => {
@@ -249,7 +255,10 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
       await openWith({
         ...chat("a", ["a body"]),
         title: "About pineapple",
-        messages: [{ id: "system", role: "user", text: "pineapple expert" }, ...chat("a", ["a body"]).messages],
+        messages: [
+          { id: "system", role: "user", text: "pineapple expert" },
+          ...chat("a", ["a body"]).messages,
+        ],
       });
 
       expect(index.passages(plan("pineapple"), "a").map((p) => p.messageId)).toEqual([
@@ -284,10 +293,71 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
       expect(index.passages(plan("pineapple"), "a", 2)).toHaveLength(2);
     });
 
+    describe("for many chats at once", () => {
+      // More than the index reads one by one, with words, a prefix and a near spelling.
+      const crowd = (n: number) =>
+        Array.from({ length: n }, (_, i) =>
+          chat(`c${String(i).padStart(2, "0")}`, [
+            `first ${i % 3 === 0 ? "pineapple" : "mango"} question`,
+            `an ${i % 2 === 0 ? "pineapples" : "answer"} about it`,
+            `last pineapple note ${i}`,
+          ]),
+        );
+
+      it.each([
+        "pineapple",
+        "pine*",
+        "pineaple~1",
+        "mango pineapple",
+      ])("are the passages that each chat gives alone, for %s", async (query) => {
+        await openWith(...crowd(20));
+        const ids = crowd(20).map((c) => c.id);
+
+        const together = index.passagesFor(plan(query), ids, 2);
+
+        expect(together.size).toBeGreaterThan(0);
+        for (const id of ids) {
+          expect(together.get(id) ?? []).toEqual(index.passages(plan(query), id, 2));
+        }
+      });
+
+      it("leave a chat with no passage out of the map, and an unknown chat", async () => {
+        await openWith(...crowd(12), chat("none", ["nothing here"]));
+
+        const together = index.passagesFor(
+          plan("mango"),
+          [...crowd(12).map((c) => c.id), "none", "unknown"],
+          4,
+        );
+
+        expect(together.has("none")).toBe(false);
+        expect(together.has("unknown")).toBe(false);
+        expect(together.has("c01")).toBe(true);
+      });
+
+      it("give every passage of a chat when there is no limit", async () => {
+        await openWith(...crowd(12));
+
+        const together = index.passagesFor(
+          plan("pine*"),
+          crowd(12).map((c) => c.id),
+          -1,
+        );
+
+        expect(together.get("c00")?.map((p) => p.messageId)).toEqual([
+          "c00-m1",
+          "c00-m2",
+          "c00-m3",
+        ]);
+      });
+    });
+
     it("keep the time and the model of the message", async () => {
       await openWith({
         ...chat("a", ["pineapple"]),
-        messages: [{ id: "m", role: "assistant", text: "pineapple", timestamp: 77, model: "gpt-x" }],
+        messages: [
+          { id: "m", role: "assistant", text: "pineapple", timestamp: 77, model: "gpt-x" },
+        ],
       });
 
       expect(index.passages(plan("pineapple"), "a")[0]).toMatchObject({
@@ -341,7 +411,10 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
 
     it("keeps the rows of one chat out of another's, however many messages it has", async () => {
       await openWith(
-        chat("long", Array.from({ length: 300 }, (_, i) => `pineapple ${i}`)),
+        chat(
+          "long",
+          Array.from({ length: 300 }, (_, i) => `pineapple ${i}`),
+        ),
         chat("next", ["mango"]),
       );
 

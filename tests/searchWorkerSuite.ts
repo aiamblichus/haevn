@@ -4,7 +4,7 @@ import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
-import { faults, resetFaults, withFaults } from "./helpers/faultyIndex";
+import { faults, opens, resetFaults, withFaults } from "./helpers/faultyIndex";
 import { type IndexKit, mapKit, sqliteKit } from "./helpers/indexKit";
 
 // The worker's tests run against two implementations of the index (HVN-87): SQLite itself, in
@@ -186,8 +186,72 @@ async function waitForPassEnd(endsBefore: number): Promise<void> {
 }
 
 const passEnds = () =>
-  posted.filter((m) => m.type === "indexRebuildComplete" || m.type === "indexRebuildFailed")
-    .length;
+  posted.filter((m) => m.type === "indexRebuildComplete" || m.type === "indexRebuildFailed").length;
+
+/** A held step: `paused` settles when it is reached, `resume` lets it go on. */
+type Hold = {
+  paused: Promise<void>;
+  resume: () => void;
+  reached: () => void;
+  released: Promise<void>;
+};
+
+function newHold(): Hold {
+  let reached!: () => void;
+  let resume!: () => void;
+  const paused = new Promise<void>((r) => {
+    reached = r;
+  });
+  const released = new Promise<void>((r) => {
+    resume = r;
+  });
+  return { paused, resume, reached, released };
+}
+
+/**
+ * Hold the running rebuild just before it reads the page of chats that follows the first
+ * `chatsRead` of them (a multiple of the 50 it reads at a time): it has read, and moved past,
+ * those. It counts the pages whichever way the rebuild asks for them (by position or by key),
+ * so the same hold applies to the code before and after it paged by key.
+ */
+function holdRebuildAfter(chatsRead: number): Hold {
+  const db = workerDbs[workerDbs.length - 1];
+  const hold = newHold();
+  const holdPage = chatsRead / 50;
+  let pages = 0;
+  type Reads = { limit: (n: number) => Reads; toArray: () => Promise<unknown[]> };
+  const counted = (reads: Reads): Reads => {
+    const limit = reads.limit.bind(reads);
+    reads.limit = (count: number) => {
+      const limited = limit(count);
+      const toArray = limited.toArray.bind(limited);
+      limited.toArray = async () => {
+        if (pages++ === holdPage) {
+          hold.reached();
+          await hold.released;
+        }
+        return toArray();
+      };
+      return limited;
+    };
+    return reads;
+  };
+  const table = db.chats as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const offset = table.offset.bind(table);
+  const toCollection = table.toCollection.bind(table);
+  const where = table.where.bind(table);
+  vi.spyOn(table, "offset").mockImplementation(((n: number) =>
+    counted(offset(n) as Reads)) as never);
+  vi.spyOn(table, "toCollection").mockImplementation((() =>
+    counted(toCollection() as Reads)) as never);
+  vi.spyOn(table, "where").mockImplementation(((...args: unknown[]) => {
+    const clause = where(...args) as { above: (key: unknown) => Reads };
+    const above = clause.above.bind(clause);
+    clause.above = (key: unknown) => counted(above(key));
+    return clause;
+  }) as never);
+  return hold;
+}
 
 describe("search worker: a search during an index rebuild", () => {
   it("reports the rebuild, with progress, instead of an empty result", async () => {
@@ -271,23 +335,17 @@ describe("search worker: a search during an index rebuild", () => {
         buildChat(`c${String(i).padStart(3, "0")}`, "pineapple"),
       ),
     );
-    let finished = false;
-    const rebuild = send({ type: "rebuild" }).then(() => {
-      finished = true;
-    });
+    // Held after 100 of the 120 chats are read: 120 fit in one 1000-chat chunk, so only a per-read
+    // counter says 100 here; a per-chunk counter would still say 0.
+    const hold = holdRebuildAfter(100);
+    const rebuild = send({ type: "rebuild" });
+    await hold.paused;
 
-    const processedSeen = new Set<number>();
-    while (!finished) {
-      await new Promise((r) => setTimeout(r, 0));
-      const [chunk] = await search("pineapple", true);
-      const status = chunk?.indexRebuilding as { processed: number } | undefined;
-      if (status) processedSeen.add(status.processed);
-    }
+    const [chunk] = await search("pineapple", true);
+
+    expect(chunk.indexRebuilding).toMatchObject({ processed: 100, total: 120 });
+    hold.resume();
     await rebuild;
-
-    // 120 chats fit in one 1000-chat chunk, so only a per-read counter is ever
-    // seen strictly between the ends; a per-chunk counter jumps from 0 to 120.
-    expect([...processedSeen].some((n) => n > 0 && n < 120)).toBe(true);
   });
 });
 
@@ -341,18 +399,6 @@ describe("search worker: soft-deleted chats", () => {
 });
 
 type RebuildStatus = { processed: number; total: number; percentage: number };
-
-/** Run the clock and the event loop until `done` settles (fake timers, real IndexedDB). */
-async function settle(done: Promise<unknown>): Promise<void> {
-  let finished = false;
-  void done.then(() => {
-    finished = true;
-  });
-  while (!finished) {
-    await vi.advanceTimersByTimeAsync(10);
-    await new Promise((r) => setImmediate(r));
-  }
-}
 
 /** Poll with searches until the worker answers without a rebuild status. */
 async function waitUntilIndexReady(query = "pineapple"): Promise<void> {
@@ -680,71 +726,6 @@ function lastReply(): Posted {
 }
 
 describe("search worker: an add or a remove during an index rebuild (HVN-54)", () => {
-  /** A held step: `paused` settles when it is reached, `resume` lets it go on. */
-  type Hold = {
-    paused: Promise<void>;
-    resume: () => void;
-    reached: () => void;
-    released: Promise<void>;
-  };
-
-  function newHold(): Hold {
-    let reached!: () => void;
-    let resume!: () => void;
-    const paused = new Promise<void>((r) => {
-      reached = r;
-    });
-    const released = new Promise<void>((r) => {
-      resume = r;
-    });
-    return { paused, resume, reached, released };
-  }
-
-  /**
-   * Hold the running rebuild just before it reads the page of chats that follows the first
-   * `chatsRead` of them (a multiple of the 50 it reads at a time): it has read, and moved past,
-   * those. It counts the pages whichever way the rebuild asks for them (by position or by key),
-   * so the same hold applies to the code before and after it paged by key.
-   */
-  function holdRebuildAfter(chatsRead: number): Hold {
-    const db = workerDbs[workerDbs.length - 1];
-    const hold = newHold();
-    const holdPage = chatsRead / 50;
-    let pages = 0;
-    type Reads = { limit: (n: number) => Reads; toArray: () => Promise<unknown[]> };
-    const counted = (reads: Reads): Reads => {
-      const limit = reads.limit.bind(reads);
-      reads.limit = (count: number) => {
-        const limited = limit(count);
-        const toArray = limited.toArray.bind(limited);
-        limited.toArray = async () => {
-          if (pages++ === holdPage) {
-            hold.reached();
-            await hold.released;
-          }
-          return toArray();
-        };
-        return limited;
-      };
-      return reads;
-    };
-    const table = db.chats as unknown as Record<string, (...args: unknown[]) => unknown>;
-    const offset = table.offset.bind(table);
-    const toCollection = table.toCollection.bind(table);
-    const where = table.where.bind(table);
-    vi.spyOn(table, "offset").mockImplementation(((n: number) =>
-      counted(offset(n) as Reads)) as never);
-    vi.spyOn(table, "toCollection").mockImplementation((() =>
-      counted(toCollection() as Reads)) as never);
-    vi.spyOn(table, "where").mockImplementation(((...args: unknown[]) => {
-      const clause = where(...args) as { above: (key: unknown) => Reads };
-      const above = clause.above.bind(clause);
-      clause.above = (key: unknown) => counted(above(key));
-      return clause;
-    }) as never);
-    return hold;
-  }
-
   function chatIds(count: number): string[] {
     return Array.from({ length: count }, (_, i) => `c${String(i).padStart(3, "0")}`);
   }
@@ -1886,5 +1867,51 @@ describe("search worker: the query is parsed by us, not by the index (HVN-78)", 
 
       expect(chunk).toMatchObject({ results: [], done: true });
     });
+  });
+});
+
+describe("search worker: an index file that cannot be opened (HVN-87)", () => {
+  const REASON = "Access Handles cannot be created: another worker holds the file";
+  const lastChunk = (chunks: Posted[]) => chunks[chunks.length - 1];
+
+  beforeEach(async () => {
+    await seedChats([buildChat("a", "a pineapple"), buildChat("b", "a pineapple")]);
+  });
+
+  it("says why on a search that follows init, and finds nothing", async () => {
+    faults.open = new Error(REASON);
+    faults.openFailures = 5;
+    await send({ type: "init" });
+
+    const chunks = await search("pineapple", false);
+
+    expect(hitIds(chunks)).toEqual([]);
+    expect(lastChunk(chunks).indexIncomplete).toEqual({ error: REASON });
+  });
+
+  it("says why on a search that is the first message, the one that opens the file", async () => {
+    faults.open = new Error(REASON);
+    faults.openFailures = 5;
+
+    const chunks = await search("pineapple", true);
+
+    expect(hitIds(chunks)).toEqual([]);
+    expect(lastChunk(chunks).indexIncomplete).toEqual({ error: REASON });
+  });
+
+  it("opens the file again at the next init, and answers once it is open", async () => {
+    faults.open = new Error(REASON);
+    faults.openFailures = 1;
+    await send({ type: "init" });
+    expect(lastChunk(await search("pineapple", false)).indexIncomplete).toEqual({ error: REASON });
+    const before = passEnds();
+
+    await send({ type: "init" }); // the file is free now
+    await waitForPassEnd(before);
+
+    const chunks = await search("pineapple", false);
+    expect(new Set(hitIds(chunks))).toEqual(new Set(["a", "b"]));
+    expect(lastChunk(chunks).indexIncomplete).toBeUndefined();
+    expect(opens.count).toBe(2);
   });
 });

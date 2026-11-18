@@ -222,6 +222,12 @@ export interface SearchIndex extends IndexWriter {
   search(plan: QueryPlan, filters?: IndexFilters): RankedChat[];
   /** The messages of one chat that have a word of the plan, in order, with their marks. */
   passages(plan: QueryPlan, chatId: string, limit?: number): MarkedPassage[];
+  /**
+   * `passages` for many chats at once, keyed by chat id (a chat with none is not in the map). A
+   * prefix of one letter has tens of thousands of rows to merge, and asking for each chat's
+   * passages alone costs that merge each time; this reads the rows of the plan once.
+   */
+  passagesFor(plan: QueryPlan, chatIds: string[], limit?: number): Map<string, MarkedPassage[]>;
   /** Start a rebuild into the file that is not the live one. */
   beginRebuild(): IndexBuild;
   close(): void;
@@ -242,6 +248,10 @@ const ORDINAL_SPAN = 2 ** ORDINAL_BITS;
 /** The title counts ten times what the body does, as it did in the Lunr index. */
 const TITLE_WEIGHT = 10;
 const VARIANTS_LIMIT = 64;
+/** Up to this many chats, `passagesFor` asks for each chat alone. */
+const SEEK_MAX_CHATS = 8;
+/** Rows marked in one query of `passagesFor`. */
+const SHOWN_PER_QUERY = 2000;
 /** Around a hit, in `highlight()`: not in any text (the extraction takes them out). */
 const MARK_OPEN = "\u0001";
 const MARK_CLOSE = "\u0002";
@@ -563,6 +573,84 @@ class Slot implements IndexWriter {
     });
     return passages;
   }
+
+  passagesFor(plan: QueryPlan, chatIds: string[], limit: number): Map<string, MarkedPassage[]> {
+    const found = new Map<string, MarkedPassage[]>();
+    // A few chats are cheaper one by one (a seek in each term's rows); many are cheaper in one pass.
+    if (chatIds.length <= SEEK_MAX_CHATS) {
+      for (const chatId of chatIds) {
+        const passages = this.passages(plan, chatId, limit);
+        if (passages.length > 0) found.set(chatId, passages);
+      }
+      return found;
+    }
+
+    const { required, optional } = buildMatches(plan, (term, max) => this.variants(term, max));
+    const positive = anyOf([...required, ...optional]);
+    if (!positive) return found;
+
+    const idOf = new Map<number, string>();
+    for (const chatId of chatIds) {
+      const key = this.chatKey(chatId);
+      if (key !== undefined) idOf.set(key, chatId);
+    }
+
+    // Pass one: the rows of the plan, in order, and the first rows of each chat that is asked for,
+    // one for each message.
+    const rows = new Map<number, { messages: Set<string>; rowids: number[] }>();
+    this.db.exec({
+      sql: "SELECT rowid, mid FROM msgs WHERE msgs MATCH ?",
+      bind: [positive],
+      rowMode: "array",
+      callback: (row: unknown[]) => {
+        const rowid = Number(row[0]);
+        const key = Math.floor(rowid / ORDINAL_SPAN);
+        if (!idOf.has(key)) return;
+        let entry = rows.get(key);
+        if (!entry) {
+          entry = { messages: new Set(), rowids: [] };
+          rows.set(key, entry);
+        }
+        const message = String(row[1]);
+        if (entry.messages.has(message) || (limit >= 0 && entry.messages.size >= limit)) return;
+        entry.messages.add(message);
+        entry.rowids.push(rowid);
+      },
+    });
+
+    // Pass two: the marks of those rows only. The unary plus keeps `rowid IN` from becoming one
+    // seek for each row; the rows that pass are marked, and no others.
+    const shown = [...rows.values()].flatMap((entry) => entry.rowids);
+    for (let at = 0; at < shown.length; at += SHOWN_PER_QUERY) {
+      this.db.exec({
+        sql: `SELECT rowid, mid, role, ts, model,
+                highlight(msgs, 0, ?, ?), highlight(msgs, 1, ?, ?)
+              FROM msgs
+              WHERE msgs MATCH ? AND +rowid IN (${shown.slice(at, at + SHOWN_PER_QUERY).join(",")})`,
+        bind: [MARK_OPEN, MARK_CLOSE, MARK_OPEN, MARK_CLOSE, positive],
+        rowMode: "array",
+        callback: (row: unknown[]) => {
+          const chatId = idOf.get(Math.floor(Number(row[0]) / ORDINAL_SPAN));
+          if (chatId === undefined) return;
+          const { text, marks } = readMarks(String(row[5]) || String(row[6]));
+          let list = found.get(chatId);
+          if (!list) {
+            list = [];
+            found.set(chatId, list);
+          }
+          list.push({
+            messageId: String(row[1]),
+            role: row[2] === "assistant" ? "assistant" : "user",
+            text,
+            marks,
+            ...(row[3] === null ? {} : { timestamp: Number(row[3]) }),
+            ...(row[4] === null ? {} : { model: String(row[4]) }),
+          });
+        },
+      });
+    }
+    return found;
+  }
 }
 
 /** The index on SQLite. The worker makes it through `createSearchIndex`; tests make it directly. */
@@ -658,6 +746,10 @@ export class SqliteSearchIndex implements SearchIndex {
 
   passages(plan: QueryPlan, chatId: string, limit = -1): MarkedPassage[] {
     return this.live?.passages(plan, chatId, limit) ?? [];
+  }
+
+  passagesFor(plan: QueryPlan, chatIds: string[], limit = -1): Map<string, MarkedPassage[]> {
+    return this.live?.passagesFor(plan, chatIds, limit) ?? new Map();
   }
 
   beginRebuild(): IndexBuild {

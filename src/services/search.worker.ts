@@ -14,6 +14,7 @@ import {
   createSearchIndex,
   type IndexBuild,
   type IndexFilters,
+  type MarkedPassage,
   type RankedChat,
   type SearchIndex,
 } from "./searchIndex";
@@ -445,8 +446,10 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // before this fails the pass, and the old index keeps answering.
     written.commit();
     build = undefined;
-    hasLiveIndex = true;
+    // Freed before the index is called ready, so that "ready" and "the rebuild is complete" are
+    // seen together: nothing awaits between the flag and the completion message.
     await freeLunrRows();
+    hasLiveIndex = true;
 
     log.info("[SearchWorker] Full rebuild complete.");
 
@@ -569,9 +572,8 @@ async function performSearch(
 }
 
 /** The passages of one chat, as the results a caller shows. */
-function passagesOf(chat: Chat, plan: QueryPlan, limit: number, radius: number): SearchResult[] {
-  if (!index) return [];
-  return index.passages(plan, chat.id as string, limit).map((passage) => ({
+function resultsOf(chat: Chat, found: MarkedPassage[], radius: number): SearchResult[] {
+  return found.map((passage) => ({
     chatId: chat.id as string,
     chatTitle: chat.title || "Untitled",
     source: chat.source,
@@ -622,7 +624,6 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         return;
       }
 
-      const incomplete = currentIndexIncomplete();
       const hydrate = msg.hydrate === true;
       const filterProvider =
         typeof msg.filterProvider === "string" ? msg.filterProvider : undefined;
@@ -644,7 +645,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           results: [],
           done: true,
           queryProblem: parsedQuery.problem,
-          ...incomplete,
+          ...currentIndexIncomplete(),
         });
         return;
       }
@@ -659,6 +660,8 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           }
         : {};
       const { chats: ranked, plan } = await performSearch(parsedQuery, indexFilters);
+      // After the search: a search that opened the file learns here that it could not.
+      const incomplete = currentIndexIncomplete();
 
       const CHUNK = hydrate ? 10 : 50; // Smaller chunks for hydrated data
 
@@ -696,14 +699,25 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           let chatsSent = 0;
           let wasLimited = false;
 
-          for (const r of ranked) {
+          // The passages are read for a batch of chats at a time: the limit and one more, which is
+          // all there is to read unless a category or a missing row turns some of them away.
+          const BATCH = maxChats + 1;
+          let found = new Map<string, MarkedPassage[]>();
+          for (const [at, r] of ranked.entries()) {
+            if (at % BATCH === 0 && index) {
+              found = index.passagesFor(
+                plan,
+                ranked.slice(at, at + BATCH).map((chat) => chat.chatId),
+                passagesPerChat,
+              );
+            }
             // The row and the metadata say whether the chat is a result; the passages come from
             // the index, which holds the text, so no message is read from the database.
             const row = await db.chats.get(r.chatId);
             if (!row) continue;
             if (!(await chatPassesCategory(row, filters))) continue;
 
-            const snippets = passagesOf(row, plan, passagesPerChat, snippetRadius);
+            const snippets = resultsOf(row, found.get(r.chatId) ?? [], snippetRadius);
             // A chat counts when it has a passage to show, so a chat after the limit that has
             // none is not "more results". The first one that has one is the proof there are more.
             if (snippets.length === 0) continue;

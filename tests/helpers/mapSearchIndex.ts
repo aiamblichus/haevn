@@ -243,6 +243,15 @@ class MapSearchIndex extends MapWriter implements SearchIndex {
     return ranked.sort((a, b) => b.score - a.score);
   }
 
+  passagesFor(plan: QueryPlan, chatIds: string[], limit = -1): Map<string, MarkedPassage[]> {
+    const found = new Map<string, MarkedPassage[]>();
+    for (const chatId of chatIds) {
+      const passages = this.passages(plan, chatId, limit);
+      if (passages.length > 0) found.set(chatId, passages);
+    }
+    return found;
+  }
+
   passages(plan: QueryPlan, chatId: string, limit = -1): MarkedPassage[] {
     const doc = this.ready() ? this.file.docs.get(chatId) : undefined;
     if (!doc) return [];
