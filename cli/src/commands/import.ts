@@ -122,6 +122,37 @@ function buildMediaChat(
   return JSON.stringify(chat);
 }
 
+// ─── Summary ─────────────────────────────────────────────────────────────────
+
+export interface ImportSummary {
+  /** The lines to print, in order. */
+  lines: string[];
+  /** 1 when the chats were saved but the search index was not brought up to date, else 0. */
+  exitCode: 0 | 1;
+}
+
+/**
+ * Turn the daemon's import result into the lines to print and the exit status.
+ */
+export function summarizeImport(
+  result: ImportResult,
+  options: { format: ImportFormat; skipIndex: boolean },
+): ImportSummary {
+  const { format, skipIndex } = options;
+  const indexState = skipIndex
+    ? "skipped"
+    : result.indexError
+      ? `failed (${result.indexError})`
+      : "updated";
+  const lines = [
+    `${pc.green("✓")} Imported ${pc.bold(String(result.saved))} chat${result.saved === 1 ? "" : "s"}`,
+    `  format=${format} · processed=${result.processed}/${result.total}`,
+    `  skipped=${result.skipped} · errors=${result.errors} · index=${indexState}`,
+  ];
+
+  return { lines, exitCode: result.indexError ? 1 : 0 };
+}
+
 // ─── Command ─────────────────────────────────────────────────────────────────
 
 export default defineCommand({
@@ -247,19 +278,9 @@ export default defineCommand({
       process.exit(1);
     }
 
-    const indexState = skipIndex
-      ? "skipped"
-      : result.indexError
-        ? `failed (${result.indexError})`
-        : "updated";
-    const lines = [
-      `${pc.green("✓")} Imported ${pc.bold(String(result.saved))} chat${result.saved === 1 ? "" : "s"}`,
-      `  format=${format} · processed=${result.processed}/${result.total}`,
-      `  skipped=${result.skipped} · errors=${result.errors} · index=${indexState}`,
-    ];
-
-    consola.log(lines.join("\n"));
+    const summary = summarizeImport(result, { format, skipIndex });
+    consola.log(summary.lines.join("\n"));
     // The chats are saved, but they will not be found by search until the index is rebuilt.
-    if (result.indexError) process.exit(1);
+    if (summary.exitCode !== 0) process.exit(summary.exitCode);
   },
 });
