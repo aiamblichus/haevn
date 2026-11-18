@@ -23,11 +23,19 @@ vi.mock("../src/services/db", async (importOriginal) => {
 });
 
 // Staging is OPFS; a start creates its staging directory, which is all these tests need from it.
+// `hold` keeps the setup pending, and `fail` makes it throw, for the tests of a cancel or a failure
+// during it.
 const stagedExports = vi.hoisted(() => [] as string[]);
+const stagingSetup = vi.hoisted(() => ({
+  hold: undefined as Promise<void> | undefined,
+  fail: undefined as Error | undefined,
+}));
 vi.mock("../src/services/exportStaging", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/services/exportStaging")>()),
   ensureExportStagingDirectories: async (exportId: string) => {
     stagedExports.push(exportId);
+    await stagingSetup.hold;
+    if (stagingSetup.fail) throw stagingSetup.fail;
   },
 }));
 
@@ -132,6 +140,8 @@ async function loadWorker(): Promise<void> {
   opfs.files.clear();
   opfs.onWrite = undefined;
   stagedExports.length = 0;
+  stagingSetup.hold = undefined;
+  stagingSetup.fail = undefined;
   firstLoad = Promise.resolve();
   workerSelf = {
     postMessage: (message) => posted.push(message),
@@ -592,5 +602,81 @@ describe("what the job posts reaches the start's listener (HVN-61)", () => {
     );
     expect(announced.map((m) => m.type)).toContain("complete");
     expect(announced.filter((m) => m.requestId !== "r1")).toEqual([]);
+  });
+});
+
+// ---- HVN-63: a cancel while the start sets up its staging -------------------------------------
+
+describe("a cancel during the start's staging setup (HVN-63)", () => {
+  it("stops the job before it loads a chat, and answers on the start's requestId", async () => {
+    await loadWorker();
+    const ids = seedChats(3);
+    const setup = gate();
+    stagingSetup.hold = setup.wait;
+
+    const run = send(startMessage("r1", "e1", ids));
+    await vi.waitFor(() => expect(stagedExports).toEqual(["e1"]));
+    await send({ type: "cancel" });
+    expect(posted).toEqual([{ type: "cancelled", requestId: "r1" }]);
+
+    setup.open();
+    await run;
+
+    expect(chatLoads).toEqual([]);
+    expect(posted).toEqual([{ type: "cancelled", requestId: "r1" }]);
+  });
+
+  it("refuses a second start during the setup, and accepts one after the cancel", async () => {
+    await loadWorker();
+    const setup = gate();
+    stagingSetup.hold = setup.wait;
+
+    const run = send(startMessage("r1", "e1", seedChats(2)));
+    await vi.waitFor(() => expect(stagedExports).toEqual(["e1"]));
+    await send(startMessage("r2", "e2", ["b0"]));
+    expect(posted).toEqual([{ type: "error", error: EXPORT_REFUSED, requestId: "r2" }]);
+    expect(stagedExports).toEqual(["e1"]);
+
+    await send({ type: "cancel" });
+    stagingSetup.hold = undefined;
+    await send(startMessage("r3", "e3", []));
+    expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r3" }));
+
+    // The cancelled start's setup ends after the next job began: it must not touch that job.
+    setup.open();
+    await run;
+    expect(chatLoads).toEqual([]);
+    expect(posted.filter((m) => m.requestId === "r1" && m.type !== "cancelled")).toEqual([]);
+  });
+
+  it("holds a pause that lands during the setup until the job resumes", async () => {
+    await loadWorker();
+    const ids = seedChats(2);
+    const setup = gate();
+    stagingSetup.hold = setup.wait;
+
+    const run = send(startMessage("r1", "e1", ids));
+    await vi.waitFor(() => expect(stagedExports).toEqual(["e1"]));
+    await send({ type: "pause" });
+    setup.open();
+    await run;
+
+    expect(chatLoads).toEqual([]);
+    expect(posted).toContainEqual({ type: "paused", requestId: "r1" });
+    await send({ type: "resume" });
+    expect(stagedChatIds("e1").sort()).toEqual(ids);
+  });
+
+  it("frees the worker when the setup fails, so the next start is accepted", async () => {
+    await loadWorker();
+    stagingSetup.fail = new Error("no space");
+
+    await send(startMessage("r1", "e1", seedChats(2)));
+    expect(posted).toEqual([{ type: "error", error: "no space", requestId: "r1" }]);
+
+    posted = [];
+    stagingSetup.fail = undefined;
+    await send(startMessage("r2", "e2", []));
+    expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r2" }));
   });
 });

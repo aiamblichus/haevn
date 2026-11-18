@@ -24,7 +24,12 @@ import {
   setBulkExportState,
 } from "../state";
 import { safeSendMessage } from "../utils/messageUtils";
-import { createBlobUrlFromOffscreen, revokeBlobUrlFromOffscreen } from "../utils/offscreenUtils";
+import {
+  createBlobUrlFromOffscreen,
+  deleteExportFromOffscreen,
+  revokeBlobUrlFromOffscreen,
+  sweepExportsFromOffscreen,
+} from "../utils/offscreenUtils";
 // Removed downloadManager import - using chrome.downloads.download directly
 import type { BulkExportState } from "./types";
 
@@ -350,6 +355,32 @@ export async function waitForDownloadSettled(downloadId: number): Promise<void> 
   }
 }
 
+/**
+ * Deletes an export's directory in OPFS (staging tree and ZIP). A failure is logged and left to
+ * the sweep: the export it belongs to is over, and nothing should wait on its files.
+ */
+async function removeExportFiles(exportId: string): Promise<void> {
+  try {
+    await deleteExportFromOffscreen(exportId);
+  } catch (error) {
+    log.warn(`[BulkExport] Failed to delete the files of export ${exportId}:`, error);
+  }
+}
+
+/**
+ * Deletes the export directories in OPFS that no write has touched for a day, the orphans of
+ * an export that was interrupted (a restart, a crash) or whose deletion failed. The export a job
+ * is running or has paused is left alone. Run at start and on the Janitor's alarm.
+ */
+export async function sweepOrphanedExports(): Promise<void> {
+  const job = await getExportJobState();
+  const running = job && (job.status === "running" || job.status === "paused");
+  const swept = await sweepExportsFromOffscreen(running ? job.exportId : undefined);
+  if (swept.length > 0) {
+    log.info(`[BulkExport] Swept ${swept.length} stale export(s) from OPFS`);
+  }
+}
+
 async function downloadExportZip(exportState: {
   exportId: string;
   zipPath: string;
@@ -412,6 +443,9 @@ async function downloadExportZip(exportState: {
         log.warn(`[BulkExport] Failed to revoke blob URL:`, revokeError);
       }
     }
+    // The ZIP is the user's now (or the download failed and nothing will read it again), and
+    // the staging tree was only ever its source: neither is kept (HVN-62).
+    await removeExportFiles(exportState.exportId);
   }
 }
 
@@ -640,8 +674,16 @@ async function cleanupBulkExport(action: string): Promise<void> {
   }
 
   // Clear state
+  const job = await getExportJobState();
   await setBulkExportState(null);
   await setExportJobState(null);
+
+  // A completed export is deleted once its download settles (downloadExportZip), not here: the
+  // download still reads the ZIP. A failed or cancelled one has nothing left to wait for. A job
+  // that is still writing (a forced cancel) may recreate files; the sweep takes them.
+  if (job && action !== "bulkExportComplete") {
+    await removeExportFiles(job.exportId);
+  }
 
   // Clean up worker (optional - can keep it alive for future exports)
   // _exportWorker?.terminate();

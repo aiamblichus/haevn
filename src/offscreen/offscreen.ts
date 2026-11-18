@@ -8,6 +8,7 @@
 // Offscreen documents can create Workers (service workers cannot), so this acts as
 // the Worker Host tier, routing messages between service worker and workers.
 
+import { deleteExportDirectory, sweepStaleExports } from "../services/exportStaging";
 import type { OffscreenEvent, OffscreenRequest, OffscreenResponse } from "../types/messaging";
 import type {
   BulkExportWorkerMessage,
@@ -764,6 +765,38 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   if (request.type === "deleteStagedFile") {
     deleteFileFromOpfs(request.path)
       .then(() => sendResponse({ success: true }))
+      .catch((error: unknown) =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    return true;
+  }
+
+  if (request.type === "deleteExport") {
+    deleteExportDirectory(request.exportId)
+      .then((deleted) => {
+        log.info(`[Offscreen] Export ${request.exportId} deleted from OPFS: ${deleted}`);
+        sendResponse({ success: true });
+      })
+      .catch((error: unknown) =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    return true;
+  }
+
+  if (request.type === "sweepExports") {
+    sweepStaleExports({ keepExportId: request.keepExportId })
+      .then((swept) => {
+        if (swept.length > 0) {
+          log.info(`[Offscreen] Swept ${swept.length} stale export(s) from OPFS`, swept);
+        }
+        sendResponse({ success: true, result: swept });
+      })
       .catch((error: unknown) =>
         sendResponse({
           success: false,

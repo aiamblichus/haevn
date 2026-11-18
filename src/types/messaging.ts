@@ -492,6 +492,10 @@ export interface ImageDownloadedMessage {
 export type OffscreenRequest =
   | { type: "ping" }
   | { type: "deleteStagedFile"; path: string }
+  // Deletes exports/{exportId}: an export's staging tree and ZIP (HVN-62)
+  | { type: "deleteExport"; exportId: string }
+  // Deletes the exports/ directories that no write has touched for a day, bar keepExportId
+  | { type: "sweepExports"; keepExportId?: string }
   | { type: "createBlobUrl"; path: string }
   | { type: "revokeBlobUrl"; url: string }
   | {

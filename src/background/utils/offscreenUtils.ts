@@ -1,10 +1,13 @@
 // Utilities for managing offscreen documents
 // Offscreen documents are used for Web Worker management
 
+import type { OffscreenRequest } from "../../types/messaging";
 import { log } from "../../utils/logger";
 import { withTimeout } from "../../utils/timeout_utils";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
+// A recursive delete of a large export is slower than a blob URL; it still must not hold a cleanup.
+const OPFS_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Check if offscreen document already exists
@@ -132,6 +135,41 @@ export async function createBlobUrlFromOffscreen(path: string): Promise<string> 
     5000,
     "createBlobUrlFromOffscreen",
   );
+}
+
+/** Sends a request to the offscreen document, which owns OPFS, and resolves with its answer. */
+async function requestFromOffscreen(
+  request: Extract<OffscreenRequest, { type: "deleteExport" | "sweepExports" }>,
+): Promise<unknown> {
+  await ensureOffscreenDocument();
+  return withTimeout(
+    new Promise<unknown>((resolve, reject) => {
+      chrome.runtime.sendMessage(request, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (response?.success) {
+          resolve(response.result);
+        } else {
+          reject(new Error(response?.error || `Offscreen request ${request.type} failed`));
+        }
+      });
+    }),
+    OPFS_REQUEST_TIMEOUT_MS,
+    request.type,
+  );
+}
+
+/** Deletes an export's directory in OPFS: its staging tree and its ZIP. */
+export async function deleteExportFromOffscreen(exportId: string): Promise<void> {
+  await requestFromOffscreen({ type: "deleteExport", exportId });
+}
+
+/** Deletes the export directories a day old and more, but keepExportId's. Resolves the ids. */
+export async function sweepExportsFromOffscreen(keepExportId?: string): Promise<string[]> {
+  const swept = await requestFromOffscreen({ type: "sweepExports", keepExportId });
+  return Array.isArray(swept) ? swept : [];
 }
 
 export async function revokeBlobUrlFromOffscreen(url: string): Promise<void> {
