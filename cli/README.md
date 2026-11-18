@@ -74,9 +74,9 @@ HAEVN reads these operators itself (it does not pass the query to Lunr.js as typ
 |----------|---------|-------------|
 | (none) | `term1 term2` | Multi-term query (default term matching) |
 | `"..."` | `"exact phrase"` | Phrase must appear consecutively |
-| `-` | `-exclude` | Term must NOT be present |
-| `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, etc. |
-| `~` | `roam~2` | Fuzzy match with edit distance 2 |
+| `-` | `-exclude` | Word must NOT be present. A phrase cannot be left out: `-"a phrase"` exits 1 with the reason |
+| `*` | `react*` | Prefix at the end of a word: matches `react`, `reactive`, etc. A star inside a word splits it, like a hyphen |
+| `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 (a larger number counts as 2) |
 | `^` | `api^10` | Boost term relevance |
 
 **Examples:**
@@ -103,7 +103,7 @@ haevn search "api^5 design documentation"
 
 If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics) on the words that say something: stop words such as `how` or `should` are left out of the retry.
 
-A query with nothing to look for (only words to leave out, or no words at all) exits 1 with the reason instead of printing no results.
+A query with nothing to look for (only words to leave out, no words at all, or a phrase typed to be left out) exits 1 with the reason instead of printing no results.
 
 ### `get` - Fetch a chat branch
 
