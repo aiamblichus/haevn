@@ -90,6 +90,13 @@ describe("parsing the words of a query (HVN-78)", () => {
     expect(parseSearchQuery("+must").required).toEqual([{ text: "must", prefix: false }]);
   });
 
+  it("allows at most two edits: a longer distance costs seconds in Lunr and matches everything", () => {
+    expect(parseSearchQuery("internationalization~8").required[0].editDistance).toBe(2);
+    expect(parseSearchQuery("wombat~3").required[0].editDistance).toBe(2);
+    expect(parseSearchQuery("wombat~2").required[0].editDistance).toBe(2);
+    expect(parseSearchQuery("wombat~1").required[0].editDistance).toBe(1);
+  });
+
   it("takes modifiers in either order, and applies a prefix to the last part only", () => {
     expect(parseSearchQuery("fuzzy~1^2").required).toEqual([
       { text: "fuzzy", prefix: false, editDistance: 1, boost: 2 },

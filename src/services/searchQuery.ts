@@ -91,6 +91,9 @@ export function splitQuotedSearchQuery(query: string): {
   return { phrases, remainderParts };
 }
 
+/** The most edits `word~N` allows. */
+const MAX_EDIT_DISTANCE = 2;
+
 /** A minus that starts a word and is followed by a quote: `-"a phrase"`. */
 const LEFT_OUT_PHRASE = /(?:^|\s)-"/;
 
@@ -123,7 +126,9 @@ function parseWord(raw: string): ParsedWord | null {
     if (!modifier) break;
     if (modifier[1] === "~") {
       if (!Number.isInteger(Number(modifier[2]))) break;
-      editDistance = Number(modifier[2]);
+      // Lunr's cost grows steeply with the distance (`~8` took 90 s of the worker's only thread
+      // on 200 chats), and by 3 a word matches almost any other.
+      editDistance = Math.min(Number(modifier[2]), MAX_EDIT_DISTANCE);
     } else {
       boost = Number(modifier[2]);
     }
