@@ -7,6 +7,7 @@ import { daemonRequest } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { ListMetadataKey } from "../types";
 import type { Chat } from "../types/chat";
+import { parseWholeNumber } from "../utils/args";
 import { consola, formatPlatform, formatRelativeTime, pc, truncate } from "../utils/output";
 
 const METADATA_KEYS: readonly ListMetadataKey[] = [
@@ -64,11 +65,11 @@ export default defineCommand({
   },
   async run({ args }) {
     const { platform, after, sort, format } = args;
-    const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
-
+    let limit: number;
     let offset: number;
     let includeMetadata: ListMetadataKey[];
     try {
+      limit = parseWholeNumber("limit", args.limit, 20, 1);
       offset = parseOffset(args.offset);
       includeMetadata = parseMetadataKeys(args["include-metadata"]);
     } catch (err) {
@@ -119,12 +120,7 @@ interface ListResponse {
  * Parse the --offset flag value. Returns 0 when the flag is absent.
  */
 export function parseOffset(input: string | undefined): number {
-  if (input == null || input === "") return 0;
-
-  if (!/^\d+$/.test(input)) {
-    throw new Error(`--offset must be a whole number, 0 or more (got "${input}").`);
-  }
-  return Number.parseInt(input, 10);
+  return parseWholeNumber("offset", input, 0);
 }
 
 /**

@@ -6,6 +6,7 @@ import { defineCommand } from "citty";
 import { daemonRequest } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { SearchResult } from "../types";
+import { parseWholeNumber } from "../utils/args";
 import { createMessageRef } from "../utils/messageRefs";
 import { consola, formatPlatform, formatRelativeTime, header, pc, truncate } from "../utils/output";
 
@@ -70,8 +71,15 @@ export default defineCommand({
   async run({ args }) {
     const { query, platform, category, format, after, before, context } = args;
     const includeMetadata = !args["no-metadata"];
-    const limit = args.limit ? Number.parseInt(args.limit, 10) : 20;
-    const contextChars = context ? Number.parseInt(context, 10) : 120;
+    let limit: number;
+    let contextChars: number;
+    try {
+      limit = parseWholeNumber("limit", args.limit, 20, 1);
+      contextChars = parseWholeNumber("context", context, 120);
+    } catch (err) {
+      consola.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
     const hint = getQueryHint(query);
 
     let results: SearchResult[];
