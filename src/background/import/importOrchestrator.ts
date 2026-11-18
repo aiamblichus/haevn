@@ -550,6 +550,8 @@ export async function resumeImportJob(): Promise<void> {
     throw new Error("No paused import job to resume");
   }
 
+  // Running again before the worker is told, as resumeBulkExport does: a second pause needs it.
+  await saveImportJobState({ ...state, status: "running", lastUpdateTime: Date.now() });
   await sendWorkerRequest("import", { type: "resume" }, { expectResponse: false });
 }
 

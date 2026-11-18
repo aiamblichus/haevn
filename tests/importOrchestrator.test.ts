@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getImportJobState,
   handleWorkerResponse,
+  pauseImportJob,
+  resumeImportJob,
   startImportJob,
 } from "../src/background/import/importOrchestrator";
 import { safeSendMessage } from "../src/background/utils/messageUtils";
@@ -152,5 +154,63 @@ describe("the import start's listener (HVN-61)", () => {
     expect(workerType).toBe("import");
     expect(message).toMatchObject({ type: "start" });
     expect(options).toMatchObject({ timeout: 0 });
+  });
+});
+
+describe("import pause and resume (HVN-64)", () => {
+  beforeEach(async () => {
+    setStorageAdapter(new MemoryStorageAdapter());
+    vi.mocked(sendWorkerRequest).mockClear();
+    vi.mocked(safeSendMessage).mockClear();
+    await startJob();
+  });
+
+  it("pauses on the worker's answer to the start, resumes, and reaches complete", async () => {
+    await pauseImportJob();
+    expect(sendWorkerRequest).toHaveBeenLastCalledWith(
+      "import",
+      { type: "pause" },
+      { expectResponse: false },
+    );
+
+    // The worker answers on the start's requestId, so the start's listener hands it here.
+    await handleWorkerResponse({ type: "paused" } as ImportWorkerResponse);
+    expect((await getImportJobState())?.status).toBe("paused");
+
+    await resumeImportJob();
+    expect((await getImportJobState())?.status).toBe("running");
+    expect(sendWorkerRequest).toHaveBeenLastCalledWith(
+      "import",
+      { type: "resume" },
+      { expectResponse: false },
+    );
+
+    await handleWorkerResponse({
+      type: "complete",
+      processed: 3,
+      saved: 3,
+      skipped: 0,
+      errors: 0,
+    } as ImportWorkerResponse);
+    expect((await getImportJobState())?.status).toBe("complete");
+    expect(sentEvents("importComplete")).toEqual([
+      expect.objectContaining({ saved: 3, skipped: 0, errors: 0 }),
+    ]);
+  });
+
+  it("can pause again after a resume", async () => {
+    await handleWorkerResponse({ type: "paused" } as ImportWorkerResponse);
+    await resumeImportJob();
+
+    await expect(pauseImportJob()).resolves.toBeUndefined();
+    expect(sendWorkerRequest).toHaveBeenLastCalledWith(
+      "import",
+      { type: "pause" },
+      { expectResponse: false },
+    );
+  });
+
+  it("refuses a resume when the job is not paused", async () => {
+    await expect(resumeImportJob()).rejects.toThrow("No paused import job to resume");
   });
 });

@@ -178,8 +178,9 @@ describe("a second import start while a job runs or is paused (HVN-55)", () => {
     await vi.waitFor(() => expect(saveChat).toHaveBeenCalledTimes(1));
 
     posted = [];
-    await send({ type: "pause", requestId: "p1" });
-    expect(posted).toEqual([{ type: "paused", requestId: "p1" }]);
+    // The service worker sends a pause with no requestId: the answer goes on the start's (HVN-64).
+    await send({ type: "pause" });
+    expect(posted).toEqual([{ type: "paused", requestId: "r1" }]);
 
     posted = [];
     await send(startMessage("r2"));
@@ -189,6 +190,25 @@ describe("a second import start while a job runs or is paused (HVN-55)", () => {
     release();
     await first;
     expect(posted).toContainEqual(expect.objectContaining({ type: "cancelled", requestId: "r1" }));
+  });
+
+  it("pauses and resumes on the start's requestId, and the job completes (HVN-64)", async () => {
+    carried.chat = chatCarryingMetadata("h5");
+    const release = holdFirstSave();
+    const first = send(startMessage("r1"));
+    await vi.waitFor(() => expect(saveChat).toHaveBeenCalledTimes(1));
+
+    posted = [];
+    await send({ type: "pause" });
+    expect(posted).toEqual([{ type: "paused", requestId: "r1" }]);
+
+    await send({ type: "resume" });
+    release();
+    await first;
+
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "complete", requestId: "r1", saved: 1 }),
+    );
   });
 
   it("accepts a start once the job has completed", async () => {

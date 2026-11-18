@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createRoot } from "react-dom/client";
 import { log } from "../utils/logger";
 import { openingBranch } from "../utils/messageBranches";
+import { highlightTerms, stripEventHandlers } from "./messageHtml";
 
 // Configure marked for better rendering
 marked.setOptions({
@@ -70,49 +71,9 @@ function buildChatUrl(source: string, sourceId: string | undefined): string | nu
   return null;
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\\]/g, "\\$&");
-}
-
-function highlightTerms(textHtml: string, query: string): string {
-  if (!query || !query.trim()) return textHtml;
-
-  const terms: string[] = [];
-
-  // 1. Extract quoted phrases
-  const quoteRegex = /"([^"]+)"/g;
-  let match: RegExpExecArray | null = quoteRegex.exec(query);
-  while (match !== null) {
-    if (match[1].trim()) {
-      terms.push(match[1].trim());
-    }
-    match = quoteRegex.exec(query);
-  }
-
-  // Remove quoted parts to process the rest
-  const queryWithoutQuotes = query.replace(quoteRegex, " ");
-
-  // 2. Process remaining terms (standard Lunr-like cleanup)
-  // Strip Lunr operators but keep the text
-  const cleaned = queryWithoutQuotes.replace(/[+\-~*^:()]/g, " ").trim();
-
-  const singleTerms = cleaned.split(/\s+/).filter(Boolean);
-  terms.push(...singleTerms);
-
-  if (terms.length === 0) return textHtml;
-
-  // Sort terms by length (longest first) to ensure longer phrases are matched before shorter sub-terms
-  terms.sort((a, b) => b.length - a.length);
-
-  const escapedTerms = terms.map(escapeRegExp);
-  const re = new RegExp(`(${escapedTerms.join("|")})`, "gi");
-
-  return textHtml.replace(re, '<span class="highlight">$1</span>');
-}
-
 function renderMarkdown(text: string, query?: string): string {
   if (!text) return "";
-  let html = marked.parse(text) as string;
+  let html = stripEventHandlers(marked.parse(text) as string);
   if (query) {
     html = highlightTerms(html, query);
   }
@@ -979,10 +940,13 @@ const BranchNav = ({
   onChange: (newIndex: number) => void;
 }) => (
   <div className="branch-nav">
+    {/* aria-disabled, not disabled: a disabled button drops keyboard focus to <body>. */}
     <button
       className="branch-nav-btn"
-      disabled={index === 0}
-      onClick={() => onChange(Math.max(0, index - 1))}
+      aria-disabled={index === 0}
+      onClick={() => {
+        if (index > 0) onChange(index - 1);
+      }}
       aria-label="Previous branch"
     >
       <ArrowLeft />
@@ -992,8 +956,10 @@ const BranchNav = ({
     </span>
     <button
       className="branch-nav-btn"
-      disabled={index === total - 1}
-      onClick={() => onChange(Math.min(total - 1, index + 1))}
+      aria-disabled={index === total - 1}
+      onClick={() => {
+        if (index < total - 1) onChange(index + 1);
+      }}
       aria-label="Next branch"
     >
       <ArrowRight />

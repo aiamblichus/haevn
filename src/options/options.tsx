@@ -12,7 +12,12 @@ import { piProvider } from "../providers/pi/provider";
 import { poeProvider } from "../providers/poe/provider";
 import { registerProvider } from "../providers/provider";
 import { qwenProvider } from "../providers/qwen/provider";
-import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../types/messaging";
+import type {
+  BackgroundEvent,
+  BackgroundRequest,
+  BackgroundResponse,
+  OffscreenEvent,
+} from "../types/messaging";
 import type {
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
@@ -68,6 +73,12 @@ const App = () => {
   // Set when the last index rebuild failed: the search ran, on an index that may miss chats.
   const [searchIndexIncomplete, setSearchIndexIncomplete] =
     useState<SearchIndexIncompleteStatus | null>(null);
+  // Whether the rebuild notice is on screen. Rebuild progress updates it only then. The message
+  // listener reads this ref, not the state: it is set up once, in an effect that ignores the notice.
+  const rebuildNoticeShownRef = React.useRef(false);
+  useEffect(() => {
+    rebuildNoticeShownRef.current = searchIndexRebuild !== null;
+  }, [searchIndexRebuild]);
   const [selectedIds, setSelectedIds] = useState(new Set<string>());
   const [searchQuery, setSearchQuery] = useState("");
   const [filterProvider, setFilterProvider] = useState("all");
@@ -238,6 +249,27 @@ const App = () => {
     loadChats();
 
     const messageListener = (message: unknown): boolean | undefined => {
+      // Worker events are broadcast by the offscreen document with no action. The archive takes
+      // the search index's rebuild from them: progress keeps the notice current, the end clears it.
+      if (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "workerMessage"
+      ) {
+        const event = message as OffscreenEvent;
+        if (event.workerType === "search" && rebuildNoticeShownRef.current) {
+          if (event.data.type === "indexRebuildProgress") {
+            setSearchIndexRebuild(event.data.progress);
+          } else if (event.data.type === "indexRebuildComplete") {
+            rebuildNoticeShownRef.current = false;
+            setSearchIndexRebuild(null);
+            setStatus("Search index rebuilt. Search again.", "ok");
+          }
+        }
+        return undefined;
+      }
+
       // Type guard to check if it's a BackgroundEvent
       if (typeof message === "object" && message !== null && "action" in message) {
         const event = message as BackgroundEvent;

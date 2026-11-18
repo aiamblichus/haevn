@@ -58,6 +58,8 @@ import { rewriteChatMediaRefs } from "./rewriteMediaRefs";
 // Worker state
 interface WorkerState {
   status: "running" | "paused" | "cancelled";
+  /** The start's requestId: the job's pause is answered on it (HVN-64). */
+  requestId: string | undefined;
   importType: ImportSourceType;
   overwriteExisting: boolean;
   fileData?: ArrayBuffer;
@@ -903,6 +905,7 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
         // Initialize state
         workerState = {
           status: "running",
+          requestId,
           importType: msg.importType,
           overwriteExisting: msg.overwriteExisting,
           fileData: msg.fileData?.data,
@@ -944,9 +947,11 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
       case "pause": {
         if (workerState) {
           workerState.status = "paused";
+          // The service worker's pause has no requestId of its own, and `paused` reaches the
+          // service worker only on the start's listener, so it is answered on the start's.
           self.postMessage({
             type: "paused",
-            requestId,
+            requestId: workerState.requestId,
           } as ImportWorkerResponse);
         }
         break;
