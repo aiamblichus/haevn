@@ -60,18 +60,28 @@ export async function deleteExportDirectory(exportId: string): Promise<boolean> 
   return deleteDirectory(buildExportRootPath(exportId));
 }
 
-/** True when a file under `dir`, at any depth, was modified after `cutoff`. */
-async function hasFileModifiedAfter(dir: string, cutoff: number): Promise<boolean> {
+/**
+ * How old the files under `dir` are, at any depth: "fresh" when one was modified after `cutoff`,
+ * "stale" when at least one file was read and none was, "none" when no file was read. The OPFS
+ * listing helpers answer [] on an error as well as on an empty directory, so "none" never
+ * licenses a delete: a sweep must not take a live export's ZIP on a failed read (HVN-62).
+ */
+async function filesAge(dir: string, cutoff: number): Promise<"fresh" | "stale" | "none"> {
   // The files of a directory are read before its subdirectories, so a finished export (its ZIP
   // beside `staging/`) answers at once, and only an orphan is read through to the end.
+  let sawStale = false;
   for (const name of await listFiles(dir)) {
     const meta = await getFileMetadata(`${dir}/${name}`);
-    if (meta && meta.lastModified > cutoff) return true;
+    if (!meta) continue;
+    if (meta.lastModified > cutoff) return "fresh";
+    sawStale = true;
   }
   for (const name of await listDirectories(dir)) {
-    if (await hasFileModifiedAfter(`${dir}/${name}`, cutoff)) return true;
+    const age = await filesAge(`${dir}/${name}`, cutoff);
+    if (age === "fresh") return "fresh";
+    if (age === "stale") sawStale = true;
   }
-  return false;
+  return sawStale ? "stale" : "none";
 }
 
 /**
@@ -89,7 +99,7 @@ export async function sweepStaleExports(options: {
   const swept: string[] = [];
   for (const exportId of await listDirectories(EXPORTS_ROOT)) {
     if (exportId === options.keepExportId) continue;
-    if (await hasFileModifiedAfter(buildExportRootPath(exportId), cutoff)) continue;
+    if ((await filesAge(buildExportRootPath(exportId), cutoff)) !== "stale") continue;
     if (await deleteExportDirectory(exportId)) swept.push(exportId);
   }
   return swept;

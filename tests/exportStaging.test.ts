@@ -146,11 +146,11 @@ describe("sweepStaleExports (HVN-62)", () => {
     expect(exportIds()).toEqual(["running"]);
   });
 
-  it("deletes a directory with no file in it", async () => {
+  it("keeps a directory it read no file from, since a failed listing also reads as empty", async () => {
     opfs.emptyDirs.add("exports/hollow/staging/chats");
 
-    expect(await sweepStaleExports({ now: NOW })).toEqual(["hollow"]);
-    expect(exportIds()).toEqual([]);
+    expect(await sweepStaleExports({ now: NOW })).toEqual([]);
+    expect(exportIds()).toEqual(["hollow"]);
   });
 
   it("leaves every other directory of OPFS alone", async () => {
