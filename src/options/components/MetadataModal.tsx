@@ -185,7 +185,7 @@ export const MetadataModal = ({
         {!loading && mode === "view" && (
           <div className="space-y-4 text-sm">
             {queueItem?.status === "failed" && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+              <div className="rounded-md border border-primary/50 bg-primary/10 px-3 py-2 text-foreground">
                 <p className="text-sm font-medium">
                   This chat is marked unprocessable for AI metadata.
                 </p>
