@@ -18,6 +18,7 @@ import type {
   BackgroundResponse,
   OffscreenEvent,
 } from "../types/messaging";
+import { SOFT_DELETE_GRACE_MS } from "../types/messaging";
 import type {
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
@@ -35,6 +36,7 @@ import { GoToChatModal } from "./components/Modals/GoToChatModal";
 import { ImportModal } from "./components/Modals/ImportModal";
 import { ProvidersView } from "./components/ProvidersView/ProvidersView";
 import { StarmapView } from "./components/StarmapView/StarmapView";
+import { UndoToast } from "./components/UndoToast";
 import { StatusContext } from "./context/StatusContext";
 import { useApi } from "./hooks/useApi";
 import { SettingsView } from "./settings";
@@ -106,6 +108,10 @@ const App = () => {
   const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
   const [loadingExpandedChats, setLoadingExpandedChats] = useState<Set<string>>(new Set());
   const [metadataModalChatId, setMetadataModalChatId] = useState<string | null>(null);
+  // The last delete, while it can still be undone: the chats, and when the undo window closes.
+  const [undoBatch, setUndoBatch] = useState<{ chatIds: string[]; expiresAt: number } | null>(null);
+  // Bumped after an undo, so an open search runs again and finds the chats back.
+  const [searchRerunKey, setSearchRerunKey] = useState(0);
 
   // Optimize search result deduplication
   const searchResultIds = React.useRef<Set<string>>(new Set());
@@ -479,6 +485,7 @@ const App = () => {
     log.info(`[Options] Search params changed:`, {
       query: searchQuery,
       filterProvider,
+      rerun: searchRerunKey,
     });
 
     // Cancel any previous search
@@ -540,7 +547,7 @@ const App = () => {
       // Cancel search on cleanup
       cancelPrevious();
     };
-  }, [searchQuery, filterProvider]);
+  }, [searchQuery, filterProvider, searchRerunKey]);
 
   // Reset pagination when filters change
   useEffect(() => {
@@ -628,6 +635,48 @@ const App = () => {
     setExportModalOpen(true);
   }, []);
 
+  // Deletes chats, and offers the undo toast for as long as the delete can be undone.
+  const deleteChatsFromArchive = useCallback(
+    async (chatIds: string[]) => {
+      // The clock starts before the request is sent, so the toast ends no later than the window
+      // in the service worker does.
+      const sentAt = Date.now();
+      const request: BackgroundRequest = { action: "deleteSyncedChats", chatIds };
+      const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
+      if (resp?.success) {
+        setUndoBatch({ chatIds, expiresAt: sentAt + SOFT_DELETE_GRACE_MS });
+      }
+      loadChats();
+    },
+    [loadChats],
+  );
+
+  const undoDelete = useCallback(async () => {
+    if (!undoBatch) return;
+    setUndoBatch(null);
+    const request: BackgroundRequest = {
+      action: "restoreSyncedChats",
+      chatIds: undoBatch.chatIds,
+    };
+    const resp = (await chrome.runtime.sendMessage(request)) as BackgroundResponse;
+    // loadChats sets its own status when it ends, so this message is set after it.
+    await loadChats();
+    if (!resp?.success) {
+      setStatus(
+        `Undo failed: ${resp && "error" in resp ? resp.error : "No response from background"}`,
+        "error",
+      );
+    } else if ("chatIds" in resp && resp.chatIds.length > 0) {
+      const restored = resp.chatIds.length;
+      setStatus(`Restored ${restored} ${restored === 1 ? "chat" : "chats"}.`, "ok");
+      setSearchRerunKey((key) => key + 1);
+    } else {
+      setStatus("The undo window has closed.", "warn");
+    }
+  }, [undoBatch, setStatus, loadChats]);
+
+  const dismissUndo = useCallback(() => setUndoBatch(null), []);
+
   const handleTableAction = useCallback(
     async (action: string, id: string) => {
       switch (action) {
@@ -645,12 +694,7 @@ const App = () => {
           break;
         case "delete":
           if (confirm("Delete this chat from the archive?")) {
-            const request: BackgroundRequest = {
-              action: "deleteSyncedChats",
-              chatIds: [id],
-            };
-            await chrome.runtime.sendMessage(request);
-            loadChats();
+            await deleteChatsFromArchive([id]);
           }
           break;
         case "metadata":
@@ -658,7 +702,14 @@ const App = () => {
           break;
       }
     },
-    [syncChatById, openChatInProvider, openChatInViewer, openExportModal, loadChats],
+    [
+      syncChatById,
+      openChatInProvider,
+      openChatInViewer,
+      openExportModal,
+      loadChats,
+      deleteChatsFromArchive,
+    ],
   );
 
   const handleSearchResultAction = useCallback(
@@ -825,14 +876,9 @@ const App = () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
     if (!confirm(`Delete ${ids.length} selected chat(s) from the archive?`)) return;
-    const request: BackgroundRequest = {
-      action: "deleteSyncedChats",
-      chatIds: ids,
-    };
-    await chrome.runtime.sendMessage(request);
+    await deleteChatsFromArchive(ids);
     setSelectedIds(new Set());
-    loadChats();
-  }, [selectedIds, loadChats]);
+  }, [selectedIds, deleteChatsFromArchive]);
 
   const handleGoToChat = useCallback(
     async (chatId: string) => {
@@ -921,6 +967,14 @@ const App = () => {
           </main>
         </div>
       </div>
+      {undoBatch && (
+        <UndoToast
+          count={undoBatch.chatIds.length}
+          expiresAt={undoBatch.expiresAt}
+          onUndo={undoDelete}
+          onDismiss={dismissUndo}
+        />
+      )}
       <ExportModal
         open={isExportModalOpen}
         onOpenChange={setExportModalOpen}
