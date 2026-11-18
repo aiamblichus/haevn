@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- **Media on disk**: re-syncing a Poe, Gemini or AI Studio chat stored all its images again under new names, and nothing removed the old copies (2.3 GB of 3.6 GB on one archive). Message ids are now stable, so a re-sync overwrites. The Janitor sweeps media files that no message refers to once a day; the first sweep waits a day after the update, and `haevnDebug.mediaSweep()` shows what it would delete. It never touches a file younger than a day, a chat saved in the last day, or a chat whose media is only a link (a failed download, where the local file may be the only copy).
 - A chat synced on its own is found and marked correctly by search right away, not only after a rebuild; a rebuild leaves deleted chats out of its count and says when it fails.
 - The archive's "search index incomplete" notice and the metadata failure box fit the dark theme.
 - The archive's search-rebuild notice follows the rebuild and clears when it ends, in the dark theme; viewer search highlighting no longer breaks links or entities; opening a chat with inline handlers no longer logs CSP errors; focus stays on a disabled branch arrow.
