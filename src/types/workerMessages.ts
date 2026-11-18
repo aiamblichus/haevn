@@ -12,7 +12,10 @@ export interface SearchIndexRebuildStatus {
   percentage: number;
 }
 
-/** The index is part-built because the last rebuild failed; only a successful rebuild ends it. */
+/**
+ * The index may be missing chats: the last rebuild failed (what answers is the index from before
+ * it), or the index file could not be opened. A successful rebuild or open ends it.
+ */
 export interface SearchIndexIncompleteStatus {
   error: string;
 }
@@ -45,6 +48,8 @@ export type SearchWorkerMessage =
       filterProvider?: string;
       filters?: SearchFilters;
       contextChars?: number;
+      /** Hydrated search: only this chat (the "show more" of a result). */
+      chatId?: string;
     }
   | { type: "rebuild" }
   | { type: "startBulk" }
@@ -75,13 +80,15 @@ export type SearchWorkerResponse =
        */
       queryProblem?: string;
       /**
-       * Set when the index is being rebuilt and the search was not run. An empty `results` then
-       * means "not searched", never "no matches".
+       * Set when the index is being built and there is no earlier index to answer from (a first
+       * run, or an index of another format), so the search was not run. An empty `results` then
+       * means "not searched", never "no matches". A rebuild of an index that exists answers from
+       * the old one and sets nothing.
        */
       indexRebuilding?: SearchIndexRebuildStatus;
       /**
-       * Set when the last rebuild failed: the search ran on a part-built index, so a short or
-       * empty `results` may be missing chats.
+       * Set when the last rebuild failed or the index file could not be opened: a short or empty
+       * `results` may be missing chats.
        */
       indexIncomplete?: SearchIndexIncompleteStatus;
     }

@@ -27,7 +27,7 @@ Each result shows:
 
 ## Search syntax
 
-HAEVN uses **Lunr.js** for full-text search with support for advanced query operators.
+HAEVN searches with **SQLite full-text search** (FTS5) and supports advanced query operators.
 
 ### Basic queries
 
@@ -50,8 +50,8 @@ The words must appear consecutively and in that exact order.
 | `+` | `+required` | Term **must** be present (AND). Default behavior. |
 | `-` | `-exclude` | Term must **not** be present (NOT). |
 | `*` | `react*` | Prefix/wildcard — matches `react`, `reactive`, `reactor`, etc. |
-| `~` | `roam~2` | Fuzzy match with edit distance 2 — catches typos like `room`, `foam`. |
-| `^` | `important^10` | Boost term relevance (higher = more important). |
+| `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 — catches typos like `room`, `foam`. |
+| `^` | `important^10` | Accepted and ignored: no term weighs more than another. |
 | `"` | `"exact phrase"` | Phrase search — terms must appear consecutively. |
 
 ### Examples
@@ -68,12 +68,6 @@ kubernates~2
 ```
 Matches "kubernetes" even with the typo.
 
-**Boost important terms:**
-```
-api^5 design documentation
-```
-Ranks messages with "api" higher than those with just "design" or "documentation".
-
 **Prefix search:**
 ```
 async* await*
@@ -87,12 +81,12 @@ If your strict AND query returns no results, HAEVN automatically retries with re
 ### Tips
 
 - **Titles are boosted:** Conversation titles have 10x relevance weight, so short queries often surface the right conversation first.
-- **Case-insensitive:** Search ignores case.
+- **Case-insensitive:** Search ignores case, and the accents of Latin letters: `cafe` finds `café`.
 - **Stop words filtered:** Common words like "the", "a", "is" are excluded from the index.
 
 ## How search works
 
-HAEVN uses **Lunr.js** to build a full-text index of your conversations. The index is built incrementally as conversations are synced — new conversations become searchable immediately after syncing.
+HAEVN builds a full-text index of your conversations in a SQLite database in your browser's private file storage. The index is updated as conversations are synced — new conversations become searchable immediately after syncing. A rebuild writes a new file and swaps it in, so search keeps answering while it runs.
 
 Key characteristics:
 - The index runs entirely **in your browser** — no search queries leave your machine

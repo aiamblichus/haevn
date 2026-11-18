@@ -29,7 +29,16 @@
         "noUnusedImports": "off"
       },
       "style": {
-        "useImportType": "off"
+        "useImportType": "off",
+        // SQLite has one door (HVN-87): searchIndex.ts, overridden below
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "@sqlite.org/sqlite-wasm": "Only src/services/searchIndex.ts imports SQLite; go through its SearchIndex."
+            }
+          }
+        }
       },
       "complexity": {
         "noForEach": "off" // Sometimes forEach is clearer than for-of
@@ -48,6 +57,16 @@
     }
   },
   "overrides": [
+    {
+      "includes": ["src/services/searchIndex.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": "off"
+          }
+        }
+      }
+    },
     {
       "includes": ["*.ts", "*.tsx"],
       "linter": {

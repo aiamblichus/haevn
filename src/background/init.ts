@@ -47,7 +47,7 @@ clearStaleImportState().catch((err) => log.warn("Failed to clear stale import st
 // Every registered provider, import-only ones included (setup and the stats cache cover them all).
 const PROVIDERS = getAllProviders().map((provider) => provider.name);
 
-// Initialize SyncService (loads or builds Lunr index, etc.)
+// Initialize SyncService (opens or builds the search index, etc.)
 diagnosticsService
   .wrap("init:SyncService", () => SyncService.init())
   .catch((err) => log.warn("SyncService init failed", err));

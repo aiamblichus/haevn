@@ -168,7 +168,7 @@ export namespace ChatRepository {
         try {
           await SearchIndexManager.addOrUpdateChatInIndex(result.chatId);
         } catch (e) {
-          log.warn("Failed to update Lunr index for chat save", e);
+          log.warn("Failed to update the search index for chat save", e);
         }
       }
     } catch (error) {
@@ -694,7 +694,7 @@ export namespace ChatRepository {
       try {
         await SearchIndexManager.removeChatsFromIndexBulk(chatIds);
       } catch (e) {
-        log.warn("Failed to update Lunr index for deletions", e);
+        log.warn("Failed to update the search index for deletions", e);
       }
 
       // Clean up OPFS media files for deleted chats

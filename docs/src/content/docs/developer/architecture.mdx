@@ -37,7 +37,7 @@ Platform (DOM/API) → Extractor → Transformer → HAEVN.Chat → Repository �
 1. **Extractor** — platform-specific code that fetches raw data (API calls or DOM extraction)
 2. **Transformer** — normalizes raw data into the `HAEVN.Chat` format
 3. **Repository (SyncService)** — persists to IndexedDB via Dexie, triggers OPFS writes for media
-4. **Search Index** — Lunr.js index updated via the search Web Worker
+4. **Search Index** — SQLite FTS5 index on an OPFS file, updated via the search Web Worker
 
 ## Key directories
 

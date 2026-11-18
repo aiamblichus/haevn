@@ -32,9 +32,8 @@ const PUNCTUATION_END = /[\p{P}\p{Z}\p{Cc}]+$/u;
  * Where the word is inside a token: `[start, end)` in UTF-16 units, without the characters that
  * are not letters, combining marks, digits or "_" (a mark ends many words in Hindi or Thai, and a
  * decomposed "é"). A token with no such character ("😀,", "++") keeps its symbols and loses only
- * punctuation and spaces; one that is all punctuation ("!!!") is left whole. The index trims its
- * terms with this (`searchPipeline.ts`) and the snippet marks with it, so a mark lands on what
- * the search matched.
+ * punctuation and spaces; one that is all punctuation ("!!!") is left whole. The query parser trims
+ * its terms with this, so a term that keeps its comma matches the word the index holds.
  */
 export function wordBounds(token: string): { start: number; end: number } {
   const strip = (lead: RegExp, trail: RegExp) => {
@@ -46,54 +45,6 @@ export function wordBounds(token: string): { start: number; end: number } {
     strip(NON_WORD_START, NON_WORD_END) ??
     strip(PUNCTUATION_START, PUNCTUATION_END) ?? { start: 0, end: token.length }
   );
-}
-
-/**
- * `range` without the characters at either end that are not part of the word (`wordBounds`).
- * Lunr reports a match as the whole token it split off the text, so "pineapple," comes back with
- * its comma; the mark belongs on the word.
- */
-export function trimToWord(text: string, range: TextRange): TextRange {
-  const slice = text.slice(range.start, range.start + range.length);
-  const { start, end } = wordBounds(slice);
-  return { start: range.start + start, length: end - start };
-}
-
-/**
- * Lunr lower-cases the text before it splits it, so the positions it reports are in the
- * lower-cased text, and `"İ".toLowerCase()` is two code units ("i" and a combining dot): every İ
- * before a match moves the match one unit to the right of where the original text has it.
- * (U+0130 is the only character whose lower case has another length, and it is always longer.)
- *
- * Returns null when `text` has none, so its lower case is the same length and the positions are
- * the original's already. Otherwise returns a function that takes a range in the lower-cased text
- * to the range of the same characters in `text`. The table is built once, so call this once per
- * text and use the function for every match.
- */
-export function lowerCaseRangeMapper(text: string): ((range: TextRange) => TextRange) | null {
-  const lower = text.toLowerCase();
-  if (lower.length === text.length) return null;
-
-  // For each unit of the lower-cased text: where its character starts and ends in the original.
-  const starts = new Uint32Array(lower.length);
-  const ends = new Uint32Array(lower.length);
-  let at = 0;
-  for (let i = 0; i < text.length; ) {
-    const size = (text.codePointAt(i) ?? 0) > 0xffff ? 2 : 1;
-    const width = text.slice(i, i + size).toLowerCase().length;
-    for (let k = 0; k < width; k++) {
-      starts[at + k] = i;
-      ends[at + k] = i + size;
-    }
-    at += width;
-    i += size;
-  }
-
-  return ({ start, length }) => {
-    if (length <= 0 || start < 0 || start + length > lower.length) return { start, length };
-    const from = starts[start];
-    return { start: from, length: ends[start + length - 1] - from };
-  };
 }
 
 /** Spans that lie inside the text, sorted, with overlapping and touching ones merged. */

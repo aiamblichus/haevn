@@ -28,8 +28,7 @@ export default defineCommand({
       "  • exact phrase: haevn search '\"you may not recognize me\"'\n" +
       '  • exclude term: haevn search "alignment -rlhf"\n' +
       '  • prefix wildcard: haevn search "recurs*"\n' +
-      '  • fuzzy term: haevn search "kubernates~2"\n' +
-      '  • boost term: haevn search "api^5 design"',
+      '  • fuzzy term: haevn search "kubernates~2"',
   },
   args: {
     query: {

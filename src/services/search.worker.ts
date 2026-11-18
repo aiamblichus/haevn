@@ -1,14 +1,5 @@
-// Search Worker - Segmented Architecture with Positional Metadata and Hydration
-import lunr from "lunr";
-import type {
-  Chat,
-  ChatMessage,
-  SearchResult,
-  SystemPromptPart,
-  TextPart,
-  ThinkingPart,
-  UserPromptPart,
-} from "../model/haevn_model";
+// Search Worker: the full-text index (SQLite FTS5 behind `SearchIndex`), its rebuilds and its queries
+import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
 import type {
   SearchFilters,
   SearchIndexIncompleteStatus,
@@ -17,69 +8,23 @@ import type {
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
-import { inCategory, inDateRange, needsCategory } from "./searchFilters";
-import { probeSqlite } from "./searchIndex";
+import { extractIndexedChat } from "./searchDocument";
+import { inCategory, needsCategory } from "./searchFilters";
 import {
-  createIndexBuilder,
-  createQueryTermPipeline,
-  INDEX_FORMAT_VERSION,
-} from "./searchPipeline";
-import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
-import { buildSnippet, lowerCaseRangeMapper, type TextRange, trimToWord } from "./searchSnippet";
-import { buildSearchResultsForChat } from "./searchTextMatch";
-import {
-  applyClauses,
-  buildQueryPlan,
-  buildRelaxedPlan,
-  type PhraseConstraint,
-  type QueryClause,
-  queryNeedsExactPhrasePath,
-} from "./searchWorkerQuery";
+  createSearchIndex,
+  type IndexBuild,
+  type IndexFilters,
+  type RankedChat,
+  type SearchIndex,
+} from "./searchIndex";
+import { type ParsedQuery, parseSearchQuery } from "./searchQuery";
+import { buildSnippet } from "./searchSnippet";
+import { buildQueryPlan, buildRelaxedPlan, type QueryPlan } from "./searchWorkerQuery";
 
 // --- Configuration ---
-const SEGMENT_SIZE = 200; // Chats per segment
-const REBUILD_DEBOUNCE_MS = 2000;
 const SNIPPET_RADIUS = 60; // Context characters around match
 const DEFAULT_MAX_CHATS = 1000; // Chats a hydrated search returns when the caller names no limit
-// The record in `lunrIndex` that says which format the segments are in (HVN-65). A rebuild
-// removes it with the segments and writes it back as its last step, so only a pass that ended
-// well leaves it.
-const FORMAT_RECORD_ID = "format";
-
-// --- Types ---
-
-interface SearchDoc {
-  id: string;
-  title: string;
-  content: string;
-}
-
-// [start, length, messageId, role]
-type SourceMapEntry = [number, number, string, "user" | "assistant"];
-type SourceMap = SourceMapEntry[];
-
-// Lunr types (not exported by lunr.js)
-interface LunrMatchMetadata {
-  [term: string]: {
-    [field: string]: {
-      position?: [number, number][];
-    };
-  };
-}
-
-interface LunrMatchData {
-  metadata: LunrMatchMetadata;
-}
-
-interface LunrResult {
-  ref: string;
-  score: number;
-  matchData: LunrMatchData;
-}
-
-interface LunrIndexWithPipeline extends lunr.Index {
-  pipeline: lunr.Pipeline;
-}
+const CATCH_UP_MARGIN_MS = 1000; // Clock slack when a bulk operation's chats are found by their save time
 
 interface IndexRebuildState {
   totalChats: number;
@@ -87,15 +32,6 @@ interface IndexRebuildState {
   isRebuilding: boolean;
   chunkSize: number;
   currentChunk: number;
-}
-
-interface Segment {
-  id: string;
-  index: lunr.Index;
-  builder?: lunr.Builder; // Only present for the active (mutable) segment
-  docIds: Set<string>; // Fast lookup for deletions
-  dirty: boolean;
-  timestamp: number;
 }
 
 const db = new HaevnDatabase();
@@ -156,25 +92,31 @@ async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
 }
 
 // --- Global State ---
-const segments: Map<string, Segment> = new Map();
-let activeSegmentId: string = "segment_0";
-let rebuildTimer: number | undefined;
-const docCache: Map<string, SearchDoc> = new Map(); // Only for active segment
-let bulkMode = false;
+
+/** The index, once it has been opened; undefined until then and when it cannot be opened. */
+let index: SearchIndex | undefined;
+/** The open in flight, so that two callers wait for one. */
+let opening: Promise<void> | undefined;
+/** Why the index could not be opened, when it could not; search says so until an open works. */
+let openFailure: string | null = null;
+/**
+ * Whether the index has a finished file to answer from. A first run, an index of another format
+ * and an unfinished rebuild have none, and a search says the index is being rebuilt.
+ */
+let hasLiveIndex = false;
+/** When the bulk operation that is running began; null when none is. */
+let bulkSince: number | null = null;
 let rebuildState: IndexRebuildState | null = null;
 // The run that is rebuilding now (every pass of it), so a second request can join it.
 let rebuildRun: Promise<RebuildOutcome> | null = null;
 // Set by a request that arrives during a run: the run goes once more, so chats written after
 // the running pass read its `count()` are indexed (HVN-50).
 let rebuildAgain = false;
-// Chats an `add` named while a pass ran (HVN-54). The pass owns the segments, so the add only
-// leaves its id here; the pass indexes these from the database before it ends.
-const addedDuringRebuild = new Set<string>();
-// The format version the stored segments carry, or undefined when none is on record (an index
-// from before versions, or a rebuild that has not ended). The consistency check compares it with
-// INDEX_FORMAT_VERSION.
-let storedFormat: number | undefined;
-// Set when the last rebuild pass failed; the index is then part-built until a rebuild succeeds.
+// Chats an `add` or a `remove` named while a pass ran (HVN-54). The pass writes a file of its own;
+// it brings these up to date from the database before it ends, so what happened behind its cursor
+// is in the new index too.
+const touchedDuringRebuild = new Set<string>();
+// Set when the last rebuild pass failed; the index may be missing chats until a rebuild succeeds.
 let rebuildFailure: string | null = null;
 // A failed pass is retried by `init` once per worker lifetime, so a failure that never goes away
 // costs one more full read per browser session, not one per service worker wake.
@@ -185,228 +127,34 @@ interface RebuildOutcome {
   error?: string;
 }
 
-// --- Helper: Text Extraction & Mapping ---
+// --- The index: opening it ---
 
 /**
- * The one place that decides what text of a chat is searchable: the index is built from `doc`,
- * and a snippet is cut from the same `doc` by the positions the index kept, so every site that
- * indexes a chat, and the one that shows a hit, goes through here (HVN-76). Nothing is cut off:
- * the text of a long chat is searchable to its end.
+ * Open the index (once; the open that is in flight is shared). A failure is kept as the reason a
+ * search gives (`indexIncomplete`); the open itself has already been tried a second time, so a
+ * handle that a worker from before an extension reload still held has had its pause.
  */
-function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | null {
-  if (!chat.id) return null;
-
-  const combined: string[] = [];
-  const map: SourceMap = [];
-  let currentOffset = 0;
-
-  const append = (text: string, msgId: string, role: "user" | "assistant") => {
-    if (!text) return;
-    const clean = text.replace(/\s+/g, " ");
-    if (!clean) return;
-
-    combined.push(clean);
-    map.push([currentOffset, clean.length, msgId, role]);
-
-    currentOffset += clean.length + 1;
-  };
-
-  if (chat.title) append(chat.title, "title", "user");
-  if (chat.system) append(chat.system, "system", "user");
-
-  const messages = Object.values(chat.messages || {});
-
-  for (const cm of messages) {
-    if (!cm.message) continue;
-
-    for (const mm of cm.message) {
-      if (mm.kind === "request") {
-        for (const part of mm.parts || []) {
-          if (part.part_kind === "user-prompt") {
-            const up = part as UserPromptPart;
-            if (typeof up.content === "string") {
-              append(up.content, cm.id, "user");
-            } else if (Array.isArray(up.content)) {
-              for (const c of up.content) {
-                if (typeof c === "string") append(c, cm.id, "user");
-              }
-            }
-          } else if (part.part_kind === "system-prompt") {
-            const sp = part as SystemPromptPart;
-            if (typeof sp.content === "string") {
-              append(sp.content, cm.id, "user");
-            }
-          }
-        }
-      } else if (mm.kind === "response") {
-        for (const part of mm.parts || []) {
-          if (part.part_kind === "text") {
-            const tp = part as TextPart;
-            if (typeof tp.content === "string") {
-              append(tp.content, cm.id, "assistant");
-            }
-          } else if (part.part_kind === "thinking") {
-            const tp = part as ThinkingPart;
-            if (typeof tp.content === "string") {
-              append(tp.content, cm.id, "assistant");
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    doc: {
-      id: chat.id,
-      title: chat.title || "Untitled",
-      content: combined.join(" "),
-    },
-    map,
-  };
-}
-
-function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
-  // A word typed with `~` matches a spelling the text has, not the one typed: only the index
-  // knows which, and it has already placed the match in this message.
-  if (parsed.required.some((term) => term.editDistance)) return true;
-
-  const hay = text.toLowerCase();
-
-  if (parsed.phrases.length > 0) {
-    const phraseHit = parsed.phrases.some((p) => hay.includes(p));
-    if (!phraseHit) return false;
-  }
-
-  if (parsed.terms.length > 0) {
-    const termHit = parsed.terms.some((t) => {
-      return hay.includes(t) || hay.split(/\W+/).some((token) => token.startsWith(t));
-    });
-    if (!termHit) return false;
-  }
-
-  return parsed.phrases.length > 0 || parsed.terms.length > 0;
-}
-
-// --- Segment Management (Identical to previous step) ---
-
-function createNewSegment(id: string): Segment {
-  const builder = createIndexBuilder();
-
-  return {
-    id,
-    index: builder.build(),
-    builder,
-    docIds: new Set(),
-    dirty: false,
-    timestamp: Date.now(),
-  };
-}
-
-/** Record that the segments written from now on are in the current format. */
-async function writeIndexFormat(): Promise<void> {
-  await db.lunrIndex.put({ id: FORMAT_RECORD_ID, format: INDEX_FORMAT_VERSION });
-  storedFormat = INDEX_FORMAT_VERSION;
-}
-
-/** `writeIndexFormat` outside a rebuild: a failure only means the next start rebuilds once. */
-async function stampIndexFormat(): Promise<void> {
-  try {
-    await writeIndexFormat();
-  } catch (e) {
-    log.warn("[SearchWorker] Could not record the index format version", e);
-  }
-}
-
-async function loadSegments(): Promise<void> {
-  try {
-    const keys = await db.lunrIndex.toCollection().primaryKeys();
-
-    if (keys.includes("main_index") && keys.length === 1) {
-      log.warn("[SearchWorker] Legacy monolithic index found. Nuking to force segmented rebuild.");
-      await db.lunrIndex.clear();
-      await rebuildAll();
-      return;
-    }
-
-    storedFormat = keys.includes(FORMAT_RECORD_ID)
-      ? (await db.lunrIndex.get(FORMAT_RECORD_ID))?.format
-      : undefined;
-
-    const segmentKeys = keys.filter((k) => k.startsWith("segment_"));
-    if (segmentKeys.length === 0) {
-      log.info("[SearchWorker] No indices found. Starting fresh.");
-      // Nothing is stored in an old format, so a first run needs no rebuild for it; a chat that
-      // exists without an index is found by the count check.
-      await stampIndexFormat();
-      activeSegmentId = "segment_0";
-      segments.set("segment_0", createNewSegment("segment_0"));
-      return;
-    }
-
-    if (storedFormat !== INDEX_FORMAT_VERSION) {
-      // The consistency check forces a rebuild for this, and the rebuild clears what is stored:
-      // deserializing the segments and rehydrating the active one would only spend the time of
-      // init's window on a large archive (HVN-71). Start empty; the format record is left as it
-      // is, so the check still sees it stale.
+async function openIndex(): Promise<void> {
+  if (index) return;
+  opening ??= (async () => {
+    const next = createSearchIndex();
+    try {
+      hasLiveIndex = await next.open();
+      index = next;
+      openFailure = null;
       log.info(
-        `[SearchWorker] ${segmentKeys.length} stored segments are in format ${storedFormat ?? "unrecorded"}, not ${INDEX_FORMAT_VERSION}. Not loading them; a rebuild replaces them.`,
+        `[SearchWorker] ${next.describe()} opened: ${
+          hasLiveIndex ? `${next.chats()} chats indexed` : "no index to read yet"
+        }`,
       );
-      activeSegmentId = "segment_0";
-      segments.set("segment_0", createNewSegment("segment_0"));
-      return;
+    } catch (e) {
+      openFailure = e instanceof Error ? e.message : String(e);
+      log.error("[SearchWorker] The search index could not be opened", e);
     }
-
-    log.info(`[SearchWorker] Loading ${segmentKeys.length} segments...`);
-
-    for (const key of segmentKeys) {
-      const record = await db.lunrIndex.get(key);
-      if (record?.index) {
-        const idx = lunr.Index.load(record.index as object);
-
-        let recoveredIds: string[] = [];
-        try {
-          // @ts-expect-error
-          recoveredIds = Object.keys(idx.documentStore?.docStore || {});
-        } catch {
-          /* ignore */
-        }
-
-        const metaIds = record.meta?.docIds;
-        const finalIds = new Set<string>(metaIds || recoveredIds);
-
-        segments.set(key, {
-          id: key,
-          index: idx,
-          builder: undefined,
-          docIds: finalIds,
-          dirty: false,
-          timestamp: Date.now(),
-        });
-      }
-    }
-
-    segmentKeys.sort();
-    const lastKey = segmentKeys[segmentKeys.length - 1];
-
-    const lastSeg = segments.get(lastKey);
-    if (lastSeg && lastSeg.docIds.size < SEGMENT_SIZE) {
-      log.info(
-        `[SearchWorker] last segment ${lastKey} is not full (${lastSeg.docIds.size}). Rehydrating as active...`,
-      );
-      activeSegmentId = lastKey;
-      await hydrateSegmentBuilder(lastSeg);
-    } else {
-      const nextId = `segment_${segmentKeys.length}`;
-      log.info(`[SearchWorker] Creating new active segment: ${nextId}`);
-      activeSegmentId = nextId;
-      segments.set(nextId, createNewSegment(nextId));
-    }
-  } catch (err) {
-    log.error("[SearchWorker] Error loading segments:", err);
-    await db.lunrIndex.clear();
-    await rebuildAll();
-  }
+  })().finally(() => {
+    opening = undefined;
+  });
+  await opening;
 }
 
 /**
@@ -423,34 +171,36 @@ async function countLiveChats(): Promise<number> {
 }
 
 /**
- * Checks if the number of indexed documents matches the number of chats in the database.
- * If there is a mismatch, it triggers a rebuild.
+ * Checks that the index can answer: it has a finished file, and it holds as many chats as the
+ * database has. If not, it triggers a rebuild; an archive with no chats needs none, only an empty
+ * index.
  */
 async function checkIndexConsistency(): Promise<void> {
-  // A rebuild running is the cure this check would start; its segments are empty or part-built.
+  // A rebuild running is the cure this check would start.
   if (rebuildRun) return;
+  if (!index) {
+    log.warn(`[SearchWorker] No index to check: ${openFailure ?? "it is not open"}`);
+    return;
+  }
   try {
     const actualChatCount = await countLiveChats();
-    const indexedDocCount = Array.from(segments.values()).reduce(
-      (sum, seg) => sum + seg.docIds.size,
-      0,
-    );
+    const indexedDocCount = index.chats();
 
     log.info(
       `[SearchWorker] Consistency check: ${indexedDocCount} indexed docs, ${actualChatCount} chats in DB`,
     );
 
-    // An index built before the current format holds terms the search no longer asks for (HVN-65)
-    const formatStale = storedFormat !== INDEX_FORMAT_VERSION;
-    if (formatStale) {
-      log.warn(
-        `[SearchWorker] Index format is ${storedFormat ?? "unrecorded"}, the current one is ${INDEX_FORMAT_VERSION}.`,
-      );
+    if (!hasLiveIndex && actualChatCount === 0 && rebuildFailure === null) {
+      // A first run on an empty archive: an empty index in the current format, so that the chats
+      // that arrive are indexed one by one and the next start has nothing to rebuild.
+      index.beginRebuild().commit();
+      hasLiveIndex = true;
+      return;
     }
 
-    // Missing docs, a stale format, or a rebuild that failed and left the index part-built:
-    // rebuild in the background
-    if (rebuildFailure !== null || formatStale || indexedDocCount < actualChatCount) {
+    // No index of the current format, missing docs, or a rebuild that failed: rebuild in the
+    // background
+    if (rebuildFailure !== null || !hasLiveIndex || indexedDocCount < actualChatCount) {
       if (rebuildFailure !== null) {
         if (failureRetried) {
           log.warn(
@@ -462,7 +212,7 @@ async function checkIndexConsistency(): Promise<void> {
       }
       log.warn(
         `[SearchWorker] Index is incomplete or out of date (${indexedDocCount}/${actualChatCount}${
-          formatStale ? ", format out of date" : ""
+          hasLiveIndex ? "" : ", no index of the current format"
         }${
           rebuildFailure !== null ? `, last rebuild failed: ${rebuildFailure}` : ""
         }). Triggering self-healing rebuild...`,
@@ -475,152 +225,80 @@ async function checkIndexConsistency(): Promise<void> {
   }
 }
 
-async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
-  const ids = Array.from(segment.docIds);
-  if (ids.length === 0) {
-    const builder = createIndexBuilder();
-    segment.builder = builder;
-    segment.index = builder.build();
-    return;
-  }
-
-  const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
-  const builder = createIndexBuilder();
-
-  for (const chat of chats) {
-    const data = extractTextAndMap(chat);
-    if (data) {
-      builder.add(data.doc);
-      docCache.set(data.doc.id, data.doc);
-    }
-  }
-  segment.builder = builder;
-  segment.index = builder.build();
-}
+// --- Writing to the index ---
 
 /**
  * Index one chat, read from the database as it is now. The caller has written the row before it
  * asks (a save, a bulk sync's post-processing), and the worker makes the text itself, so a chat
  * added on its own is indexed exactly as a rebuild would index it (HVN-76). During a rebuild the
- * pass owns the segments (it replaces them and keeps its own handle on the one it fills), so an
- * add only records the chat; the pass indexes it before it ends, reading the row as it is then
- * (HVN-54).
+ * index that answers is the old one, which is written too, and the chat is noted for the new file,
+ * which the pass brings up to date before it ends (HVN-54).
  */
 async function addToIndex(chatId: string): Promise<void> {
-  if (rebuildRun) {
-    addedDuringRebuild.add(chatId);
-    return;
-  }
+  if (rebuildRun) touchedDuringRebuild.add(chatId);
+  if (!index || !hasLiveIndex) return;
   const chat = await loadChatWithMessages(chatId);
-  const data = chat && extractTextAndMap(chat);
-  // A rebuild that began while the chat was read has taken the segments; it reads this chat
-  // from the database itself.
-  if (rebuildRun) {
-    addedDuringRebuild.add(chatId);
-    return;
-  }
-  if (data) indexDocument(data.doc);
+  // A rebuild that began while the chat was read reads this chat from the database itself, but
+  // may already have gone past it.
+  if (rebuildRun) touchedDuringRebuild.add(chatId);
+  const data = chat && extractIndexedChat(chat);
+  if (!index || !hasLiveIndex) return;
+  if (data) index.put(data);
+  else index.remove(chatId);
 }
 
-function indexDocument(doc: SearchDoc): void {
-  let activeSeg = segments.get(activeSegmentId);
-  if (!activeSeg) {
-    activeSeg = createNewSegment(activeSegmentId);
-    segments.set(activeSegmentId, activeSeg);
-  }
-
-  if (activeSeg.docIds.size >= SEGMENT_SIZE && !activeSeg.docIds.has(doc.id)) {
-    log.info(`[SearchWorker] Segment ${activeSegmentId} full. Rotating...`);
-    persistSegment(activeSeg);
-    const nextId = `segment_${segments.size}`;
-    activeSegmentId = nextId;
-    activeSeg = createNewSegment(nextId);
-    segments.set(nextId, activeSeg);
-    docCache.clear();
-  }
-
-  if (!activeSeg.builder) {
-    const builder = createIndexBuilder();
-    activeSeg.builder = builder;
-  }
-
-  if (activeSeg.docIds.has(doc.id)) {
-    docCache.set(doc.id, doc);
-    activeSeg.dirty = true;
-    scheduleDebouncedRebuild(activeSeg);
-  } else {
-    docCache.set(doc.id, doc);
-    activeSeg.builder.add(doc);
-    activeSeg.index = activeSeg.builder.build();
-    activeSeg.docIds.add(doc.id);
-    activeSeg.dirty = true;
-    scheduleDebouncedRebuild(activeSeg);
-  }
-}
-
-/** Rebuild the active segment from the document cache, in memory. */
-function refreshActiveSegment(seg: Segment) {
-  if (!seg.builder) return;
-  const builder = createIndexBuilder();
-  for (const doc of docCache.values()) {
-    builder.add(doc);
-  }
-  seg.builder = builder;
-  seg.index = builder.build();
-  seg.dirty = false;
-  log.info(`[SearchWorker] Rebuilt active segment ${seg.id} (${docCache.size} docs)`);
-}
-
-function rebuildActiveSegment(seg: Segment) {
-  refreshActiveSegment(seg);
-  if (seg.builder) persistSegment(seg);
-}
-
-const debounceTimers = new Map<string, number>();
-
-function clearDebounceTimers() {
-  for (const timer of debounceTimers.values()) clearTimeout(timer);
-  debounceTimers.clear();
-}
-
-function scheduleDebouncedRebuild(seg: Segment) {
-  // A rebuild replaces every segment; a timer on an old one would persist it over the new ones.
-  if (bulkMode || rebuildRun) return;
-  if (debounceTimers.has(seg.id)) clearTimeout(debounceTimers.get(seg.id));
-  const timer = setTimeout(() => {
-    rebuildActiveSegment(seg);
-    debounceTimers.delete(seg.id);
-  }, REBUILD_DEBOUNCE_MS);
-  debounceTimers.set(seg.id, timer);
-}
-
-/** Write a segment to storage; rejects when the write fails (a rebuild counts that as failing). */
-async function writeSegment(seg: Segment) {
-  if (!seg.index) return;
-  await db.lunrIndex.put({
-    id: seg.id,
-    index: seg.index.toJSON(),
-    meta: {
-      docIds: Array.from(seg.docIds),
-      timestamp: Date.now(),
-    },
+function removeFromIndex(chatIds: string[]): void {
+  if (rebuildRun) for (const id of chatIds) touchedDuringRebuild.add(id);
+  if (!index || !hasLiveIndex) return;
+  const live = index;
+  live.transaction(() => {
+    for (const id of chatIds) live.remove(id);
   });
-  log.info(`[SearchWorker] Persisted segment ${seg.id}`);
-}
-
-/** Write a segment outside a rebuild: a failure is logged, the in-memory index stays whole. */
-async function persistSegment(seg: Segment) {
-  try {
-    await writeSegment(seg);
-  } catch (e) {
-    log.error(`[SearchWorker] Failed to save segment ${seg.id}`, e);
-  }
 }
 
 /**
- * Rebuild the whole index. Never rejects: the outcome says whether the last pass failed.
- * A request that arrives while a rebuild runs joins it and makes it run once more, so what it
- * was asked to include is read by a pass that starts after the request.
+ * Bring the chats a bulk operation saved into the index: the ones saved since it began, found by
+ * their save time. The bulk paths save without indexing, and this takes the place of the full
+ * rebuild that used to close them.
+ */
+async function catchUpSince(since: number): Promise<void> {
+  if (!index || !hasLiveIndex) return;
+  if (rebuildRun) {
+    // The pass may have read these chats before they were saved: it goes once more.
+    await rebuildAll(false);
+    return;
+  }
+  try {
+    const keys = await db.chats.where("lastSyncedTimestamp").aboveOrEqual(since).primaryKeys();
+    const ids = keys.map(String);
+    log.info(`[SearchWorker] Catching up ${ids.length} chats saved by the bulk operation`);
+    for (let at = 0; at < ids.length; at += 50) {
+      const rows = (await db.chats.bulkGet(ids.slice(at, at + 50))).filter(
+        (chat): chat is Chat => !!chat && chat.deleted !== 1,
+      );
+      const chats = await attachMessages(rows);
+      if (!index || !hasLiveIndex) return;
+      const live = index;
+      live.transaction(() => {
+        for (const chat of chats) {
+          const data = extractIndexedChat(chat);
+          if (data) live.put(data);
+        }
+      });
+    }
+  } catch (e) {
+    log.error("[SearchWorker] Catching up after a bulk operation failed", e);
+    rebuildFailure = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// --- Rebuild ---
+
+/**
+ * Rebuild the whole index into a new file, and make it the index when it is whole. Never rejects:
+ * the outcome says whether the last pass failed. A request that arrives while a rebuild runs joins
+ * it and makes it run once more, so what it was asked to include is read by a pass that starts
+ * after the request.
  */
 function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
   if (rebuildRun) {
@@ -630,8 +308,7 @@ function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
   }
 
   // Marked before the first await (the run is entered synchronously): from here until the run
-  // ends the index is not searchable, and a search must say so instead of answering from a
-  // half-built index.
+  // ends a search with no old index to answer from has to say so instead of answering from nothing.
   const run = (async (): Promise<RebuildOutcome> => {
     try {
       let outcome: RebuildOutcome;
@@ -650,35 +327,32 @@ function rebuildAll(emitProgress = false): Promise<RebuildOutcome> {
 }
 
 /**
- * Index the chats an add named during the pass, from the database, into the segments the pass
- * has just built. An add can name a chat the pass had already read past (an update) or one it
- * will never read (written after it counted), so the pass cannot rely on its own reads. Adds
- * that arrive while this reads join the loop; the last check is synchronous, so none can slip
- * in between it and the end of the run.
+ * Bring the new file up to date for the chats an add or a remove named during the pass, from the
+ * database. An add can name a chat the pass had already read past (an update) or one it will never
+ * read (written after it counted), and a remove a chat it had already indexed, so the pass cannot
+ * rely on its own reads. Adds that arrive while this reads join the loop; the last check is
+ * synchronous, so none can slip in between it and the end of the run.
  */
-async function indexChatsAddedDuringRebuild(): Promise<void> {
-  while (addedDuringRebuild.size > 0) {
-    const ids = Array.from(addedDuringRebuild);
-    addedDuringRebuild.clear();
-    const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
-    for (const chat of chats) {
-      const data = extractTextAndMap(chat);
-      if (data) indexDocument(data.doc);
-    }
-    // The debounce is off during a run, so rebuild the active segment and write it now: an
-    // update of a chat it holds only changes the cache until then. A failed write fails the pass,
-    // like the pass's own writes (HVN-50).
-    const active = segments.get(activeSegmentId);
-    if (active?.builder) {
-      refreshActiveSegment(active);
-      await writeSegment(active);
-    }
+async function reconcileTouched(build: IndexBuild): Promise<void> {
+  while (touchedDuringRebuild.size > 0) {
+    const ids = Array.from(touchedDuringRebuild);
+    touchedDuringRebuild.clear();
+    const rows = await db.chats.bulkGet(ids);
+    const chats = await attachMessages(rows.filter((c): c is Chat => !!c && c.deleted !== 1));
+    const byId = new Map(chats.map((chat) => [chat.id, chat]));
+    build.transaction(() => {
+      for (const id of ids) {
+        const chat = byId.get(id);
+        const data = chat && extractIndexedChat(chat);
+        if (data) build.put(data);
+        else build.remove(id);
+      }
+    });
   }
 }
 
 async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
   rebuildFailure = null;
-  clearDebounceTimers();
 
   const chunkSize = 1000; // Process 1000 chats per chunk
   rebuildState = {
@@ -689,23 +363,20 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     currentChunk: 0,
   };
 
-  segments.clear();
-  docCache.clear();
-  activeSegmentId = "segment_0";
-
+  let build: IndexBuild | undefined;
   try {
-    // Storage follows the pass: segments of the old index would otherwise outlive a failed pass
-    // and make a restarted worker count a full index and skip the rebuild. A pass that dies
-    // leaves a short index, which the next init rebuilds.
-    storedFormat = undefined;
-    await db.lunrIndex.clear();
+    // The file is written beside the one that answers, and replaces it at the end; a pass that
+    // dies leaves the old one, and a file that was never finished is never read.
+    await openIndex();
+    if (!index) throw new Error(openFailure ?? "The search index could not be opened");
+    const written = index.beginRebuild();
+    build = written;
+    touchedDuringRebuild.clear();
     const count = await countLiveChats();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
 
     rebuildState.totalChats = count;
 
-    let currentSeg = createNewSegment("segment_0");
-    segments.set("segment_0", currentSeg);
     let processed = 0;
     const FETCH_CHUNK = 50; // Fetch size per DB query
 
@@ -733,22 +404,12 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
         if (rows.length < limit) exhausted = true;
         chunkRead += rows.length;
 
-        for (const chat of chats) {
-          const data = extractTextAndMap(chat);
-          if (data) {
-            currentSeg.builder?.add(data.doc);
-            currentSeg.docIds.add(data.doc.id);
-            if (currentSeg.docIds.size >= SEGMENT_SIZE && currentSeg.builder) {
-              currentSeg.index = currentSeg.builder.build();
-              await writeSegment(currentSeg);
-              currentSeg.builder = undefined;
-              const nextId = `segment_${segments.size}`;
-              currentSeg = createNewSegment(nextId);
-              segments.set(nextId, currentSeg);
-              activeSegmentId = nextId;
-            }
+        written.transaction(() => {
+          for (const chat of chats) {
+            const data = extractIndexedChat(chat);
+            if (data) written.put(data);
           }
-        }
+        });
         processed += chats.length;
         // A search asked mid-chunk reports these. Chats written after the count grow the total.
         rebuildState.processedChats = processed;
@@ -779,26 +440,13 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
       await new Promise((r) => setTimeout(r, 0));
     }
 
-    // Finalize last segment
-    if (currentSeg.builder) {
-      currentSeg.index = currentSeg.builder.build();
-      await writeSegment(currentSeg);
-      const lastIds = Array.from(currentSeg.docIds);
-      if (lastIds.length > 0) {
-        const chats = await attachMessages(
-          (await db.chats.bulkGet(lastIds)).filter((c): c is Chat => !!c),
-        );
-        chats.forEach((c) => {
-          const d = extractTextAndMap(c);
-          if (d) docCache.set(d.doc.id, d.doc);
-        });
-      }
-    }
-
-    await indexChatsAddedDuringRebuild();
-    // Last, so that a pass that dies on the way leaves no record and the next start rebuilds. A
-    // failed write fails the pass, like a failed segment write.
-    await writeIndexFormat();
+    await reconcileTouched(written);
+    // The swap: the new file is the index from here, and the old one is gone. A failed write
+    // before this fails the pass, and the old index keeps answering.
+    written.commit();
+    build = undefined;
+    hasLiveIndex = true;
+    await freeLunrRows();
 
     log.info("[SearchWorker] Full rebuild complete.");
 
@@ -815,7 +463,13 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     return {};
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
-    // The segments were cleared at the start and are part-built now: say so until a rebuild succeeds.
+    try {
+      build?.discard();
+    } catch (discardError) {
+      log.warn("[SearchWorker] Could not discard the file of the failed rebuild", discardError);
+    }
+    // The file that was being written is gone; what answers is what answered before, which may
+    // be missing chats. Say so until a rebuild succeeds.
     rebuildFailure = e instanceof Error ? e.message : String(e);
     // The archive's rebuild notice stops at its last percentage unless it is told the pass ended.
     self.postMessage({ type: "indexRebuildFailed", error: rebuildFailure });
@@ -823,213 +477,25 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
   }
 }
 
-// --- Hydration & Snippet Logic ---
-
 /**
- * Extracts raw positions from Lunr match data.
- * Returns sorted array of [start, length] tuples.
+ * The index lived in the `lunrIndex` table before SQLite. Once the first good file exists those
+ * rows are dead weight (148 MB at αιamblichus's size); the table itself goes in a later schema
+ * version. A failure to clear it costs space only.
  */
-function collectMatchPositions(matchData: LunrMatchData): [number, number][] {
-  const positions: [number, number][] = [];
-  if (!matchData || !matchData.metadata) return positions;
-
-  // Lunr structure: metadata[term][field].position array
-  Object.values(matchData.metadata).forEach((termData) => {
-    if (termData.content?.position) {
-      termData.content.position.forEach((pos: [number, number]) => {
-        positions.push(pos); // [start, length]
-      });
-    }
-  });
-
-  // Sort by start index
-  positions.sort((a, b) => a[0] - b[0]);
-  return positions;
-}
-
-/**
- * Generates snippets by mapping positions to messages.
- */
-function generateSnippets(
-  chat: Chat,
-  positions: [number, number][],
-  snippetRadius: number,
-): SearchResult[] {
-  const results: SearchResult[] = [];
-  // The index keeps no full text, only the chat has it: re-run extractTextAndMap(chat), which is
-  // deterministic, to get the doc's content.
-
-  const extraction = extractTextAndMap(chat);
-  if (!extraction) return [];
-
-  const fullText = extraction.doc.content;
-  const sourceMap = extraction.map; // [start, length, msgId, role]
-
-  // One result per message. A message can have several parts (a prompt and a reply, two text
-  // blocks), each with its own entry in the map: the result takes the part of the first hit and
-  // marks the hits that fall in that part.
-  const msgHits = new Map<string, { entry: SourceMapEntry; hits: TextRange[] }>();
-
-  // The positions are in the lower-cased text; the source map and the snippet are in the text as
-  // written, and the two differ in length for an "İ" (HVN-57).
-  const toWritten = lowerCaseRangeMapper(fullText);
-
-  for (const [lowerStart, lowerLen] of positions) {
-    const { start: posStart, length: posLen } = toWritten
-      ? toWritten({ start: lowerStart, length: lowerLen })
-      : { start: lowerStart, length: lowerLen };
-    const entry = sourceMap.find((m) => posStart >= m[0] && posStart < m[0] + m[1]);
-    if (!entry) continue;
-    const found = msgHits.get(entry[2]);
-    if (found && found.entry !== entry) continue;
-    const hit = { start: posStart - entry[0], length: posLen };
-    if (found) found.hits.push(hit);
-    else msgHits.set(entry[2], { entry, hits: [hit] });
+async function freeLunrRows(): Promise<void> {
+  try {
+    await db.lunrIndex.clear();
+  } catch (e) {
+    log.warn("[SearchWorker] Could not clear the old Lunr index rows", e);
   }
-
-  for (const [msgId, { entry, hits }] of msgHits) {
-    const [mStart, mLen, _id, role] = entry;
-    const msgText = fullText.slice(mStart, mStart + mLen);
-    const words = hits.map((hit) => trimToWord(msgText, hit));
-    const snippet = buildSnippet(msgText, words, { radius: snippetRadius });
-
-    results.push({
-      chatId: chat.id || "",
-      chatTitle: chat.title || "Untitled",
-      source: chat.source,
-      messageId: msgId,
-      messageContent: msgText, // Full message content (might be large?)
-      messageSnippet: snippet,
-      messageRole: role,
-      messageTimestamp: chat.timestamp, // Approximation
-      model: chat.messages[msgId]?.model || undefined,
-      params: chat.params,
-    });
-  }
-
-  return results;
 }
 
 // --- Search Logic ---
 
-// --- Phrase Search Helpers ---
-
-function verifyPhrase(
-  matchData: LunrMatchData,
-  phraseTerms: string[],
-  searchPipeline: lunr.Pipeline,
-): boolean {
-  // We mimic what a query term goes through: trim, drop stop words, then the index's pipeline
-
-  const prePipeline = createQueryTermPipeline();
-
-  const tokens = phraseTerms.map((t) => {
-    // 1. Trimmer & StopWord
-    // Lunr query tokenization lowercases input before pipelines run.
-    // We must mirror that here, otherwise quoted terms with capitals
-    // (e.g. "Fisherman") won't match lowercase matchData keys.
-    let res = prePipeline.run([new lunr.Token(t.toLowerCase(), {})]);
-    if (res.length === 0) return null; // Stop word identified
-
-    // 2. Search Pipeline (Stemmer)
-    res = searchPipeline.run(res);
-
-    return res.length > 0 ? res[0].toString() : null;
-  });
-
-  // 2. Get all positions for each existing token
-  // If a token is significant (not null) but missing from matchData, it's a fail
-  // (though the main AND query should have filtered these out, we are safe)
-  const positionsByIdx: ([number, number][] | null)[] = tokens.map((t) => {
-    if (!t) return null; // Stop word
-    // matchData keys are stemmed
-    if (!matchData.metadata[t]) return [];
-    // matchData positions: [[start, len], ...]
-    return matchData.metadata[t].content?.position || [];
-  });
-
-  // 3. Recursive sequence finder
-  const matchSequence = (tIdx: number, prevStart: number, prevLen: number): boolean => {
-    // All terms matched
-    if (tIdx >= positionsByIdx.length) return true;
-
-    const positions = positionsByIdx[tIdx];
-
-    // If current term is a stop word (gap), just move to next
-    if (positions === null) {
-      return matchSequence(tIdx + 1, prevStart, prevLen);
-    }
-
-    if (positions.length === 0) return false; // Required term missing
-
-    // Check occurrences
-    for (const [start, len] of positions) {
-      // First term (or first real term after stop words at start) can be anywhere
-      if (prevStart === -1) {
-        if (matchSequence(tIdx + 1, start, len)) return true;
-        continue;
-      }
-
-      // Check relation to previous term
-      // We need to look back to find if there was a gap since the last distinct term.
-      const isGap = tIdx > 0 && tokens[tIdx - 1] === null;
-
-      if (isGap) {
-        // Loose: just must be after
-        if (start > prevStart + prevLen) {
-          if (matchSequence(tIdx + 1, start, len)) return true;
-        }
-      } else {
-        // Strict: Must be adjacent (+1 for space)
-        if (start === prevStart + prevLen + 1) {
-          if (matchSequence(tIdx + 1, start, len)) return true;
-        }
-      }
-    }
-
-    return false;
-  };
-
-  return matchSequence(0, -1, 0);
-}
-
-// --- performSearch ---
-
-async function filterResultsByTextPhrases(
-  results: LunrResult[],
-  phraseConstraints: PhraseConstraint[],
-): Promise<LunrResult[]> {
-  if (results.length === 0 || phraseConstraints.length === 0) {
-    return results;
-  }
-
-  const chatIds = Array.from(new Set(results.map((result) => result.ref)));
-  const chats = await attachMessages(
-    (await db.chats.bulkGet(chatIds)).filter((chat): chat is Chat => !!chat),
-  );
-  const searchableTextByChatId = new Map<string, string>();
-
-  for (const chat of chats) {
-    const data = extractTextAndMap(chat);
-    if (!data) continue;
-    searchableTextByChatId.set(data.doc.id, normalizeSearchText(data.doc.content));
-  }
-
-  return results.filter((result) => {
-    const searchableText = searchableTextByChatId.get(result.ref);
-    if (!searchableText) return false;
-
-    return phraseConstraints.every((constraint) =>
-      searchableText.includes(constraint.normalizedPhrase),
-    );
-  });
-}
-
 /**
  * Ids of the soft-deleted chats. The index keeps a chat until the Janitor hard-deletes it (up to
- * about 35 minutes after the delete), and a Lunr index cannot drop one document, so a search
- * leaves these out of what it returns. The database is the truth: a chat that is synced again
- * comes back to life without touching the index.
+ * about 35 minutes after the delete), so a search leaves these out of what it returns. The database
+ * is the truth: a chat that is synced again comes back to life without touching the index.
  */
 async function softDeletedChatIds(): Promise<Set<string>> {
   const ids = await db.chats.where("deleted").equals(1).primaryKeys();
@@ -1037,12 +503,12 @@ async function softDeletedChatIds(): Promise<Set<string>> {
 }
 
 /**
- * Whether a chat is inside the date range and the category a search asked for. These run on each
- * chat before it counts toward the limit, so a filtered search is cut from the chats that pass,
- * not from all that matched (HVN-77). The date is the chat's, as it has always been for results.
+ * Whether a chat is in the category a search asked for. The date range and the source are cut in
+ * the index, and the category lives in the metadata table, which the index does not know; this
+ * runs on each chat before it counts toward the limit, so a filtered search is cut from the chats
+ * that pass, not from all that matched (HVN-77).
  */
-async function chatPassesFilters(chat: Chat, filters: SearchFilters): Promise<boolean> {
-  if (!inDateRange(chat.timestamp, filters)) return false;
+async function chatPassesCategory(chat: Chat, filters: SearchFilters): Promise<boolean> {
   if (needsCategory(filters) && chat.id) {
     return inCategory(await db.chatMetadata.get(chat.id), filters.category);
   }
@@ -1050,12 +516,12 @@ async function chatPassesFilters(chat: Chat, filters: SearchFilters): Promise<bo
 }
 
 /**
- * The rebuild's progress while one is running, otherwise undefined. A rebuild empties the index
- * and refills it, so it cannot answer queries until it ends. Keeping the previous index to answer
- * from would double the index's memory for the length of the rebuild (HVN-40).
+ * The rebuild's progress while a search cannot be answered because of it: a rebuild runs and
+ * there is no earlier index to answer from. A rebuild into a new file does not stop search when
+ * the old file is there (HVN-87).
  */
 function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
-  if (!rebuildState?.isRebuilding) return undefined;
+  if (!rebuildState?.isRebuilding || hasLiveIndex) return undefined;
   const { processedChats: processed, totalChats: total } = rebuildState;
   return {
     processed,
@@ -1065,109 +531,58 @@ function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
 }
 
 /**
- * Set on the last chunk of every search answered after a failed rebuild: the index is
- * part-built, so a short or empty answer may be missing chats.
+ * Set on the last chunk of every search answered after a failed rebuild, and when the index cannot
+ * be opened: the answer may be missing chats.
  */
 function currentIndexIncomplete(): { indexIncomplete: SearchIndexIncompleteStatus } | undefined {
-  return rebuildFailure === null ? undefined : { indexIncomplete: { error: rebuildFailure } };
+  const error = rebuildFailure ?? openFailure;
+  return error === null ? undefined : { indexIncomplete: { error } };
 }
 
+/** The chats a query matches, best first, and the plan that found them (for the passages). */
 async function performSearch(
   parsed: ParsedQuery,
-  hydrate: boolean = false,
-  options: { exactTextFilter?: boolean } = {},
-): Promise<string[] | LunrResult[]> {
-  if (segments.size === 0) await loadSegments();
+  filters: IndexFilters,
+): Promise<{ chats: RankedChat[]; plan: QueryPlan }> {
+  const plan = buildQueryPlan(parsed);
+  if (!index && !openFailure) await openIndex();
+  if (!index || !hasLiveIndex || plan.clauses.length === 0) return { chats: [], plan };
 
-  // 1. What to ask the index for. The query text never reaches Lunr's own parser (HVN-78).
-  const { clauses, hasPhrases, phraseConstraints } = buildQueryPlan(parsed);
-  const metadataPhraseConstraints = phraseConstraints.filter(
-    (constraint) => !constraint.requiresTextVerification,
-  );
-  const textPhraseConstraints = phraseConstraints.filter(
-    (constraint) => constraint.requiresTextVerification,
-  );
-
-  if (clauses.length === 0) {
-    return [];
-  }
-
-  const runSegmentSearch = (queryClauses: QueryClause[]): LunrResult[] => {
-    const found: LunrResult[] = [];
-    for (const [id, seg] of segments) {
-      try {
-        const results = seg.index.query((q) => applyClauses(q, queryClauses)) as LunrResult[];
-        const filtered = hasPhrases
-          ? results.filter((r) =>
-              metadataPhraseConstraints.every((constraint) =>
-                verifyPhrase(
-                  r.matchData,
-                  constraint.terms,
-                  (seg.index as LunrIndexWithPipeline).pipeline,
-                ),
-              ),
-            )
-          : results;
-        found.push(...filtered);
-      } catch (e) {
-        log.warn(`[SearchWorker] Error searching segment ${id}:`, e);
-      }
-    }
-    return found;
-  };
-
-  // 2. Search (Get IDs and Metadata)
-  let rawResults: LunrResult[] = runSegmentSearch(clauses);
+  // What to ask the index for: the query text never reaches it as typed (HVN-78).
+  let used = plan;
+  let chats = index.search(plan, filters);
 
   // Relaxed fallback: if strict query returns nothing, retry with prefix matching (OR semantics).
-  if (rawResults.length === 0 && !hasPhrases) {
+  if (chats.length === 0) {
     const relaxed = buildRelaxedPlan(parsed);
     if (relaxed) {
-      rawResults = runSegmentSearch(relaxed.clauses);
+      used = relaxed;
+      chats = index.search(relaxed, filters);
     }
   }
 
-  // Deduplicate by ref (chatId) - keep highest score
-  const uniqueMap = new Map<string, LunrResult>();
-  for (const r of rawResults) {
-    const existing = uniqueMap.get(r.ref);
-    if (!existing || existing.score < r.score) {
-      uniqueMap.set(r.ref, r);
-    }
+  if (chats.length > 0) {
+    const deleted = await softDeletedChatIds();
+    if (deleted.size > 0) chats = chats.filter((chat) => !deleted.has(chat.chatId));
   }
-
-  if (uniqueMap.size > 0) {
-    for (const deletedId of await softDeletedChatIds()) uniqueMap.delete(deletedId);
-  }
-
-  let sortedResults = Array.from(uniqueMap.values()).sort((a, b) => b.score - a.score);
-
-  const shouldApplyExactTextFilter = options.exactTextFilter ?? false;
-  if (textPhraseConstraints.length > 0 && shouldApplyExactTextFilter) {
-    sortedResults = await filterResultsByTextPhrases(sortedResults, textPhraseConstraints);
-  }
-
-  if (!hydrate) {
-    return sortedResults.map((r) => r.ref);
-  }
-
-  // 3. Hydrate (Worker Side)
-  // Return LunrResult objects for the handler to convert to SearchResult
-  return sortedResults;
+  return { chats, plan: used };
 }
 
-// --- SQLite (HVN-87, M0): opened at init and logged, not yet used for search ---
-
-/** Open SQLite as the index will and log what it is, or why it cannot be opened. */
-async function logSqliteProbe(): Promise<void> {
-  try {
-    const { kind, version, fts5 } = await probeSqlite();
-    log.info(
-      `[SearchWorker] SQLite ${version} opened (${kind}), FTS5 ${fts5 ? "present" : "MISSING"}`,
-    );
-  } catch (e) {
-    log.error("[SearchWorker] SQLite could not be opened", e);
-  }
+/** The passages of one chat, as the results a caller shows. */
+function passagesOf(chat: Chat, plan: QueryPlan, limit: number, radius: number): SearchResult[] {
+  if (!index) return [];
+  return index.passages(plan, chat.id as string, limit).map((passage) => ({
+    chatId: chat.id as string,
+    chatTitle: chat.title || "Untitled",
+    source: chat.source,
+    messageId: passage.messageId,
+    messageContent: passage.text,
+    messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
+    messageRole: passage.role,
+    messageTimestamp: passage.timestamp ?? chat.timestamp,
+    model: passage.model,
+    params: chat.params,
+  }));
 }
 
 // --- Message Handling ---
@@ -1177,10 +592,8 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
   try {
     if (msg.type === "init") {
-      await logSqliteProbe();
-      // Mid-rebuild the segments are the rebuild's own: loading the stored ones would replace
-      // them, and the check would see an empty index and ask for another pass.
-      if (!rebuildRun) await loadSegments();
+      // A failed open is tried again here, once for each start of the service worker.
+      if (!index) await openIndex();
       // The consistency check reads the chat count and, if the index is short or the last
       // rebuild failed, starts a rebuild (not awaited). Answer init after that, so a search
       // sent on the heels of it is told about the rebuild instead of searching a short index.
@@ -1220,7 +633,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       // The limit is a number of chats (HVN-77); a chat sends at most `passagesPerChat` passages.
       const maxChats = msg.maxChats && msg.maxChats > 0 ? msg.maxChats : DEFAULT_MAX_CHATS;
       const passagesPerChat =
-        msg.passagesPerChat && msg.passagesPerChat > 0 ? msg.passagesPerChat : Infinity;
+        msg.passagesPerChat && msg.passagesPerChat > 0 ? msg.passagesPerChat : -1;
       const filters = msg.filters ?? {};
       const parsedQuery = parseSearchQuery(msg.query);
       if (parsedQuery.problem) {
@@ -1235,15 +648,21 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         });
         return;
       }
-      const needsExactPhraseHydration = queryNeedsExactPhrasePath(parsedQuery);
 
-      const results = await performSearch(parsedQuery, hydrate, {
-        exactTextFilter: !hydrate && needsExactPhraseHydration,
-      });
+      // The filters of a hydrated search cut the chats in the index, before the limit counts them.
+      const indexFilters: IndexFilters = hydrate
+        ? {
+            ...(filters.after !== undefined ? { after: filters.after } : {}),
+            ...(filters.before !== undefined ? { before: filters.before } : {}),
+            ...(filterProvider && filterProvider !== "all" ? { provider: filterProvider } : {}),
+            ...(msg.chatId ? { chatId: msg.chatId } : {}),
+          }
+        : {};
+      const { chats: ranked, plan } = await performSearch(parsedQuery, indexFilters);
 
       const CHUNK = hydrate ? 10 : 50; // Smaller chunks for hydrated data
 
-      if (results.length === 0) {
+      if (ranked.length === 0) {
         self.postMessage({
           type: "searchResultChunk",
           requestId: msg.requestId,
@@ -1266,35 +685,25 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
         if (!hydrate) {
           // Legacy ID mode
-          for (let i = 0; i < results.length; i += CHUNK) {
-            const chunk = results.slice(i, i + CHUNK) as string[];
-            sendChunk(chunk, i + CHUNK >= results.length);
+          const ids = ranked.map((chat) => chat.chatId);
+          for (let i = 0; i < ids.length; i += CHUNK) {
+            sendChunk(ids.slice(i, i + CHUNK), i + CHUNK >= ids.length);
             await new Promise((r) => setTimeout(r, 0));
           }
         } else {
           // Hydration Loop
-          // 'results' is array of Lunr Result objects with matchData
-          const lunrResults = results as LunrResult[];
           let currentChunk: SearchResult[] = [];
           let chatsSent = 0;
           let wasLimited = false;
 
-          for (const r of lunrResults) {
-            // The row and the metadata say whether the chat is a result; its messages are read
-            // only for the ones that are, so a filter few chats pass does not read them all.
-            const row = await db.chats.get(r.ref);
+          for (const r of ranked) {
+            // The row and the metadata say whether the chat is a result; the passages come from
+            // the index, which holds the text, so no message is read from the database.
+            const row = await db.chats.get(r.chatId);
             if (!row) continue;
-            if (filterProvider && filterProvider !== "all" && row.source !== filterProvider) {
-              continue;
-            }
-            if (!(await chatPassesFilters(row, filters))) continue;
-            const chat = await attachMessageRows(row);
+            if (!(await chatPassesCategory(row, filters))) continue;
 
-            const snippets = needsExactPhraseHydration
-              ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
-              : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
-                  (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
-                );
+            const snippets = passagesOf(row, plan, passagesPerChat, snippetRadius);
             // A chat counts when it has a passage to show, so a chat after the limit that has
             // none is not "more results". The first one that has one is the proof there are more.
             if (snippets.length === 0) continue;
@@ -1303,7 +712,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
               break;
             }
 
-            currentChunk.push(...snippets.slice(0, passagesPerChat));
+            currentChunk.push(...snippets);
             chatsSent++;
 
             // Flush chunk
@@ -1333,19 +742,22 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "startBulk") {
-      bulkMode = true;
-      if (rebuildTimer) clearTimeout(rebuildTimer);
+      bulkSince = Date.now() - CATCH_UP_MARGIN_MS;
       self.postMessage({ type: "bulkComplete", success: true });
+      return;
     }
 
     if (msg.type === "endBulk") {
-      bulkMode = false;
-      const active = segments.get(activeSegmentId);
-      if (active) await persistSegment(active);
+      const since = bulkSince;
+      bulkSince = null;
+      // The chats the operation saved are indexed in the background; search answers meanwhile.
+      if (since !== null) void catchUpSince(since);
       self.postMessage({ type: "bulkComplete", success: true });
+      return;
     }
 
     if (msg.type === "remove" || msg.type === "removeMany") {
+      removeFromIndex(msg.type === "remove" ? [msg.chatId] : msg.chatIds);
       self.postMessage({ type: "removeComplete", success: true });
     }
   } catch (e) {

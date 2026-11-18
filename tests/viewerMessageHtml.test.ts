@@ -70,12 +70,44 @@ describe("highlightTerms (HVN-59)", () => {
     );
   });
 
-  it("matches a quoted phrase, ignoring case, and drops the Lunr operators", () => {
+  it("matches a quoted phrase, ignoring case, and drops the operators", () => {
     expect(highlightTerms("say Pineapple juice", '"pineapple juice"')).toBe(
       'say <span class="highlight">Pineapple juice</span>',
     );
     expect(highlightTerms("pine apple", "+pine -mango")).toBe(
       '<span class="highlight">pine</span> apple',
+    );
+  });
+
+  it("folds as the index does: the accents of Latin letters do not matter, in either direction", () => {
+    expect(highlightTerms("a Café in Paris", "cafe")).toBe(
+      'a <span class="highlight">Café</span> in Paris',
+    );
+    expect(highlightTerms("a cafe in Paris", "CAFÉ")).toBe(
+      'a <span class="highlight">cafe</span> in Paris',
+    );
+    expect(highlightTerms("a cafe\u0301 in Paris", "cafe")).toBe(
+      'a <span class="highlight">cafe\u0301</span> in Paris',
+    );
+  });
+
+  it("marks İstanbul for istanbul, over the whole of the letter", () => {
+    expect(highlightTerms("<p>İstanbul and Izmir</p>", "istanbul")).toBe(
+      '<p><span class="highlight">İstanbul</span> and Izmir</p>',
+    );
+    expect(highlightTerms("x İİİ y", "iii")).toBe('x <span class="highlight">İİİ</span> y');
+  });
+
+  it("keeps й and ё apart from и and е, and finds Cyrillic and CJK", () => {
+    expect(highlightTerms("ёж и ежи", "еж")).toBe('ёж и <span class="highlight">еж</span>и');
+    expect(highlightTerms("日本語のテキスト", "日本語")).toBe(
+      '<span class="highlight">日本語</span>のテキスト',
+    );
+  });
+
+  it("takes the fuzzy and boost suffixes off a word, as the search does", () => {
+    expect(highlightTerms("kubernetes api", "kubernetes~2 api^5")).toBe(
+      '<span class="highlight">kubernetes</span> <span class="highlight">api</span>',
     );
   });
 

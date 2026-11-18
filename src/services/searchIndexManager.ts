@@ -1,5 +1,5 @@
 /**
- * SearchIndexManager - Coordinates Lunr.js search index via web worker
+ * SearchIndexManager - Coordinates the full-text search index via web worker
  *
  * Manages the full-text search index for chat content. Uses the three-tier
  * architecture: Service Worker → Offscreen Document → Web Worker.
@@ -13,7 +13,6 @@
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type { SearchResult } from "../model/haevn_model";
 import type { SearchWorkerMessage, SearchWorkerResponse } from "../types/workerMessages";
-import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
 
 // --- Worker Communication ---
@@ -61,7 +60,7 @@ async function _ensureWorkerReady(): Promise<void> {
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace SearchIndexManager {
   /**
-   * Initialize search index: load from IndexedDB or build from existing chats.
+   * Initialize search index: open it, or build it from the existing chats when there is none.
    */
   export async function init(): Promise<void> {
     await _ensureWorkerReady();
@@ -77,7 +76,7 @@ export namespace SearchIndexManager {
   }
 
   /**
-   * Add or update a chat in the Lunr index. The chat must already be saved: the worker reads it
+   * Add or update a chat in the index. The chat must already be saved: the worker reads it
    * from the database and makes the indexed text itself, so a chat is indexed the same way
    * whether it is added here or found by a rebuild.
    */
@@ -87,7 +86,7 @@ export namespace SearchIndexManager {
   }
 
   /**
-   * Remove a chat document from the Lunr index.
+   * Remove a chat document from the index.
    */
   export async function removeChatFromIndex(chatId: string): Promise<void> {
     await _ensureWorkerReady();
@@ -95,7 +94,7 @@ export namespace SearchIndexManager {
   }
 
   /**
-   * Remove multiple chat documents from the Lunr index.
+   * Remove multiple chat documents from the index.
    */
   export async function removeChatsFromIndexBulk(chatIds: string[]): Promise<void> {
     if (chatIds.length === 0) return;
@@ -108,19 +107,12 @@ export namespace SearchIndexManager {
   }
 
   /**
-   * Finish bulk sync indexing: triggers async rebuild and disables bulk mode.
-   * This is non-blocking - the rebuild happens in the background with progress events.
-   * Should be called at the end of bulk sync (or on error) to ensure index is up to date.
+   * Finish bulk sync indexing: the worker indexes the chats the operation saved, in the
+   * background, and search keeps answering while it does. Should be called at the end of bulk sync
+   * (or on error) to ensure the index is up to date.
    */
   export async function finishBulkSyncIndexing(): Promise<void> {
     await _ensureWorkerReady();
-    // End bulk mode first
     await _sendWorkerMessage({ type: "endBulk" });
-    // Trigger async rebuild (non-blocking)
-    log.info("[SearchIndexManager] Starting async index rebuild");
-    // Fire rebuild without waiting for completion
-    _sendWorkerMessage({ type: "rebuild" }).catch((err) => {
-      log.error("[SearchIndexManager] Async rebuild failed:", err);
-    });
   }
 }

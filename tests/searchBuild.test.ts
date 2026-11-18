@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { probeSqlite } from "../src/services/searchIndex";
+import { createSearchIndex, resetMemorySqliteHost } from "../src/services/searchIndex";
+import { parseSearchQuery } from "../src/services/searchQuery";
+import { buildQueryPlan } from "../src/services/searchWorkerQuery";
 
 const repo = resolve(__dirname, "..");
 
@@ -42,9 +44,22 @@ describe("the search index's build (HVN-87)", () => {
   });
 
   it("opens SQLite with FTS5 in it, as the worker does at init", async () => {
-    const probe = await probeSqlite();
+    resetMemorySqliteHost();
+    const index = createSearchIndex();
 
-    expect(probe.fts5).toBe(true);
-    expect(probe.version).toMatch(/^3\.\d+\.\d+$/);
+    expect(await index.open()).toBe(false); // nothing stored yet
+    const build = index.beginRebuild();
+    build.put({
+      id: "c",
+      title: "",
+      source: "test",
+      timestamp: 1,
+      messages: [{ id: "m", role: "user", text: "a pineapple" }],
+    });
+    build.commit();
+
+    expect(index.describe()).toMatch(/^SQLite 3\.\d+\.\d+/);
+    expect(index.search(buildQueryPlan(parseSearchQuery("pineapple")))).toHaveLength(1);
+    index.close();
   });
 });

@@ -16,7 +16,7 @@ The canonical data format is documented in the [Data Formats reference](/referen
 ## Dexie schema (key tables)
 
 - **`chats`** — one record per conversation (metadata + message tree)
-- **`searchIndex`** — Lunr.js serialized index
+- **`lunrIndex`** — the old serialized Lunr index; no longer written (the search index is an OPFS file, `src/services/searchIndex.ts`)
 - **`thumbnails`** — compressed image thumbnails (for Gallery view)
 - **`operationalState`** — bulk sync state machine (survives service worker restarts)
 

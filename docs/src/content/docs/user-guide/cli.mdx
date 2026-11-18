@@ -115,18 +115,13 @@ haevn search "kubernates~2"
 haevn search "async*"
 ```
 
-**Boost relevance:**
-```bash
-haevn search "api^5 design"
-```
-
 | Operator | Example | Description |
 |----------|---------|-------------|
 | `+` | `+required` | Must be present (default behavior) |
 | `-` | `-exclude` | Must NOT be present |
 | `*` | `react*` | Prefix/wildcard match |
 | `~` | `roam~2` | Fuzzy match (edit distance) |
-| `^` | `term^10` | Boost relevance |
+| `^` | `term^10` | Accepted and ignored (no term has more weight than another) |
 | `"..."` | `"exact phrase"` | Phrase must appear consecutively |
 
 ### 3) Inspect branches, then fetch one thread

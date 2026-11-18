@@ -3,6 +3,8 @@
  * suite can test them (it has no DOM). DOMPurify still runs last, with its full configuration.
  */
 
+import { foldText, foldWithMap } from "../services/searchFold";
+
 // A split on this gives the tags and comments at the odd indexes and the text between them at the
 // even ones. A quoted attribute value may hold a `>`. marked escapes a `<` in text, so a `<` before
 // a letter here opens a tag.
@@ -37,8 +39,12 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\\]/g, "\\$&");
 }
 
-/** The pattern for the query's terms: quoted phrases and single words, longest first. */
-function termPattern(query: string): RegExp | null {
+/**
+ * The query's terms as the search index holds words: quoted phrases and single words, folded (lower
+ * case, accents of Latin letters removed), longest first. The viewer finds them in the text the
+ * way the index found them, so `cafe` marks `Café` and `istanbul` marks `İstanbul` (`searchFold.ts`).
+ */
+function foldedTerms(query: string): string[] {
   const terms: string[] = [];
 
   // 1. Extract quoted phrases
@@ -54,39 +60,53 @@ function termPattern(query: string): RegExp | null {
   // Remove quoted parts to process the rest
   const queryWithoutQuotes = query.replace(quoteRegex, " ");
 
-  // 2. Process remaining terms (standard Lunr-like cleanup)
-  // Strip Lunr operators but keep the text
-  const cleaned = queryWithoutQuotes.replace(/[+\-~*^:()]/g, " ").trim();
+  // 2. Process remaining terms: take the operators off, keep the words (`~2` and `^3` with them)
+  const cleaned = queryWithoutQuotes
+    .replace(/[~^]\d+(?:\.\d+)?/g, " ")
+    .replace(/[+\-~*^:()]/g, " ")
+    .trim();
 
-  const singleTerms = cleaned.split(/\s+/).filter(Boolean);
-  terms.push(...singleTerms);
+  terms.push(...cleaned.split(/\s+/).filter(Boolean));
 
-  if (terms.length === 0) return null;
+  // Longest first, so that a phrase is matched before the words in it
+  return [...new Set(terms.map(foldText).filter(Boolean))].sort((a, b) => b.length - a.length);
+}
 
-  // Sort terms by length (longest first) to ensure longer phrases are matched before shorter sub-terms
-  terms.sort((a, b) => b.length - a.length);
-
-  const escapedTerms = terms.map(escapeRegExp);
-  return new RegExp(`(${escapedTerms.join("|")})`, "gi");
+/** `text` with each match of `pattern` (made for folded text) wrapped, as the text spells it. */
+function wrapMatches(text: string, pattern: RegExp): string {
+  const { folded, starts, ends } = foldWithMap(text);
+  let out = "";
+  let cursor = 0;
+  for (const match of folded.matchAll(pattern)) {
+    if (match[0].length === 0) continue;
+    const from = starts[match.index ?? 0];
+    // An accent that was folded away belongs to the letter before it, so the mark takes it too.
+    const matched = ends[(match.index ?? 0) + match[0].length - 1];
+    const to = matched + (/^[\u0300-\u036f]*/.exec(text.slice(matched))?.[0].length ?? 0);
+    if (from < cursor) continue;
+    out += `${text.slice(cursor, from)}<span class="highlight">${text.slice(from, to)}</span>`;
+    cursor = to;
+  }
+  return out + text.slice(cursor);
 }
 
 /**
  * Wraps each word or phrase of the query in a `highlight` span, in the text of the HTML only. A
  * tag, an attribute value and a comment are left as they are, so a query such as `https` cannot
- * break a link, and an entity is not matched. DOMPurify still runs after this.
+ * break a link, and an entity is not matched. Case and the accents of Latin letters do not matter,
+ * as in the search. DOMPurify still runs after this.
  */
 export function highlightTerms(html: string, query: string): string {
-  const pattern = termPattern(query);
-  if (!pattern) return html;
+  const terms = foldedTerms(query);
+  if (terms.length === 0) return html;
+  const pattern = new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "g");
   return html
     .split(TAG_OR_COMMENT)
     .map((part, i) => {
       if (i % 2 === 1) return part;
       return part
         .split(ENTITY)
-        .map((piece, j) =>
-          j % 2 === 1 ? piece : piece.replace(pattern, '<span class="highlight">$1</span>'),
-        )
+        .map((piece, j) => (j % 2 === 1 ? piece : wrapMatches(piece, pattern)))
         .join("");
     })
     .join("");
