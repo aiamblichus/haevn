@@ -6,6 +6,8 @@ import {
   processEmbeddingQueueTick,
 } from "../src/services/metadataService";
 import { setMetadataAIConfig, setStarmapConfig } from "../src/services/settingsService";
+import { MESSAGE_MIGRATION_FLAG } from "../src/services/messageMigrationFlag";
+import { getStorageAdapter } from "../src/storage";
 
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -39,6 +41,8 @@ async function putChat(chatId: string, title: string): Promise<void> {
 
 beforeEach(async () => {
   const db = getDB();
+  // The store is one whose move of messages has run (HVN-31), so the tick is not held.
+  await getStorageAdapter().set(MESSAGE_MIGRATION_FLAG, "done");
   await Promise.all([
     db.chatMetadata.clear(),
     db.embeddingQueue.clear(),

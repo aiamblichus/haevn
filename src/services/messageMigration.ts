@@ -17,10 +17,10 @@ import type { Chat } from "../model/haevn_model";
 import { getStorageAdapter } from "../storage";
 import { log } from "../utils/logger";
 import { getDB } from "./db";
+import { isMessageMigrationDone, MESSAGE_MIGRATION_FLAG } from "./messageMigrationFlag";
 import { SyncService } from "./syncService";
 
-/** The storage key of the flag; its value is `done` once a pass has found nothing left. */
-export const MESSAGE_MIGRATION_FLAG = "haevn.migration.v17Messages";
+export { MESSAGE_MIGRATION_FLAG };
 
 const DEFAULT_BATCH_SIZE = 20;
 
@@ -78,10 +78,7 @@ async function migrate(options: MessageMigrationOptions): Promise<MessageMigrati
     unindexed: [],
   };
 
-  if (
-    !options.force &&
-    (await getStorageAdapter().get<string>(MESSAGE_MIGRATION_FLAG)) === "done"
-  ) {
+  if (!options.force && (await isMessageMigrationDone())) {
     report.status = "already-done";
     log.info("[MessageMigration] already done; nothing to do");
     return report;

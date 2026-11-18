@@ -2,9 +2,10 @@
 // worker start, its flag and batches, what a failed chat does, and what a moved chat reads as.
 // The search worker runs for real, so "searchable" is what the index itself answers.
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
+import * as MetadataRepository from "../src/services/metadataRepository";
 import * as MetadataService from "../src/services/metadataService";
 import { MESSAGE_MIGRATION_FLAG, runMessageMigration } from "../src/services/messageMigration";
 import { resetMemorySqliteHost } from "../src/services/searchIndex";
@@ -14,6 +15,7 @@ const toWorker = vi.hoisted(() => ({
   send: undefined as undefined | ((message: unknown) => Promise<void>),
 }));
 const getMetadataAIConfig = vi.hoisted(() => vi.fn());
+const getStarmapConfig = vi.hoisted(() => vi.fn());
 
 // SyncService reaches the search worker through the offscreen document; here it reaches the worker
 // module loaded below, so a re-index is the message the manager really sends.
@@ -31,7 +33,7 @@ vi.mock("../src/utils/logger", () => ({
 }));
 vi.mock("../src/services/settingsService", () => ({
   getMetadataAIConfig,
-  getStarmapConfig: vi.fn(),
+  getStarmapConfig,
 }));
 
 // The worker talks through `self`: stand one in, import the module (which installs
@@ -155,11 +157,23 @@ async function movedIds(ids: string[]): Promise<string[]> {
 
 const flag = () => getStorageAdapter().get<string>(MESSAGE_MIGRATION_FLAG);
 
+// Spies (the fetch the model is sent through, the alarms) are put back after each test.
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 beforeEach(async () => {
   const db = getDB();
-  await Promise.all([db.chats.clear(), db.chatMessages.clear()]);
+  await Promise.all([
+    db.chats.clear(),
+    db.chatMessages.clear(),
+    db.metadataQueue.clear(),
+    db.embeddingQueue.clear(),
+    db.chatMetadata.clear(),
+  ]);
   resetMemorySqliteHost();
   getMetadataAIConfig.mockReset();
+  getStarmapConfig.mockReset();
   await loadWorker();
   // The index is open and empty before any old chat exists, so a chat is in it only if the
   // migration puts it there.
@@ -287,5 +301,79 @@ describe("the metadata excerpt of a migrated chat (HVN-31)", () => {
 
     const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
     expect(body.messages[0].content).toContain("the pineapple recipe");
+  });
+});
+
+describe("the queue ticks wait for the move (HVN-31)", () => {
+  const refused = () =>
+    vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue({ ok: false, status: 500, text: async () => "stopped here" } as Response);
+
+  beforeEach(() => {
+    getMetadataAIConfig.mockResolvedValue({
+      enabled: true,
+      url: "http://llm.test",
+      apiKey: "",
+      model: "m",
+      categories: [{ name: "travel", description: "trips" }],
+    });
+    getStarmapConfig.mockResolvedValue({
+      enabled: true,
+      embeddingsEnabled: true,
+      embeddingUrl: "http://embed.test",
+      embeddingApiKey: "",
+      embeddingModel: "embed-model",
+    });
+  });
+
+  it("the metadata tick sends no old-layout chat to the model, and re-arms itself until the move", async () => {
+    const fetchSpy = refused();
+    const alarm = vi.spyOn(chrome.alarms, "create");
+    await putLegacy(legacyChat("old", ["the pineapple recipe"]));
+    await getDB().metadataQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
+
+    await MetadataService.processQueueTick();
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await getDB().metadataQueue.get("old"))?.status).toBe("pending");
+    expect(alarm).toHaveBeenCalledWith(
+      MetadataService.METADATA_PROCESS_ALARM,
+      expect.objectContaining({ delayInMinutes: 5 }),
+    );
+
+    await runMessageMigration();
+    await MetadataService.processQueueTick();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    expect(body.messages[0].content).toContain("the pineapple recipe");
+  });
+
+  it("the embedding tick leaves a chat's embedding pending until the move", async () => {
+    const fetchSpy = refused();
+    await putLegacy(legacyChat("old", ["the pineapple recipe"]));
+    await MetadataRepository.set("old", {
+      title: "Pineapples",
+      description: "a recipe",
+      synopsis: "pineapple",
+      categories: ["travel"],
+      keywords: [],
+      source: "ai",
+      generatedAt: 1,
+      updatedAt: 1,
+    });
+    await getDB().embeddingQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
+
+    await MetadataService.processEmbeddingQueueTick();
+
+    // Untouched: not sent, not marked processing, and no failed attempt counted
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await getDB().embeddingQueue.get("old")).toMatchObject({ status: "pending", retries: 0 });
+
+    await runMessageMigration();
+    await MetadataService.processEmbeddingQueueTick();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });

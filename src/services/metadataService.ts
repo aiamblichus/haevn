@@ -11,6 +11,7 @@ import type {
   StoredChatMessage,
 } from "./db";
 import { getDB } from "./db";
+import { isMessageMigrationDone } from "./messageMigrationFlag";
 import * as MetadataRepository from "./metadataRepository";
 import type { CategoryConfig } from "./settingsService";
 import { getMetadataAIConfig, getStarmapConfig } from "./settingsService";
@@ -262,6 +263,18 @@ export async function processQueueTick(): Promise<void> {
     return;
   }
 
+  // A chat saved before v17 keeps its messages in its row until the move runs (HVN-31), so its
+  // excerpt would be empty. The tick waits for the move. The alarm is one-shot, so the tick re-arms
+  // it for the queue period, or the queue would stall until something else scheduled a tick.
+  if (!(await isMessageMigrationDone())) {
+    if ((await db.metadataQueue.where("status").equals("pending").count()) > 0) {
+      chrome.alarms.create(METADATA_PROCESS_ALARM, {
+        delayInMinutes: METADATA_QUEUE_PERIOD_MINUTES,
+      });
+    }
+    return;
+  }
+
   const item = (await db.metadataQueue.where("status").equals("pending").sortBy("addedAt"))[0];
 
   if (!item) {
@@ -500,6 +513,16 @@ export async function processEmbeddingQueueTick(): Promise<void> {
     }
 
     await syncMetadataQueueAlarms();
+    return;
+  }
+
+  // Waits for the move as the metadata tick does (HVN-31), and re-arms its one-shot alarm.
+  if (!(await isMessageMigrationDone())) {
+    if ((await db.embeddingQueue.where("status").equals("pending").count()) > 0) {
+      chrome.alarms.create(EMBEDDING_PROCESS_ALARM, {
+        delayInMinutes: EMBEDDING_QUEUE_PERIOD_MINUTES,
+      });
+    }
     return;
   }
 
