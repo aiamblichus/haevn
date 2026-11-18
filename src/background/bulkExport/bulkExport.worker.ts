@@ -731,6 +731,17 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
     // Handle commands from service worker
     switch (msg.type) {
       case "start": {
+        // HVN-55: a job that is running or paused owns workerState. A second start would
+        // overwrite it and create its staging, so refuse it and leave both alone.
+        if (workerState && (workerState.status === "running" || workerState.status === "paused")) {
+          self.postMessage({
+            type: "error",
+            error: "An export is already running in the worker.",
+            requestId,
+          } as BulkExportWorkerResponse);
+          break;
+        }
+
         // Split chatIds into batches
         const batches: string[][] = [];
         for (let i = 0; i < msg.chatIds.length; i += BATCH_SIZE) {

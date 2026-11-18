@@ -864,6 +864,18 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
   try {
     switch (msg.type) {
       case "start": {
+        // HVN-55: a job that is running, paused or winding down after a cancel owns
+        // workerState until its finally clears it. A second start would overwrite it, so refuse
+        // it and leave the state alone.
+        if (workerState) {
+          self.postMessage({
+            type: "error",
+            error: "An import is already running in the worker.",
+            requestId,
+          } as ImportWorkerResponse);
+          return;
+        }
+
         if (!msg.fileData?.data && !msg.file) {
           self.postMessage({
             type: "error",
