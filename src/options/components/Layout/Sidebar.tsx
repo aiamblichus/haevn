@@ -23,11 +23,11 @@ export const Sidebar = ({ activeView, setActiveView }: SidebarProps) => {
     >
       <div className="p-6 border-b-2 border-[hsl(var(--border))]">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 flex items-center justify-center">
+          <div className="w-12 h-12 flex items-center justify-center guardian-glow-logo">
             <img
               src="../icons/haevn-logo.png"
               alt="HAEVN Logo"
-              className="w-full h-full object-contain guardian-glow-logo"
+              className="w-full h-full object-contain"
             />
           </div>
           <div>
