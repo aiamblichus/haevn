@@ -59,9 +59,6 @@ importers:
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
-      lunr:
-        specifier: ^2.3.9
-        version: 2.3.9
       marked:
         specifier: ^17.0.1
         version: 17.0.1
@@ -123,9 +120,6 @@ importers:
       '@types/firefox-webext-browser':
         specifier: ^143.0.0
         version: 143.0.0
-      '@types/lunr':
-        specifier: ^2.3.7
-        version: 2.3.7
       '@types/marked':
         specifier: ^5.0.2
         version: 5.0.2
@@ -1255,9 +1249,6 @@ packages:
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
-  '@types/lunr@2.3.7':
-    resolution: {integrity: sha512-Tb/kUm38e8gmjahQzdCKhbdsvQ9/ppzHFfsJ0dMs3ckqQsRj+P5IkSAwFTBrBxdyr3E/LoMUUrZngjDYAjiE3A==}
-
   '@types/marked@5.0.2':
     resolution: {integrity: sha512-OucS4KMHhFzhz27KxmWg7J+kIYqyqoW5kdIEI319hqARQQUTqhao3M/F+uFnDXD0Rg72iDDZxZNxq5gvctmLlg==}
 
@@ -2104,9 +2095,6 @@ packages:
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
-
-  lunr@2.3.9:
-    resolution: {integrity: sha512-zTU3DaZaF3Rt9rhN3uBMGQD3dD2/vFQqnvZCDv4dl5iOzq2IZQqTxu90r4E5J+nP70J3ilqVCrbho2eWaeW8Ow==}
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -3625,8 +3613,6 @@ snapshots:
 
   '@types/json-schema@7.0.15': {}
 
-  '@types/lunr@2.3.7': {}
-
   '@types/marked@5.0.2': {}
 
   '@types/node@20.19.28':
@@ -4623,8 +4609,6 @@ snapshots:
       js-tokens: 4.0.0
 
   loupe@3.2.1: {}
-
-  lunr@2.3.9: {}
 
   magic-string@0.30.21:
     dependencies:
