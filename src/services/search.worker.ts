@@ -446,9 +446,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // before this fails the pass, and the old index keeps answering.
     written.commit();
     build = undefined;
-    // Freed before the index is called ready, so that "ready" and "the rebuild is complete" are
-    // seen together: nothing awaits between the flag and the completion message.
-    await freeLunrRows();
+    // Ready from the swap on: an add that arrives from here goes into the new file, and nothing
+    // awaits between the flag and the completion message.
     hasLiveIndex = true;
 
     log.info("[SearchWorker] Full rebuild complete.");
@@ -463,6 +462,8 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
       self.postMessage({ type: "initProgress", processed: count, total: count, phase: "complete" });
     }
     failureRetried = false; // the next failure gets its retry
+    // Last, and after the index answers: clearing the old rows takes seconds at a big archive.
+    await freeLunrRows();
     return {};
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
