@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createRoot } from "react-dom/client";
 import { log } from "../utils/logger";
 import { openingBranch } from "../utils/messageBranches";
+import { stripEventHandlers } from "./messageHtml";
 
 // Configure marked for better rendering
 marked.setOptions({
@@ -112,7 +113,7 @@ function highlightTerms(textHtml: string, query: string): string {
 
 function renderMarkdown(text: string, query?: string): string {
   if (!text) return "";
-  let html = marked.parse(text) as string;
+  let html = stripEventHandlers(marked.parse(text) as string);
   if (query) {
     html = highlightTerms(html, query);
   }
@@ -979,10 +980,13 @@ const BranchNav = ({
   onChange: (newIndex: number) => void;
 }) => (
   <div className="branch-nav">
+    {/* aria-disabled, not disabled: a disabled button drops keyboard focus to <body>. */}
     <button
       className="branch-nav-btn"
-      disabled={index === 0}
-      onClick={() => onChange(Math.max(0, index - 1))}
+      aria-disabled={index === 0}
+      onClick={() => {
+        if (index > 0) onChange(index - 1);
+      }}
       aria-label="Previous branch"
     >
       <ArrowLeft />
@@ -992,8 +996,10 @@ const BranchNav = ({
     </span>
     <button
       className="branch-nav-btn"
-      disabled={index === total - 1}
-      onClick={() => onChange(Math.min(total - 1, index + 1))}
+      aria-disabled={index === total - 1}
+      onClick={() => {
+        if (index < total - 1) onChange(index + 1);
+      }}
       aria-label="Next branch"
     >
       <ArrowRight />

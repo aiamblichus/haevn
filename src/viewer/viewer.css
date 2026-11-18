@@ -431,13 +431,13 @@
     font-family: "JetBrains Mono", monospace;
   }
 
-  .branch-nav-btn:hover:not(:disabled) {
+  .branch-nav-btn:hover:not([aria-disabled="true"]) {
     border-color: hsl(var(--primary));
     background: hsl(var(--primary) / 0.1);
     box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
   }
 
-  .branch-nav-btn:disabled {
+  .branch-nav-btn[aria-disabled="true"] {
     opacity: 0.3;
     cursor: not-allowed;
   }
