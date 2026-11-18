@@ -213,6 +213,27 @@ describe("a second import start while a job runs or is paused (HVN-55)", () => {
     expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r2" }));
   });
 
+  it("refuses a start during a cancel's wind-down, and the cancelled job still reports cancelled", async () => {
+    carried.chat = chatCarryingMetadata("h8");
+    vi.mocked(parseClaudeCodeJsonl).mockClear();
+    const release = holdFirstSave();
+    const first = send(startMessage("r1"));
+    await vi.waitFor(() => expect(saveChat).toHaveBeenCalledTimes(1));
+
+    // The cancel sets the status, but the job still owns workerState until it has finished.
+    await send({ type: "cancel" });
+    posted = [];
+    await send(startMessage("r2"));
+
+    expect(posted).toEqual([{ type: "error", error: REFUSED, requestId: "r2" }]);
+    expect(vi.mocked(parseClaudeCodeJsonl)).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    expect(posted).toContainEqual(expect.objectContaining({ type: "cancelled", requestId: "r1" }));
+    expect(posted.some((m) => m.type === "complete")).toBe(false);
+  });
+
   it("accepts a start once the job has been cancelled", async () => {
     carried.chat = chatCarryingMetadata("h6");
     const release = holdFirstSave();
