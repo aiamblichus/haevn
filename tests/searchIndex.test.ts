@@ -4,6 +4,7 @@ import {
   INDEX_FORMAT_VERSION,
   type IndexFilters,
   type MarkedPassage,
+  openSqliteHost,
   type SearchIndex,
 } from "../src/services/searchIndex";
 import { parseSearchQuery } from "../src/services/searchQuery";
@@ -573,5 +574,64 @@ describe("the SQLite index's own ranking (HVN-87)", () => {
     );
 
     expect(rank("wombat")).toEqual(["title", "body"]);
+  });
+});
+
+describe("the near spellings of a word are looked up once for a query (HVN-87)", () => {
+  let index: SearchIndex;
+  let scans = 0;
+
+  /** Count the scans of the vocabulary, which is what finding a near spelling costs. */
+  async function countVocabScans(): Promise<void> {
+    // The memory host hands out the same database for the same name: wrap the two slots.
+    const host = await openSqliteHost();
+    for (const name of ["/haevn-search-a.db", "/haevn-search-b.db"]) {
+      const db = host.open(name);
+      const exec = db.exec.bind(db);
+      db.exec = ((arg: unknown) => {
+        if (typeof arg === "object" && arg !== null && "sql" in arg) {
+          if (String((arg as { sql: string }).sql).includes("FROM vocab")) scans++;
+        }
+        return exec(arg as never);
+      }) as typeof db.exec;
+    }
+  }
+
+  beforeEach(async () => {
+    sqliteKit.reset();
+    index = sqliteKit.create();
+    await index.open();
+    const build = index.beginRebuild();
+    for (let i = 0; i < 12; i++) build.put(chat(`c${i}`, ["a note about kubernetes", "and more"]));
+    build.commit();
+    scans = 0;
+    await countVocabScans();
+  });
+
+  afterEach(() => {
+    index.close();
+  });
+
+  it("scans the vocabulary once for the search and the passages of its chats", () => {
+    const query = plan("kubernetez~1");
+    const ranked = index.search(query).map((r) => r.chatId);
+    expect(scans).toBe(1);
+
+    index.passagesFor(query, ranked, 4); // twelve chats: one pass
+    index.passages(query, ranked[0], 4);
+    index.passages(query, ranked[1], 4);
+
+    expect(ranked).toHaveLength(12);
+    expect(scans).toBe(1);
+  });
+
+  it("scans again after a write, which can add a word", () => {
+    const query = plan("kubernetez~1");
+    index.search(query);
+
+    index.put(chat("new", ["kubernetes again"]));
+
+    expect(index.search(query).map((r) => r.chatId)).toContain("new");
+    expect(scans).toBe(2);
   });
 });

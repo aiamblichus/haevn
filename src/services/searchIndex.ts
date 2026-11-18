@@ -294,6 +294,9 @@ function readMarks(marked: string): { text: string; marks: TextRange[] } {
 class Slot implements IndexWriter {
   private inTransaction = false;
 
+  /** `variants` answers since the last write; a write can add a word. */
+  private nearSpellings = new Map<string, string[]>();
+
   constructor(
     readonly name: string,
     readonly db: Database,
@@ -378,6 +381,7 @@ class Slot implements IndexWriter {
   }
 
   put(chat: IndexedChat): void {
+    this.nearSpellings.clear();
     this.transaction(() => {
       const known = this.chatKey(chat.id);
       let key: number;
@@ -423,6 +427,7 @@ class Slot implements IndexWriter {
   }
 
   remove(chatId: string): void {
+    this.nearSpellings.clear();
     this.transaction(() => {
       const key = this.chatKey(chatId);
       if (key === undefined) return;
@@ -431,8 +436,21 @@ class Slot implements IndexWriter {
     });
   }
 
-  /** The words of the index within `maxEdits` of `term`, the most common first. */
+  /**
+   * The words of the index within `maxEdits` of `term`, the most common first. Finding them reads
+   * the whole vocabulary, so the answer is kept until the next write: the search and the passages
+   * of its chats ask the same question.
+   */
   variants(term: string, maxEdits: number): string[] {
+    const key = `${maxEdits}:${term}`;
+    const known = this.nearSpellings.get(key);
+    if (known) return known;
+    const found = this.scanVariants(term, maxEdits);
+    this.nearSpellings.set(key, found);
+    return found;
+  }
+
+  private scanVariants(term: string, maxEdits: number): string[] {
     const folded = foldText(term);
     const length = Array.from(folded).length;
     const found: [string, number][] = [];
