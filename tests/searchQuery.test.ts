@@ -52,6 +52,18 @@ describe("parsing the words of a query (HVN-78)", () => {
     expect(texts("state-of-the-art")).toEqual(["state", "of", "the", "art"]);
   });
 
+  it("breaks a word at a star inside it, so only a trailing star is a prefix", () => {
+    expect(parseSearchQuery("foo*bar").required).toEqual([
+      { text: "foo", prefix: false },
+      { text: "bar", prefix: false },
+    ]);
+    expect(parseSearchQuery("foo*bar*").required).toEqual([
+      { text: "foo", prefix: false },
+      { text: "bar", prefix: true },
+    ]);
+    expect(parseSearchQuery('"foo*bar" "wombat*"').phrases).toEqual(["foo bar", "wombat"]);
+  });
+
   it("keeps a word with a dot or a colon in it whole, as the index holds it", () => {
     expect(texts("node.js")).toEqual(["node.js"]);
     expect(texts("foo:bar")).toEqual(["foo:bar"]);

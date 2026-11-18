@@ -37,10 +37,11 @@ export type ParsedQuery = {
 };
 
 /**
- * Where the index splits a word: Lunr's own separator, which indexes `local-first` as `local`
- * and `first`. A query has to cut its words the same way to find what it typed.
+ * Where a query cuts a word: at a hyphen, where the index splits (it indexes `local-first` as
+ * `local` and `first`), and at a star inside the word, which the index does not hold and Lunr
+ * would otherwise take for a wildcard.
  */
-const WORD_SEPARATOR = /-+/;
+const WORD_SEPARATOR = /[-*]+/;
 
 export function normalizeSearchToken(value: string): string {
   return value.trim().toLowerCase();
@@ -75,7 +76,9 @@ export function splitQuotedSearchQuery(query: string): {
     const pre = query.slice(lastIndex, match.index).trim();
     if (pre) remainderParts.push(pre);
 
-    const phrase = normalizeSearchToken(match[1] || "");
+    // A star is a word break here as it is in a word (see parseWord): Lunr would take it for a
+    // wildcard, and the text check for a character, and the two would disagree.
+    const phrase = normalizeSearchToken((match[1] || "").replace(/\*+/g, " ").replace(/\s+/g, " "));
     if (phrase) phrases.push(phrase);
 
     lastIndex = quoteRegex.lastIndex;
@@ -130,7 +133,9 @@ function parseWord(raw: string): ParsedWord | null {
   const prefix = word.endsWith("*");
   word = word.replace(/\*+$/, "");
 
-  // Cut where the index cuts, so that `local-first` is `local` and `first`, in that order.
+  // Cut where the index cuts, so that `local-first` is `local` and `first`, in that order. A
+  // star inside the word cuts it too: only a trailing star is a prefix, and Lunr would take any
+  // other for a wildcard that the text check does not know.
   const parts = normalizeSearchToken(word)
     .split(WORD_SEPARATOR)
     .map(trimSearchTerm)

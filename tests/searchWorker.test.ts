@@ -1728,6 +1728,20 @@ describe("search worker: the query is parsed by us, not by Lunr (HVN-78)", () =>
       expect((await passages("foo:bar")).map((p) => p.chatId)).toEqual(["colon"]);
     });
 
+    it("breaks a word at a star inside it, and answers the same id-only and hydrated", async () => {
+      await indexChats(["a", "foo and bar"], ["b", "foobar only"]);
+
+      expect(await found("foo*bar")).toEqual(["a"]);
+      expect([...new Set((await passages("foo*bar")).map((p) => p.chatId))]).toEqual(["a"]);
+    });
+
+    it("breaks a phrase at a star inside it too, and answers the same both ways", async () => {
+      await indexChats(["w", "a wombat here"], ["x", "wombats galore"]);
+
+      expect(await found('"wombat*"')).toEqual(["w"]);
+      expect([...new Set((await passages('"wombat*"')).map((p) => p.chatId))]).toEqual(["w"]);
+    });
+
     it("takes c++ templates as two words that both have to be there", async () => {
       await indexChats(
         ["both", "c++ templates are generic"],
