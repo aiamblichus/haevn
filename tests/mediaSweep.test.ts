@@ -506,30 +506,72 @@ describe("how a run goes", () => {
 });
 
 describe("the Janitor's daily sweep", () => {
-  const lastRun = () => getDB().cache.get("janitor:media-sweep:last-run");
+  const LAST_RUN = "janitor:media-sweep:last-run";
+  const FIRST_SEEN = "janitor:media-sweep:first-seen";
+  const lastRun = () => getDB().cache.get(LAST_RUN);
+  const firstSeen = () => getDB().cache.get(FIRST_SEEN);
+  const setRow = (id: string, ago: number) =>
+    getDB().cache.put({ id, value: Date.now() - ago, lastUpdated: 0 });
+  const HOUR = 60 * 60 * 1000;
 
-  it("sweeps when it has never run, and not again until a day has passed", async () => {
-    const first = file("gone", "m1_0.png");
+  it("on its first start deletes nothing and records when it first looked", async () => {
+    const stale = file("gone", "m1_0.png");
+
+    expect(await JanitorService.sweepMediaIfDue()).toBeNull();
+
+    expect(fs.has(stale)).toBe(true);
+    expect(typeof (await firstSeen())?.value).toBe("number");
+    expect(await lastRun()).toBeUndefined();
+  });
+
+  it("keeps waiting until the first look is a day old, then sweeps", async () => {
+    const stale = file("gone", "m1_0.png");
+    await setRow(FIRST_SEEN, 23 * HOUR);
+
+    expect(await JanitorService.sweepMediaIfDue()).toBeNull();
+    expect(fs.has(stale)).toBe(true);
+    expect(await lastRun()).toBeUndefined();
+
+    await setRow(FIRST_SEEN, 25 * HOUR);
     const report = await JanitorService.sweepMediaIfDue();
+
     expect(report?.files).toBe(1);
-    expect(fs.has(first)).toBe(false);
+    expect(fs.has(stale)).toBe(false);
     expect(typeof (await lastRun())?.value).toBe("number");
+  });
+
+  it("does not move the first-seen time on later starts", async () => {
+    await JanitorService.sweepMediaIfDue();
+    const first = (await firstSeen())?.value;
+    await JanitorService.sweepMediaIfDue();
+    expect((await firstSeen())?.value).toBe(first);
+  });
+
+  it("sweeps at most once a day after the first sweep", async () => {
+    await setRow(FIRST_SEEN, 25 * HOUR);
+    expect((await JanitorService.sweepMediaIfDue())?.ran).toBe(true);
 
     const second = file("gone2", "m1_0.png");
     expect(await JanitorService.sweepMediaIfDue()).toBeNull();
     expect(fs.has(second)).toBe(true);
 
-    await getDB().cache.put({
-      id: "janitor:media-sweep:last-run",
-      value: Date.now() - DAY - 1000,
-      lastUpdated: 0,
-    });
+    await setRow(LAST_RUN, DAY + 1000);
     const third = await JanitorService.sweepMediaIfDue();
     expect(third?.files).toBe(1);
     expect(fs.has(second)).toBe(false);
   });
 
+  it("does not make a sweep that has already run wait again", async () => {
+    const stale = file("gone", "m1_0.png");
+    await setRow(LAST_RUN, 2 * DAY);
+    await setRow(FIRST_SEEN, HOUR);
+
+    expect((await JanitorService.sweepMediaIfDue())?.files).toBe(1);
+    expect(fs.has(stale)).toBe(false);
+  });
+
   it("does not count a sweep that another one made unnecessary", async () => {
+    await setRow(FIRST_SEEN, 25 * HOUR);
     fs.install({
       locks: { request: async (_n: string, _o: unknown, cb: (l: null) => unknown) => cb(null) },
     });
@@ -538,5 +580,26 @@ describe("the Janitor's daily sweep", () => {
 
     expect(report?.ran).toBe(false);
     expect(await lastRun()).toBeUndefined();
+  });
+});
+
+describe("haevnDebug.mediaSweep", () => {
+  it("is a dry run unless told otherwise, at any time, and sweeps at once when told to", async () => {
+    const { haevnDebug } = await import("../src/options/debug");
+    const stale = file("gone", "m1_0.png");
+    // The Janitor has only just looked: its sweep is still waiting
+    await getDB().cache.put({
+      id: "janitor:media-sweep:first-seen",
+      value: Date.now(),
+      lastUpdated: 0,
+    });
+
+    const dry = await haevnDebug.mediaSweep();
+    expect(dry).toMatchObject({ dryRun: true, files: 1 });
+    expect(fs.has(stale)).toBe(true);
+
+    const real = await haevnDebug.mediaSweep({ dryRun: false });
+    expect(real).toMatchObject({ dryRun: false, files: 1 });
+    expect(fs.has(stale)).toBe(false);
   });
 });

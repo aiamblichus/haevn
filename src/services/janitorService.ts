@@ -22,6 +22,12 @@ import { MEDIA_SWEEP_INTERVAL_MS, type MediaSweepReport, sweepMedia } from "./me
 
 /** The `cache` row that remembers when the media sweep last ran. */
 const MEDIA_SWEEP_LAST_RUN_KEY = "janitor:media-sweep:last-run";
+/**
+ * The `cache` row that remembers when the Janitor first looked at the sweep. A sweep that has never
+ * run waits a day from then, so the dry run (haevnDebug.mediaSweep()) can be read before anything
+ * is deleted.
+ */
+const MEDIA_SWEEP_FIRST_SEEN_KEY = "janitor:media-sweep:first-seen";
 
 // Default grace period: 5 minutes
 // Chats must be soft-deleted for at least this long before permanent cleanup
@@ -63,6 +69,11 @@ export namespace JanitorService {
    * Sweeps unreferenced media out of OPFS if a day has passed since the last sweep.
    * Cheap to call often: it returns null at once when the sweep is not due.
    *
+   * The first sweep waits. The first time this is called it records when (the "first seen" row) and
+   * deletes nothing; the sweep runs once that is a day old, and the daily gate applies after it.
+   * haevnDebug.mediaSweep() is not held by the wait: a dry run works at any time, and
+   * { dryRun: false } is an explicit act.
+   *
    * The time is recorded when the sweep finishes or fails, not when it is skipped for another
    * sweep already running. A sweep that is cut short (the worker is stopped) leaves no record and
    * runs again at the next call; what it deleted stays deleted.
@@ -75,6 +86,21 @@ export namespace JanitorService {
     if (typeof last?.value === "number" && Date.now() - last.value < MEDIA_SWEEP_INTERVAL_MS) {
       log.debug("[Janitor] Media sweep not due yet");
       return null;
+    }
+    if (typeof last?.value !== "number") {
+      const firstSeen = await db.cache.get(MEDIA_SWEEP_FIRST_SEEN_KEY);
+      if (typeof firstSeen?.value !== "number") {
+        const now = Date.now();
+        await db.cache.put({ id: MEDIA_SWEEP_FIRST_SEEN_KEY, value: now, lastUpdated: now });
+        log.info(
+          "[Janitor] The media sweep has never run: it waits a day, so haevnDebug.mediaSweep() can be read first",
+        );
+        return null;
+      }
+      if (Date.now() - firstSeen.value < MEDIA_SWEEP_INTERVAL_MS) {
+        log.debug("[Janitor] The first media sweep is still waiting");
+        return null;
+      }
     }
 
     let report: MediaSweepReport | null = null;
