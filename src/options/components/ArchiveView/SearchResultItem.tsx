@@ -1,5 +1,6 @@
 import { parseEntities } from "parse-entities";
 import { useMemo } from "react";
+import { snippetToHtml } from "../../../utils/snippetHtml";
 import type { SearchResult } from "../../types";
 import { escapeHtml, formatTime, getPlatformIcon, ICONS, Icon } from "../../utils";
 import { ChatPreviewPopover } from "./ChatPreviewPopover";
@@ -21,14 +22,9 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
     [result.chatId, result.source, result.chatTitle, result.metaTitle],
   );
 
+  // The snippet is untrusted conversation text: escaped, then marked (HVN-56).
   const highlightedSnippet = useMemo(
-    () =>
-      (result.messageSnippet || "")
-        .replace(
-          /\{\{HIGHLIGHT\}\}/g,
-          '<mark style="background-color: rgba(212, 175, 55, 0.3); padding: 0 2px; border-radius: 2px; box-shadow: 0 0 8px rgba(212, 175, 55, 0.4);">',
-        )
-        .replace(/\{\{\/HIGHLIGHT\}\}/g, "</mark>"),
+    () => snippetToHtml(result.messageSnippet),
     [result.messageSnippet],
   );
 
