@@ -616,6 +616,8 @@ export async function refreshEmbeddingQueueTick(): Promise<void> {
   }
 }
 
+type EmbeddingComparison = Pick<ChatEmbeddingRecord, "model" | "endpointHash" | "inputFingerprint">;
+
 export async function enqueueAllMissingEmbeddings(): Promise<number> {
   const db = getDB();
   const starmapConfig = await getStarmapConfig();
@@ -631,11 +633,18 @@ export async function enqueueAllMissingEmbeddings(): Promise<number> {
   const eligible = metadataRows.filter((m) => hasMeaningfulMetadata(m));
   if (eligible.length === 0) return 0;
 
-  const existingEmbeddings = await db.chatEmbeddings.bulkGet(eligible.map((m) => m.chatId));
-  const existingMap = new Map<string, ChatEmbeddingRecord>();
-  for (const embedding of existingEmbeddings) {
-    if (embedding) existingMap.set(embedding.chatId, embedding);
-  }
+  // Keep only the three fields the comparison reads. Each record is visited once and its
+  // vector goes with it, so a tick never holds every embedding in memory.
+  const eligibleIds = new Set(eligible.map((m) => m.chatId));
+  const existingMap = new Map<string, EmbeddingComparison>();
+  await db.chatEmbeddings.each((embedding) => {
+    if (!eligibleIds.has(embedding.chatId)) return;
+    existingMap.set(embedding.chatId, {
+      model: embedding.model,
+      endpointHash: embedding.endpointHash,
+      inputFingerprint: embedding.inputFingerprint,
+    });
+  });
 
   const queueItems = await db.embeddingQueue.toArray();
   const queuedIds = new Set(queueItems.map((q) => q.chatId));

@@ -349,51 +349,76 @@
 
 /* Brutalist Terminal Animations */
 @layer utilities {
-  .guardian-glow {
-    animation: guardianPulse 3s ease-in-out infinite;
-  }
-
-  @keyframes guardianPulse {
-    0%,
-    100% {
-      box-shadow: 0 0 8px hsl(var(--primary) / 0.4);
-    }
-    50% {
-      box-shadow:
-        0 0 16px hsl(var(--primary) / 0.7),
-        0 0 24px hsl(var(--accent) / 0.3);
-    }
-  }
-
-  /* Logo-specific glow that follows the transparent shape */
+  /* Logo glow, following the logo's transparent shape. An <img> cannot take a ::after,
+     so the glow sits on its wrapper: a copy of the logo behind it, carrying the
+     drop-shadows as a static filter. The pulse changes only its opacity, which the
+     compositor runs without repainting the page. */
   .guardian-glow-logo {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .guardian-glow-logo::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: url("icons/haevn-logo.png") center / contain no-repeat;
+    filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.7))
+      drop-shadow(0 0 12px hsl(var(--accent) / 0.3));
+    opacity: 0.8;
+    pointer-events: none;
     animation: guardianPulseLogo 3s ease-in-out infinite;
   }
 
   @keyframes guardianPulseLogo {
     0%,
     100% {
-      filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.4));
+      opacity: 0.45;
     }
     50% {
-      filter: drop-shadow(0 0 8px hsl(var(--primary) / 0.7))
-        drop-shadow(0 0 12px hsl(var(--accent) / 0.3));
+      opacity: 1;
     }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .guardian-glow-logo::after {
+      animation: none;
+    }
+  }
+
+  /* Button glow: a static box-shadow on ::after, pulsed by opacity only */
   .lighthouse-glow {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .lighthouse-glow::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    box-shadow:
+      0 0 16px hsl(var(--secondary) / 0.7),
+      0 0 24px hsl(var(--secondary) / 0.5);
+    opacity: 0.8;
+    pointer-events: none;
     animation: lighthousePulse 4s ease-in-out infinite;
   }
 
   @keyframes lighthousePulse {
     0%,
     100% {
-      box-shadow: 0 0 8px hsl(var(--secondary) / 0.4);
+      opacity: 0.4;
     }
     50% {
-      box-shadow:
-        0 0 16px hsl(var(--secondary) / 0.7),
-        0 0 24px hsl(var(--secondary) / 0.5);
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lighthouse-glow::after {
+      animation: none;
     }
   }
 
