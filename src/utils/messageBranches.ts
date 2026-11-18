@@ -117,6 +117,30 @@ export function currentBranchIds(chat: Chat): string[] {
   return leaf ? pathTo(chat, leaf) : [];
 }
 
+/** Where the viewer opens: the root of the current branch and, per fork, which child to show. */
+export interface OpeningBranch {
+  /** The root of the current branch; undefined for a chat with no messages. */
+  rootId?: string;
+  /** Fork message id to the position of the child the current branch takes, in `childrenIds` order. */
+  selections: Map<string, number>;
+}
+
+/**
+ * The viewer's opening state: the path `currentBranchIds` gives (the one the Markdown export
+ * writes), read as a root and one child position per fork. A step the parent does not list as a
+ * child (corrupt links) sets no selection, so that fork keeps the viewer's default (the first
+ * child). Positions count the children that exist, in `childrenIds` order, as the viewer does.
+ */
+export function openingBranch(chat: Chat): OpeningBranch {
+  const path = currentBranchIds(chat);
+  const selections = new Map<string, number>();
+  for (let i = 0; i + 1 < path.length; i++) {
+    const position = childrenOf(chat, path[i]).indexOf(path[i + 1]);
+    if (position > 0) selections.set(path[i], position);
+  }
+  return { rootId: path[0], selections };
+}
+
 /** How many leaves lie off the current branch, that is, how many alternatives it leaves out. */
 export function otherBranchCount(chat: Chat): number {
   const onPath = new Set(currentBranchIds(chat));

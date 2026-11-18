@@ -3,6 +3,7 @@ import { marked } from "marked";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { log } from "../utils/logger";
+import { openingBranch } from "../utils/messageBranches";
 
 // Configure marked for better rendering
 marked.setOptions({
@@ -1478,32 +1479,13 @@ const App = () => {
     }
   }, [chat, params.messageId, sortedRoots]);
 
-  // Initialize selectedRootIndex from chat.currentId when no messageId param
+  // Open on the current branch (root and every fork) when no messageId param says otherwise
   useEffect(() => {
-    if (!chat || params.messageId || sortedRoots.length <= 1) return;
-    if (!chat.currentId) return;
-
-    // Find which root contains currentId
-    const containsMessage = (startId: string, targetId: string, visited: Set<string>): boolean => {
-      if (visited.has(startId)) return false;
-      if (startId === targetId) return true;
-      visited.add(startId);
-      const msg = chat.messages[startId];
-      if (!msg) return false;
-      for (const childId of msg.childrenIds || []) {
-        if (containsMessage(childId, targetId, visited)) return true;
-      }
-      return false;
-    };
-
-    for (let i = 0; i < sortedRoots.length; i++) {
-      if (containsMessage(sortedRoots[i].id, chat.currentId, new Set())) {
-        setSelectedRootIndex(i);
-        return;
-      }
-    }
-    // Default to last root if not found
-    setSelectedRootIndex(sortedRoots.length - 1);
+    if (!chat || params.messageId) return;
+    const { rootId, selections } = openingBranch(chat);
+    const rootIndex = sortedRoots.findIndex((r) => r.id === rootId);
+    setSelectedRootIndex(Math.max(0, rootIndex));
+    setVisibleIndex(selections);
   }, [chat, params.messageId, sortedRoots]);
 
   // Scroll to specific message if requested

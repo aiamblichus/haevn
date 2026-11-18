@@ -863,3 +863,93 @@ describe("search worker: an add or a remove during an index rebuild (HVN-54)", (
     expect(chunks[chunks.length - 1].indexIncomplete).toEqual({ error: reply.error });
   });
 });
+
+describe("search worker: snippets hold and mark the match (HVN-20)", () => {
+  const filler = (n: number) => "lorem ipsum dolor ".repeat(Math.ceil(n / 18)).slice(0, n);
+  const MARK = "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}";
+
+  /** One message with a prompt part and a reply part, as the transformers can produce. */
+  function buildTurn(id: string, prompt: string, reply: string): Chat {
+    const chat = buildChat(id, "unused");
+    const message = chat.messages[`${id}-m1`];
+    message.message = [
+      { kind: "request", parts: [{ part_kind: "user-prompt", content: prompt, timestamp: "t" }] },
+      { kind: "response", parts: [{ part_kind: "text", content: reply }], timestamp: "t" },
+    ] as ChatMessage["message"];
+    return chat;
+  }
+
+  async function indexTurn(id: string, prompt: string, reply: string): Promise<void> {
+    await seedChats([buildTurn(id, prompt, reply)]);
+    await send({ type: "rebuild" });
+  }
+
+  async function snippetsFor(query: string, contextChars?: number): Promise<SearchResult[]> {
+    const requestId = `test-${++requestCounter}`;
+    await send({ type: "search", query, requestId, hydrate: true, contextChars });
+    return posted
+      .filter((m) => m.type === "searchResultChunk" && m.requestId === requestId)
+      .flatMap((m) => m.results as SearchResult[]);
+  }
+
+  it("holds a match that sits in the reply, far from the start of the prompt", async () => {
+    await indexTurn("far", "a short question", `${filler(900)} pineapple ${filler(900)}`);
+
+    const [result] = await snippetsFor("pineapple");
+
+    expect(result.messageRole).toBe("assistant");
+    expect(result.messageSnippet).toContain(MARK);
+    expect(result.messageContent).toContain("pineapple");
+  });
+
+  it("marks every match in the window, not only the first", async () => {
+    await indexTurn("many", "question", "pineapple on pineapple and more pineapple");
+
+    const [result] = await snippetsFor("pineapple");
+
+    expect(result.messageSnippet.split(MARK)).toHaveLength(4);
+  });
+
+  it("shows a second window when the next match is further away than the context", async () => {
+    await indexTurn("two", "question", `pineapple ${filler(600)} pineapple`);
+
+    const [result] = await snippetsFor("pineapple", 30);
+
+    expect(result.messageSnippet.split(" ... ")).toHaveLength(2);
+    expect(result.messageSnippet.split(MARK)).toHaveLength(3);
+    expect(result.messageSnippet.length).toBeLessThan(200);
+  });
+
+  it("keeps the context window to the characters asked for", async () => {
+    await indexTurn("ctx", "question", `${filler(300)} pineapple ${filler(300)}`);
+
+    const [narrow] = await snippetsFor("pineapple", 10);
+    const [wide] = await snippetsFor("pineapple", 100);
+
+    const bare = (s: string) =>
+      s
+        .replace(/\{\{\/?HIGHLIGHT\}\}/g, "")
+        .replace(/^\.\.\. /, "")
+        .replace(/ \.\.\.$/, "");
+    expect(bare(narrow.messageSnippet).length).toBeLessThanOrEqual(10 + "pineapple".length + 10);
+    expect(bare(wide.messageSnippet).length).toBeGreaterThan(150);
+  });
+
+  // The index has no stemmer; a query with no exact hit is retried as a prefix (`run*`).
+  it("marks the whole word a prefix match found, without the punctuation that came with it", async () => {
+    await indexTurn("prefix", "question", `${filler(200)} we were running, late ${filler(200)}`);
+
+    const [result] = await snippetsFor("run");
+
+    expect(result.messageSnippet).toContain("{{HIGHLIGHT}}running{{/HIGHLIGHT}}, late");
+  });
+
+  it("holds and marks a match in multi-byte text", async () => {
+    await indexTurn("cjk", "question", `${"字".repeat(300)} pineapple ${"字".repeat(300)}`);
+
+    const [result] = await snippetsFor("pineapple", 20);
+
+    expect(result.messageSnippet).toContain(MARK);
+    expect(result.messageSnippet.length).toBeLessThan(100);
+  });
+});

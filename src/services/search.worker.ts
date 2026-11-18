@@ -17,6 +17,7 @@ import type {
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
 import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
+import { buildSnippet, type TextRange, trimToWord } from "./searchSnippet";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 import {
   buildLunrQueryPlan,
@@ -776,59 +777,26 @@ function generateSnippets(
   const fullText = extraction.doc.content;
   const sourceMap = extraction.map; // [start, length, msgId, role]
 
-  // Group positions by message to avoid duplicates
-  // Map<msgId, Set<positionIndex>>
-  const msgHits = new Map<string, [number, number][]>();
+  // One result per message. A message can have several parts (a prompt and a reply, two text
+  // blocks), each with its own entry in the map: the result takes the part of the first hit and
+  // marks the hits that fall in that part.
+  const msgHits = new Map<string, { entry: SourceMapEntry; hits: TextRange[] }>();
 
   for (const [posStart, posLen] of positions) {
-    // Find which message this position falls into
-    // Binary search is better, but linear scan of map is fine for <50 items
     const entry = sourceMap.find((m) => posStart >= m[0] && posStart < m[0] + m[1]);
-
-    if (entry) {
-      const [_mStart, _mLen, mId, _mRole] = entry;
-      if (!msgHits.has(mId)) msgHits.set(mId, []);
-      msgHits.get(mId)?.push([posStart, posLen]);
-    }
+    if (!entry) continue;
+    const found = msgHits.get(entry[2]);
+    if (found && found.entry !== entry) continue;
+    const hit = { start: posStart - entry[0], length: posLen };
+    if (found) found.hits.push(hit);
+    else msgHits.set(entry[2], { entry, hits: [hit] });
   }
 
-  // Generate one result per matching message
-  for (const [msgId, hits] of msgHits) {
-    // Find map entry for this message
-    const entry = sourceMap.find((m) => m[2] === msgId);
-    if (!entry) continue;
-
+  for (const [msgId, { entry, hits }] of msgHits) {
     const [mStart, mLen, _id, role] = entry;
     const msgText = fullText.slice(mStart, mStart + mLen);
-
-    // Use the first hit to generate the snippet center
-    // Relative to message start
-    const firstHit = hits[0];
-    const hitRelativeStart = firstHit[0] - mStart;
-
-    // Simple snippet generation
-    // TODO: Support multiple hits in one snippet or highlighting
-    const start = Math.max(0, hitRelativeStart - snippetRadius);
-    const end = Math.min(msgText.length, hitRelativeStart + firstHit[1] + snippetRadius);
-
-    let snippet = msgText.slice(start, end);
-
-    // Add Highlights
-    // We need to adjust all hits to be relative to the snippet start
-    // This is complex for a regex-free approach, but let's try a simple approach:
-    // Just mark the specific hit we focused on? No, user wants all highlights.
-
-    // Re-construct snippet with markers
-    // This is getting complicated to do perfectly without regex.
-    // Let's stick to the main hit for now to ensure stability.
-    // Or, since we have the EXACT offsets, we can insert strings.
-
-    // Let's just return the raw snippet for Phase 2.
-    // We can use a client-side highlighter (Mark.js) on the snippet if we return the query terms.
-    // OR we return {{HIGHLIGHT}}...
-
-    // For now, let's just extract the raw text around the first match.
-    snippet = `...${snippet}...`;
+    const words = hits.map((hit) => trimToWord(msgText, hit));
+    const snippet = buildSnippet(msgText, words, { radius: snippetRadius });
 
     results.push({
       chatId: chat.id || "",
