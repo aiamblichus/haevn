@@ -5,6 +5,7 @@ import { CacheService } from "../services/cacheService";
 import { diagnosticsService } from "../services/diagnosticsService";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
+import { sweepOrphanedExports } from "./bulkExport/bulkExport";
 import { resumeBulkSync } from "./bulkSync/bulkSync";
 import { bulkSyncStateManager } from "./bulkSync/stateManager";
 import { handleCheckMissingThumbnails } from "./handlers/galleryHandlers";
@@ -93,6 +94,11 @@ diagnosticsService
   .wrap("init:Janitor", () => JanitorService.cleanupSoftDeletedChats())
   .catch((err) => log.error("[Janitor] Cleanup failed", err));
 
+// The same rhythm sweeps the orphans of bulk exports in OPFS (HVN-62).
+diagnosticsService
+  .wrap("init:ExportSweep", () => sweepOrphanedExports())
+  .catch((err) => log.warn("[BulkExport] Sweep of stale exports failed", err));
+
 // Set up periodic cleanup via chrome.alarms (every 30 minutes)
 const JANITOR_ALARM_NAME = "janitor-cleanup";
 chrome.alarms.create(JANITOR_ALARM_NAME, { periodInMinutes: 30 });
@@ -102,6 +108,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       .wrap("alarm:Janitor", () => JanitorService.cleanupSoftDeletedChats())
       .catch((err) => {
         log.error("[Janitor] Cleanup failed", err);
+      });
+    diagnosticsService
+      .wrap("alarm:ExportSweep", () => sweepOrphanedExports())
+      .catch((err) => {
+        log.warn("[BulkExport] Sweep of stale exports failed", err);
       });
   }
   if (alarm.name === WS_RECONNECT_ALARM) {
