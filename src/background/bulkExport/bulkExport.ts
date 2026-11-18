@@ -38,8 +38,15 @@ import type { BulkExportState } from "./types";
  * CRD-003: Implements request/response pattern for browser API access.
  * Workers send requests (e.g., "requestDownload") and receive responses
  * (e.g., "downloadComplete") with matching requestId for correlation.
+ *
+ * `exportId` is the export whose start registered this listener. The state in storage is the
+ * current export's, and a message that arrives late (the answer to a cancel after a forced
+ * cleanup, say) must not act on an export that started since.
  */
-async function handleWorkerMessage(message: BulkExportWorkerResponse): Promise<void> {
+async function handleWorkerMessage(
+  message: BulkExportWorkerResponse,
+  exportId: string,
+): Promise<void> {
   log.info(`[BulkExport] handleWorkerMessage received:`, {
     type: message.type,
     hasRequestId: "requestId" in message,
@@ -47,6 +54,13 @@ async function handleWorkerMessage(message: BulkExportWorkerResponse): Promise<v
   const state = await getBulkExportState();
   if (!state) {
     log.warn("[BulkExport] Received worker message but no state exists");
+    return;
+  }
+  const job = await getExportJobState();
+  if (job && job.exportId !== exportId) {
+    log.warn(
+      `[BulkExport] Ignoring a ${message.type} message from export ${exportId}: export ${job.exportId} is current`,
+    );
     return;
   }
 
@@ -488,7 +502,7 @@ export async function startBulkExport(chatIds: string[], options: ExportOptions)
           },
         },
         {
-          onProgress: handleWorkerMessage,
+          onProgress: (message) => handleWorkerMessage(message, exportId),
           // No timeout: the listener of this start carries the job's end (complete, cancelled,
           // error), however long it runs and however long it is paused.
           timeout: 0,

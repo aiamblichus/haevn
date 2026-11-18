@@ -136,6 +136,28 @@ describe("cancelling a bulk export (HVN-61)", () => {
     );
   });
 
+  it.each([
+    "cancelled",
+    "complete",
+    "error",
+    "paused",
+  ] as const)("ignores a late %s from an earlier export once a new one has started", async (late) => {
+    await startExport();
+    const earlier = worker.listener;
+    await cancelBulkExport(CANCEL_GRACE_MS); // the worker is silent: forced cleanup
+    await startBulkExport(["d", "e"], OPTIONS);
+    expect(await getActiveOperation()).toBe("bulkExport");
+    const current = await getExportJobState();
+    sentEvents.length = 0;
+
+    await earlier?.({ type: late, processed: 1, skipped: 0, error: "late" } as never);
+
+    expect((await getBulkExportState())?.status).toBe("running");
+    expect(await getExportJobState()).toEqual(current);
+    expect(await getActiveOperation()).toBe("bulkExport");
+    expect(sentEvents).toEqual([]);
+  });
+
   it("does nothing when no export is running", async () => {
     await cancelBulkExport(CANCEL_GRACE_MS);
 
