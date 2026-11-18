@@ -14,6 +14,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 10, 18, 12, 0, 0);
 const OLD = NOW - 2 * DAY;
 const HOUR_OLD = NOW - 60 * 60 * 1000;
+const H = 60 * 60 * 1000;
 
 let fs: FakeOpfs;
 
@@ -256,17 +257,174 @@ describe("what counts as a reference", () => {
   });
 
   it("does not let one chat's references protect a file in another chat's folder", async () => {
+    // c1 has a folder of its own, which the sweep walks first, and refers to a file in c2's
+    const own = file("c1", "m0_0.png");
     const other = file("c2", "m1_0.png");
-    await addChat("c1", [message("c1", "m1", responseWith(other))]);
+    await addChat("c1", [message("c1", "m0", responseWith(own, other))]);
     await addChat("c2", [message("c2", "m1", responseWith())]);
 
     await sweep();
 
+    expect(fs.has(own)).toBe(true);
     expect(fs.has(other)).toBe(false);
+  });
+
+  it("counts a string that is a path wherever a writer put it: any key of a message record, or of the chat row, with or without a leading slash", async () => {
+    const inMessage = file("c1", "a_0.png");
+    const inPart = file("c1", "b_0.png");
+    const inRow = file("c1", "c_0.png");
+    const inRowSlash = file("c1", "d_0.png");
+    const stray = file("c1", "z_0.png");
+    const part: ModelMessage = {
+      kind: "response",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      parts: [
+        {
+          part_kind: "text",
+          content: "no picture here",
+          vendor_metadata: { saved: { path: inPart } },
+        } as never,
+      ],
+    };
+    await addChat(
+      "c1",
+      [{ ...message("c1", "m1", part), extras: { picture: inMessage } } as ChatMessage],
+      { attachments: { draw: [inRow] }, files: [`/${inRowSlash}`] },
+    );
+
+    await sweep();
+
+    expect(fs.files("media/c1")).toEqual([inMessage, inPart, inRow, inRowSlash].sort());
+    expect(fs.has(stray)).toBe(false);
+  });
+});
+
+function linkOnly(kind: string, partKind: string): ModelMessage {
+  return {
+    kind: "response",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    parts: [{ part_kind: partKind, content: { kind, url: "https://cdn.example/x" } } as never],
+  };
+}
+
+describe("a chat whose media is held only as a link is skipped whole", () => {
+  it.each([
+    ["image-url", "image-response"],
+    ["video-url", "video-response"],
+    ["audio-url", "audio-response"],
+    ["document-url", "document-response"],
+  ])("keeps every file of a chat with a %s part, and says so", async (kind, partKind) => {
+    // A re-sync whose download failed: the old file is the only copy, and nothing refers to it
+    const only = file("c1", "old_0.png", OLD, "1234");
+    const stored = file("c1", "kept_0.png", OLD, "12");
+    await addChat("c1", [
+      message("c1", "m1", linkOnly(kind, partKind)),
+      message("c1", "m2", responseWith(stored)),
+    ]);
+    const stale = file("c2", "s_0.png");
+    await addChat("c2", [message("c2", "m1", responseWith())]);
+
+    const report = await sweep();
+
+    expect(fs.has(only)).toBe(true);
+    expect(fs.has(stored)).toBe(true);
+    expect(fs.has(stale)).toBe(false);
+    expect(report.skippedForRemoteMedia).toEqual({ chats: 1, files: 2 });
+    expect(report).toMatchObject({ skippedChats: 1, skippedFiles: 2, skippedBytes: 6, files: 1 });
+    expect(report.skipped[0]).toMatchObject({ chatId: "c1", files: 2, bytes: 6 });
+  });
+
+  it("holds back a chat with a link in a user's message too", async () => {
+    const only = file("c1", "old_0.png");
+    const asked: ModelMessage = {
+      kind: "request",
+      parts: [
+        {
+          part_kind: "user-prompt",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          content: ["look", { kind: "image-url", url: "https://cdn.example/x" }],
+        },
+      ],
+    };
+    await addChat("c1", [message("c1", "m1", asked)]);
+
+    await sweep();
+
+    expect(fs.has(only)).toBe(true);
+  });
+
+  it("sweeps a chat with no link at all", async () => {
+    const stale = file("c1", "old_0.png");
+    await addChat("c1", [message("c1", "m1", responseWith())]);
+
+    const report = await sweep();
+
+    expect(fs.has(stale)).toBe(false);
+    expect(report.skippedForRemoteMedia).toEqual({ chats: 0, files: 0 });
+  });
+});
+
+describe("a chat saved within the last day is skipped whole", () => {
+  it("keeps its unreferenced files until a day after its last save", async () => {
+    const stale = file("c1", "old_0.png");
+    await addChat("c1", [message("c1", "m1", responseWith())], {
+      lastSyncedTimestamp: NOW - 23 * H,
+    });
+
+    const first = await sweep();
+    expect(fs.has(stale)).toBe(true);
+    expect(first).toMatchObject({ skippedChats: 1, skippedFiles: 1, files: 0 });
+    expect(first.skipped[0].reason).toContain("saved within the last day");
+
+    await getDB().chats.update("c1", { lastSyncedTimestamp: NOW - 25 * H });
+    const later = await sweep();
+    expect(fs.has(stale)).toBe(false);
+    expect(later.files).toBe(1);
+  });
+
+  it("goes by the latest save when two chat ids share a folder", async () => {
+    const stale = file("a_b", "old_0.png");
+    await addChat("a:b", [message("a:b", "m1", responseWith())], {
+      lastSyncedTimestamp: NOW - 25 * H,
+    });
+    await addChat("a_b", [message("a_b", "m1", responseWith())], {
+      lastSyncedTimestamp: NOW - H,
+    });
+
+    await sweep();
+
+    expect(fs.has(stale)).toBe(true);
+  });
+
+  it("keeps them when the save is dated in the future", async () => {
+    const stale = file("c1", "old_0.png");
+    await addChat("c1", [message("c1", "m1", responseWith())], {
+      lastSyncedTimestamp: NOW + DAY,
+    });
+
+    await sweep();
+
+    expect(fs.has(stale)).toBe(true);
   });
 });
 
 describe("a chat that cannot be read is skipped whole", () => {
+  it("counts the files that stayed in a skipped chat", async () => {
+    file("odd", "a_0.png", OLD, "1234");
+    file("odd", "b_0.png", OLD, "123456");
+    const bad: ModelMessage = {
+      kind: "response",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      parts: [{ part_kind: "image-response", content: { kind: "binary" } }] as never,
+    };
+    await addChat("odd", [message("odd", "m0", bad)]);
+
+    const report = await sweep();
+
+    expect(report).toMatchObject({ skippedChats: 1, skippedFiles: 2, skippedBytes: 10 });
+    expect(report.skipped[0]).toMatchObject({ chatId: "odd", files: 2, bytes: 10 });
+  });
+
   it("skips a chat whose messages fail to load, and sweeps the others", async () => {
     const unknown = file("broken", "m1_0.png");
     const stale = file("fine", "m9_0.png");
@@ -313,6 +471,18 @@ describe("a chat that cannot be read is skipped whole", () => {
   it("skips a chat with a message that has no body", async () => {
     const kept = file("odd", "a_0.png");
     await addChat("odd", [{ ...message("odd", "m0"), message: undefined } as never]);
+
+    const report = await sweep();
+
+    expect(fs.has(kept)).toBe(true);
+    expect(report.skippedChats).toBe(1);
+  });
+
+  it("skips a chat whose own row carries a message with no body", async () => {
+    const kept = file("odd", "a_0.png");
+    await addChat("odd", [message("odd", "m1", responseWith())], {
+      messages: { m2: { ...message("odd", "m2"), message: undefined } },
+    });
 
     const report = await sweep();
 
@@ -413,6 +583,9 @@ describe("a dry run", () => {
     const stale = file("c1", "m1_0.png", OLD, "123456");
     const orphan = file("gone", "m1_0.png");
     await addChat("c1", [message("c1", "m2", responseWith(kept))]);
+    // A chat with a link-only image is skipped, and the dry run says so as the real run will
+    file("link", "old_0.png", OLD, "123");
+    await addChat("link", [message("link", "m1", linkOnly("image-url", "image-response"))]);
     const db = getDB();
     const id = (await db.thumbnails.add({
       chatId: "c1",
@@ -439,6 +612,10 @@ describe("a dry run", () => {
       orphanFolders: 1,
       thumbnailRows: 1,
       contentRows: 1,
+      skippedChats: 1,
+      skippedFiles: 1,
+      skippedBytes: 3,
+      skippedForRemoteMedia: { chats: 1, files: 1 },
     });
 
     const real = await sweep();
@@ -469,9 +646,36 @@ describe("how a run goes", () => {
     const summary = vi
       .mocked(log.info)
       .mock.calls.map((c) => String(c[0]))
-      .find((line) => line.includes("[MediaSweep]"));
+      .find((line) => line.includes("[MediaSweep] Swept"));
     expect(summary).toContain("1 files, 4 bytes");
     expect(summary).toContain("0 chats");
+  });
+
+  it("logs each chat that lost files with its id, source, file count and bytes, and no file names", async () => {
+    await addChat("c1", [message("c1", "m1", responseWith())], { source: "poe" });
+    file("c1", "secret-name_0.png", OLD, "12345");
+    file("c1", "other-name_1.png", OLD, "12");
+    await addChat("c2", [message("c2", "m1", responseWith(file("c2", "kept_0.png")))]);
+
+    await sweep();
+
+    const lines = vi.mocked(log.info).mock.calls.map((c) => String(c[0]));
+    const chatLines = lines.filter((l) => l.includes("Chat c1"));
+    expect(chatLines).toHaveLength(1);
+    expect(chatLines[0]).toContain("poe");
+    expect(chatLines[0]).toContain("2 files, 7 bytes");
+    expect(lines.some((l) => l.includes("Chat c2"))).toBe(false);
+    expect(lines.some((l) => l.includes("secret-name") || l.includes("other-name"))).toBe(false);
+  });
+
+  it("logs no chat line for a dry run", async () => {
+    await addChat("c1", [message("c1", "m1", responseWith())]);
+    file("c1", "a_0.png");
+
+    await sweep({ dryRun: true });
+
+    const lines = vi.mocked(log.info).mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes("Chat c1"))).toBe(false);
   });
 
   it("yields to the event loop while it works through many files", async () => {

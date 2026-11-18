@@ -136,7 +136,9 @@ export const haevnDebug = {
     console.log(
       `${report.dryRun ? "Dry run" : "Swept"}: ${report.files} files, ` +
         `${(report.bytes / 1024 / 1024).toFixed(1)} MB, ${report.chats} chats, ` +
-        `${report.orphanFolders} folders without a chat, ${report.skippedChats} chats skipped`,
+        `${report.orphanFolders} folders without a chat, ${report.skippedChats} chats skipped ` +
+        `(${report.skippedFiles} files, ${(report.skippedBytes / 1024 / 1024).toFixed(1)} MB stay; ` +
+        `${report.skippedForRemoteMedia.chats} of them for media held only as a link)`,
     );
     return report;
   },

@@ -13,10 +13,14 @@
  *
  *  - A file younger than a day is never deleted. Media is downloaded before the chat is saved, so
  *    a young file may be waiting for a save that has not happened yet.
- *  - What a chat refers to is read from the structure of its messages: every `binary` content
- *    object, wherever it sits, names its file in `data`. Text is never searched for paths.
- *  - A chat whose messages cannot be loaded, whose structure cannot be read, or which has files
- *    but no messages at all is skipped whole: its folder is left as it is.
+ *  - What a chat refers to is read from the whole stored record of each message and from the chat
+ *    row: every string that is a path (it starts with `media/`, or `/media/`) is a reference,
+ *    wherever it sits. Text that merely mentions a path is not searched.
+ *  - A chat is skipped whole, and its folder left as it is, when: its messages cannot be loaded or
+ *    read; it has files but no messages; it was saved within the last day (a backstop for a file
+ *    whose modification time did not move); or any of its media is held only as a link
+ *    (`image-url`, `document-url`, ...), which is what a failed download leaves, and then the
+ *    old local file may be the only copy.
  *  - Only `media/` is walked. The search index (`.haevn-search/`), exports and import staging sit
  *    beside it and are never listed.
  *
@@ -61,6 +65,9 @@ export interface SkippedChat {
   /** The chat, or the media folder name when the chat does not exist. */
   chatId: string;
   reason: string;
+  /** The files in its folder, and their bytes, all of which stayed. */
+  files: number;
+  bytes: number;
 }
 
 export interface MediaSweepReport {
@@ -83,7 +90,13 @@ export interface MediaSweepReport {
   /** Gallery rows (thumbnail and content) that pointed at a file that went. */
   thumbnailRows: number;
   contentRows: number;
+  /** Chats left alone whole, and every file in their folders (referenced or not) and its bytes. */
   skippedChats: number;
+  skippedFiles: number;
+  skippedBytes: number;
+  /** Of the skipped chats, those held back because some media is only a link; counted in the above too. */
+  skippedForRemoteMedia: { chats: number; files: number };
+  /** The first skipped chats, with the reason. */
   skipped: SkippedChat[];
   durationMs: number;
 }
@@ -103,6 +116,9 @@ function emptyReport(dryRun: boolean): MediaSweepReport {
     thumbnailRows: 0,
     contentRows: 0,
     skippedChats: 0,
+    skippedFiles: 0,
+    skippedBytes: 0,
+    skippedForRemoteMedia: { chats: 0, files: 0 },
     skipped: [],
     durationMs: 0,
   };
@@ -113,52 +129,87 @@ class UnreadableChat extends Error {}
 
 const MAX_DEPTH = 64;
 
+/** What a walk over stored records found: the media paths they name, and whether any media is only a link. */
+export interface MediaScan {
+  refs: Set<string>;
+  remote: boolean;
+}
+
+/** The kinds of content that hold media by its address: `image-url`, `video-url`, `audio-url`, `document-url`. */
+const REMOTE_KIND = /-url$/;
+
 /**
- * Adds to `refs` the storage path of every `binary` content object inside `value`.
- * The paths of other media are the same objects wherever they sit (a user prompt, a response part,
- * a tool result), so the walk looks at the shape, not at the position.
+ * Walks a stored record, whatever its shape, and adds to `scan.refs` every string that is a media
+ * path: it starts with `media/` (or `/media/`, which is read as `media/`). It looks at every value
+ * of every object and array, so a path counts wherever a writer puts it. Content of kind `binary`
+ * must carry its path as a string, or the record cannot be read (it throws). Content that is only a
+ * link sets `scan.remote`.
  */
-export function collectMediaRefs(value: unknown, refs: Set<string>, depth = 0): void {
-  if (depth > MAX_DEPTH) throw new UnreadableChat("message nested too deeply");
+export function scanForMedia(value: unknown, scan: MediaScan, depth = 0): void {
+  if (depth > MAX_DEPTH) throw new UnreadableChat("a record nested too deeply");
+  if (typeof value === "string") {
+    if (value.startsWith("media/")) scan.refs.add(value);
+    else if (value.startsWith("/media/")) scan.refs.add(value.slice(1));
+    return;
+  }
   if (Array.isArray(value)) {
-    for (const item of value) collectMediaRefs(item, refs, depth + 1);
+    for (const item of value) scanForMedia(item, scan, depth + 1);
     return;
   }
   if (value === null || typeof value !== "object") return;
   const record = value as Record<string, unknown>;
-  if (record.kind === "binary") {
-    if (typeof record.data !== "string") throw new UnreadableChat("binary content without a path");
-    refs.add(record.data);
+  if (record.kind === "binary" && typeof record.data !== "string") {
+    throw new UnreadableChat("binary content without a path");
   }
-  for (const child of Object.values(record)) {
-    if (child !== null && typeof child === "object") collectMediaRefs(child, refs, depth + 1);
-  }
+  if (typeof record.kind === "string" && REMOTE_KIND.test(record.kind)) scan.remote = true;
+  for (const child of Object.values(record)) scanForMedia(child, scan, depth + 1);
 }
 
-function collectMessageRefs(message: ChatMessage, refs: Set<string>): void {
+function scanMessage(message: ChatMessage, scan: MediaScan): void {
   if (!message || !Array.isArray(message.message)) {
     throw new UnreadableChat("a message without a body");
   }
-  collectMediaRefs(message.message, refs);
+  scanForMedia(message, scan);
 }
 
-/** Every media path the messages of these chats refer to. Throws {@link UnreadableChat} or a load error. */
-async function loadReferences(chatIds: string[]): Promise<{ refs: Set<string>; messages: number }> {
+interface LoadedChats {
+  scan: MediaScan;
+  /** Messages found, in the table and embedded in the rows. */
+  messages: number;
+  sources: string[];
+  /** The latest time any of the chats was saved, if one says. */
+  lastSyncedAt: number | undefined;
+}
+
+/** What the messages and rows of these chats say. Throws {@link UnreadableChat} or a load error. */
+async function loadChats(chatIds: string[]): Promise<LoadedChats> {
   const db = getDB();
-  const refs = new Set<string>();
+  const scan: MediaScan = { refs: new Set(), remote: false };
+  const sources: string[] = [];
   let messages = 0;
+  let lastSyncedAt: number | undefined;
   for (const chatId of chatIds) {
     const stored = await db.chatMessages.where("chatId").equals(chatId).toArray();
-    for (const message of stored) collectMessageRefs(message, refs);
+    for (const message of stored) scanMessage(message, scan);
     messages += stored.length;
-    // A chat saved before messages had a table of their own carries them in its row
     const row = await db.chats.get(chatId);
     if (!row) throw new UnreadableChat("the chat is gone");
+    // A chat saved before messages had a table of their own carries them in its row
     const embedded = Object.values(row.messages ?? {});
-    for (const message of embedded) collectMessageRefs(message, refs);
+    for (const message of embedded) {
+      if (!message || !Array.isArray(message.message)) {
+        throw new UnreadableChat("a message without a body");
+      }
+    }
     messages += embedded.length;
+    // The whole row: its messages, and any other field a writer put a path in
+    scanForMedia(row, scan);
+    sources.push(row.source);
+    if (typeof row.lastSyncedTimestamp === "number") {
+      lastSyncedAt = Math.max(lastSyncedAt ?? row.lastSyncedTimestamp, row.lastSyncedTimestamp);
+    }
   }
-  return { refs, messages };
+  return { scan, messages, sources, lastSyncedAt };
 }
 
 const yieldToEventLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -210,10 +261,27 @@ async function runSweep(options: MediaSweepOptions, dryRun: boolean): Promise<Me
     else chatsByFolder.set(folder, [chatId]);
   }
 
-  const skip = (chatId: string, reason: string) => {
+  /** Leaves a chat's folder as it is, and counts the files in it. */
+  const skipChat = async (
+    chatId: string,
+    dir: string,
+    names: string[],
+    reason: string,
+    remoteMedia = false,
+  ) => {
+    let bytes = 0;
+    for (const name of names) bytes += (await getFileMetadata(`${dir}/${name}`))?.size ?? 0;
     report.skippedChats += 1;
-    if (report.skipped.length < REPORT_SKIPPED_LIMIT) report.skipped.push({ chatId, reason });
-    log.warn(`[MediaSweep] Skipping ${chatId}: ${reason}`);
+    report.skippedFiles += names.length;
+    report.skippedBytes += bytes;
+    if (remoteMedia) {
+      report.skippedForRemoteMedia.chats += 1;
+      report.skippedForRemoteMedia.files += names.length;
+    }
+    if (report.skipped.length < REPORT_SKIPPED_LIMIT) {
+      report.skipped.push({ chatId, reason, files: names.length, bytes });
+    }
+    log.warn(`[MediaSweep] Skipping ${chatId}: ${reason} (${names.length} files stay)`);
   };
 
   const folders = await listDirectories(MEDIA_ROOT_PATH);
@@ -228,23 +296,41 @@ async function runSweep(options: MediaSweepOptions, dryRun: boolean): Promise<Me
 
     // What the folder's chats refer to; a folder with no chat refers to nothing
     let refs = new Set<string>();
+    let sources: string[] = [];
     if (chatIds.length > 0) {
+      const label = chatIds.join(",");
+      let loaded: LoadedChats;
       try {
-        const loaded = await loadReferences(chatIds);
-        if (loaded.messages === 0 && names.length > 0) {
-          skip(chatIds.join(","), "files, but no messages to say what they are for");
-          continue;
-        }
-        refs = loaded.refs;
+        loaded = await loadChats(chatIds);
       } catch (error) {
-        const reason =
-          error instanceof UnreadableChat
-            ? `its messages cannot be read (${error.message})`
-            : "its messages did not load";
-        skip(chatIds.join(","), reason);
-        if (!(error instanceof UnreadableChat)) log.warn("[MediaSweep] Load failed", error);
+        if (error instanceof UnreadableChat) {
+          await skipChat(label, dir, names, `its messages cannot be read (${error.message})`);
+        } else {
+          log.warn("[MediaSweep] Load failed", error);
+          await skipChat(label, dir, names, "its messages did not load");
+        }
         continue;
       }
+      if (loaded.messages === 0 && names.length > 0) {
+        await skipChat(label, dir, names, "files, but no messages to say what they are for");
+        continue;
+      }
+      if (loaded.lastSyncedAt !== undefined && now - loaded.lastSyncedAt < minAgeMs) {
+        await skipChat(label, dir, names, "saved within the last day");
+        continue;
+      }
+      if (loaded.scan.remote) {
+        await skipChat(
+          label,
+          dir,
+          names,
+          "some of its media is only a link, so its files may be the only copy",
+          true,
+        );
+        continue;
+      }
+      refs = loaded.scan.refs;
+      sources = loaded.sources;
     }
 
     const gone = new Set<string>();
@@ -284,6 +370,13 @@ async function runSweep(options: MediaSweepOptions, dryRun: boolean): Promise<Me
       report.files += gone.size;
       report.bytes += goneBytes;
       if (chatIds.length > 0) report.chats += 1;
+      if (!dryRun) {
+        // The chat and what went, never the names of the files
+        log.info(
+          `[MediaSweep] ${chatIds.length > 0 ? `Chat ${chatIds.join(",")} (${sources.join(",")})` : `Folder ${folder} (no chat)`}: ` +
+            `removed ${gone.size} files, ${goneBytes} bytes`,
+        );
+      }
       await forgetGalleryRows([...chatIds, folder], gone, dryRun, report);
     }
 
@@ -300,7 +393,9 @@ async function runSweep(options: MediaSweepOptions, dryRun: boolean): Promise<Me
     `[MediaSweep] ${dryRun ? "Dry run" : "Swept"}: ${report.files} files, ${report.bytes} bytes, ` +
       `${report.chats} chats, ${report.orphanFolders} folders without a chat, ` +
       `${report.tooYoung} unreferenced files too young to go, ${report.failedDeletes} failed deletes, ` +
-      `${report.skippedChats} chats skipped, ${report.thumbnailRows} thumbnails and ` +
+      `${report.skippedChats} chats skipped (${report.skippedFiles} files, ${report.skippedBytes} bytes, ` +
+      `${report.skippedForRemoteMedia.chats} for media held only as a link), ` +
+      `${report.thumbnailRows} thumbnails and ` +
       `${report.contentRows} content rows ${dryRun ? "to remove" : "removed"} ` +
       `in ${report.durationMs} ms`,
     report,
