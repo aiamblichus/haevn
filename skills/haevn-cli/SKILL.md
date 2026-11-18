@@ -76,8 +76,8 @@ haevn search "ai consciousness" --format json | jq '.results[0]'
 HAEVN search is term-based by default.
 
 - A multi-word query like `haevn search "you may not recognize me"` is **not** an exact phrase search.
-- Default semantics are AND-like term matching (plus Lunr tokenization/stemming behavior).
-- For exact phrase matching, pass inner quotes to Lunr:
+- Every word is required (AND). There is no stemming; accents are folded (`cafe` finds `café`), and a hyphen or interior `*` splits a word the way a space does.
+- For exact phrase matching, pass inner quotes:
 
 ```bash
 haevn search '"you may not recognize me"'
@@ -87,7 +87,7 @@ The CLI now prints a hint for unquoted multi-word queries to reduce confusion.
 
 #### Operators
 
-HAEVN uses **Lunr.js** query syntax:
+HAEVN parses the query itself (SQLite FTS5 underneath; a query never reaches the engine as raw text):
 
 | Operator | Example          | Description                      |
 | -------- | ---------------- | -------------------------------- |
@@ -95,8 +95,10 @@ HAEVN uses **Lunr.js** query syntax:
 | `"..."`  | `"exact phrase"` | Phrase must appear consecutively |
 | `-`      | `-exclude`       | Term must NOT be present         |
 | `*`      | `react*`         | Prefix/wildcard match            |
-| `~`      | `roam~2`         | Fuzzy match (edit distance 2)    |
-| `^`      | `api^10`         | Boost term relevance             |
+| `~`      | `roam~2`         | Near spellings (edit distance, capped at 2) |
+| `^`      | `api^10`         | Accepted and ignored (no per-word boost) |
+
+A leading `-` before a quoted phrase is refused ("Leaving out a phrase is not supported"), and a query is limited to 100 words and phrases; both exit 1 with `BAD_QUERY`. `--limit` counts chats, and JSON has `hasMore` when more matched.
 
 #### Examples
 
@@ -116,8 +118,6 @@ haevn search "kubernates~2"
 # Prefix matching
 haevn search "async* await*"
 
-# Boost relevance
-haevn search "api^5 design"
 ```
 
 #### JSON output hint field
