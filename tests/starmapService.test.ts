@@ -45,7 +45,7 @@ describe("computeStarmapLayoutFromEmbeddings (HVN-27)", () => {
     expect(computeLayoutInWorker).not.toHaveBeenCalled();
   });
 
-  it("sends each stored vector with its chat id, and the layout settings as parameters", async () => {
+  it("asks the worker for the layout with the settings only: the vectors stay in IndexedDB", async () => {
     await setStarmapConfig({
       umapNeighbors: 9,
       umapMinDist: 0.3,
@@ -60,11 +60,8 @@ describe("computeStarmapLayoutFromEmbeddings (HVN-27)", () => {
 
     await computeStarmapLayoutFromEmbeddings();
 
+    expect(computeLayoutInWorker).toHaveBeenCalledTimes(1);
     expect(computeLayoutInWorker).toHaveBeenCalledWith({
-      vectors: [
-        { chatId: "chat-a", vector: [0.3, 0.4] },
-        { chatId: "chat-b", vector: [0.1, 0.2] },
-      ],
       params: {
         umapNeighbors: 9,
         umapMinDist: 0.3,

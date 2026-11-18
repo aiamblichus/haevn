@@ -1,16 +1,10 @@
 import type {
   ConstellationLayoutParams,
   ConstellationLayoutResult,
-  ConstellationVector,
 } from "../constellation/core/types";
 import { computeLayoutInWorker } from "../constellation/runtime/workerClient";
-import type { ChatEmbeddingRecord } from "./db";
 import { getDB } from "./db";
 import { getStarmapConfig } from "./settingsService";
-
-function toVectors(rows: ChatEmbeddingRecord[]): ConstellationVector[] {
-  return rows.map((row) => ({ chatId: row.chatId, vector: row.vector }));
-}
 
 function configToLayoutParams(
   config: Awaited<ReturnType<typeof getStarmapConfig>>,
@@ -27,10 +21,12 @@ function configToLayoutParams(
 export async function computeStarmapLayoutFromEmbeddings(args?: {
   paramsOverride?: Partial<ConstellationLayoutParams>;
 }): Promise<ConstellationLayoutResult> {
-  const [config, rows] = await Promise.all([getStarmapConfig(), getDB().chatEmbeddings.toArray()]);
+  const [config, embeddingCount] = await Promise.all([
+    getStarmapConfig(),
+    getDB().chatEmbeddings.count(),
+  ]);
 
-  const vectors = toVectors(rows);
-  if (vectors.length === 0) {
+  if (embeddingCount === 0) {
     return {
       points: [],
       bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 },
@@ -43,5 +39,6 @@ export async function computeStarmapLayoutFromEmbeddings(args?: {
     ...(args?.paramsOverride ?? {}),
   };
 
-  return computeLayoutInWorker({ vectors, params });
+  // The vectors stay in IndexedDB: the worker reads them itself (HVN-93)
+  return computeLayoutInWorker({ params });
 }

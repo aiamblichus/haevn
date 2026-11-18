@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import "fake-indexeddb/auto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatEmbeddingRecord } from "../src/services/db";
+import { getDB } from "../src/services/db";
 
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -28,6 +31,14 @@ function send(message: Record<string, unknown>): void {
   workerSelf.onmessage({ data: message });
 }
 
+// The worker answers asynchronously: it reads IndexedDB before it computes
+async function replyTo(requestId: string): Promise<Posted> {
+  await vi.waitFor(() => expect(posted.some((m) => m.requestId === requestId)).toBe(true), {
+    timeout: 20000,
+  });
+  return posted.filter((m) => m.requestId === requestId)[0];
+}
+
 const PARAMS = {
   umapNeighbors: 15,
   umapMinDist: 0.1,
@@ -36,42 +47,90 @@ const PARAMS = {
   clusterK: 12,
 };
 
-function vectors(count: number): Array<{ chatId: string; vector: number[] }> {
-  return Array.from({ length: count }, (_, i) => ({
-    chatId: `chat-${i}`,
-    vector: [i % 3, (i * 7) % 5, i / 4, 1],
-  }));
+function embedding(chatId: string, vector: number[]): ChatEmbeddingRecord {
+  return {
+    chatId,
+    vector,
+    vectorDim: vector.length,
+    model: "test-embed",
+    endpointHash: "endpoint",
+    inputFingerprint: `fingerprint-${chatId}`,
+    updatedAt: 1,
+  };
 }
+
+function chatIdOf(i: number): string {
+  return `chat-${String(i).padStart(4, "0")}`;
+}
+
+async function seedEmbeddings(count: number): Promise<void> {
+  await getDB().chatEmbeddings.bulkPut(
+    Array.from({ length: count }, (_, i) => embedding(chatIdOf(i), [i % 3, (i * 7) % 5, i / 4, 1])),
+  );
+}
+
+beforeEach(async () => {
+  await getDB().chatEmbeddings.clear();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
-describe("starmap worker (HVN-27)", () => {
-  it("answers a layout request with the layout, under the same request id", async () => {
+describe("starmap worker (HVN-27, HVN-93)", () => {
+  it("lays out the embeddings stored in IndexedDB, from a request that carries only parameters", async () => {
+    await seedEmbeddings(12);
     await loadWorker();
 
-    send({ type: "computeLayout", requestId: "req-1", vectors: vectors(12), params: PARAMS });
+    send({ type: "computeLayout", requestId: "req-1", params: PARAMS });
 
-    const replies = posted.filter((m) => m.requestId === "req-1");
-    expect(replies).toHaveLength(1);
-    expect(replies[0].type).toBe("layoutResult");
-    expect(replies[0].points).toHaveLength(12);
+    const reply = await replyTo("req-1");
+    expect(reply.type).toBe("layoutResult");
+    expect((reply.points as Array<{ chatId: string }>).map((p) => p.chatId)).toEqual(
+      Array.from({ length: 12 }, (_, i) => chatIdOf(i)),
+    );
+  });
+
+  it("reads the embeddings in batches, never the whole table in one call", async () => {
+    await seedEmbeddings(250);
+    await loadWorker();
+    // loadWorker resets the module registry: spy on the database the worker now holds
+    const workerDb = (await import("../src/services/db")).getDB();
+    const bulkGet = vi.spyOn(workerDb.chatEmbeddings, "bulkGet");
+    const toArray = vi.spyOn(workerDb.chatEmbeddings, "toArray");
+
+    send({ type: "computeLayout", requestId: "req-batches", params: PARAMS });
+
+    const reply = await replyTo("req-batches");
+    expect(reply.type).toBe("layoutResult");
+    expect(bulkGet.mock.calls.length).toBeGreaterThanOrEqual(2);
+    for (const [keys] of bulkGet.mock.calls) {
+      expect(keys.length).toBeLessThanOrEqual(200);
+    }
+    expect(bulkGet.mock.calls.reduce((total, [keys]) => total + keys.length, 0)).toBe(250);
+    expect(toArray).not.toHaveBeenCalled();
+  });
+
+  it("answers an empty archive with an empty layout", async () => {
+    await loadWorker();
+
+    send({ type: "computeLayout", requestId: "req-empty", params: PARAMS });
+
+    const reply = await replyTo("req-empty");
+    expect(reply.type).toBe("layoutResult");
+    expect(reply.points).toEqual([]);
   });
 
   it("answers a layout it cannot compute with an error for the same request, not silence", async () => {
     // The worker client waits up to 60 s for a reply, so a dropped error costs a minute.
+    await getDB().chatEmbeddings.bulkPut([embedding("a", [1, 2]), embedding("b", [1, 2, 3])]);
     await loadWorker();
-    const mixed = [
-      { chatId: "a", vector: [1, 2] },
-      { chatId: "b", vector: [1, 2, 3] },
-    ];
 
-    send({ type: "computeLayout", requestId: "req-2", vectors: mixed, params: PARAMS });
+    send({ type: "computeLayout", requestId: "req-2", params: PARAMS });
 
-    const replies = posted.filter((m) => m.requestId === "req-2");
-    expect(replies).toHaveLength(1);
-    expect(replies[0].type).toBe("error");
-    expect(String(replies[0].error)).toContain("same dimensionality");
+    const reply = await replyTo("req-2");
+    expect(reply.type).toBe("error");
+    expect(String(reply.error)).toContain("same dimensionality");
   });
 });
