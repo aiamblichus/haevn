@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonRequest } from "../daemon/client.js";
 import type { Chat } from "../types/chat";
-import { formatChatListText, parseMetadataKeys, parseOffset } from "./list";
+import { consola } from "../utils/output";
+import listCommand, { formatChatListText, parseMetadataKeys, parseOffset } from "./list";
+
+vi.mock("../daemon/client.js", () => ({ daemonRequest: vi.fn() }));
 
 describe("haevn list --offset (HVN-14)", () => {
   it("is 0 when the flag is absent or empty", () => {
@@ -73,5 +77,42 @@ describe("haevn list text output with metadata (HVN-11)", () => {
 
     expect(out).toContain("Chosen title");
     expect(out).not.toContain("Platform title");
+  });
+});
+
+describe("haevn list text output with a hostile title (HVN-58)", () => {
+  beforeEach(() => {
+    vi.mocked(daemonRequest).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("prints a chat title's escape sequence as a stand-in, not as a sequence", async () => {
+    vi.mocked(daemonRequest).mockResolvedValue({
+      chats: [
+        {
+          id: "chat-1",
+          title: "\x1b]0;pwned\x07",
+          source: "claude",
+          lastSyncedTimestamp: Date.now(),
+        },
+      ],
+      total: 1,
+      hasMore: false,
+    });
+    const log = vi.spyOn(consola, "log").mockImplementation(() => undefined);
+
+    const run = listCommand.run;
+    if (!run) throw new Error("the list command has no run function");
+    await run({
+      args: { sort: "lastSynced", format: "text" },
+    } as unknown as Parameters<typeof run>[0]);
+
+    const printed = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(printed).toContain("\uFFFD]0;pwned\uFFFD");
+    expect(printed).not.toContain("\x1b]0;pwned");
+    expect(printed).not.toContain("\x07");
   });
 });

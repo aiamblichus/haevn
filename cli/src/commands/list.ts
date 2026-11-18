@@ -8,7 +8,14 @@ import { toJsonString } from "../formatters/json";
 import type { ListMetadataKey } from "../types";
 import type { Chat } from "../types/chat";
 import { parseWholeNumber } from "../utils/args";
-import { consola, formatPlatform, formatRelativeTime, pc, truncate } from "../utils/output";
+import {
+  consola,
+  formatPlatform,
+  formatRelativeTime,
+  pc,
+  safeText,
+  truncate,
+} from "../utils/output";
 
 const METADATA_KEYS: readonly ListMetadataKey[] = [
   "description",
@@ -185,13 +192,13 @@ export function formatChatListText(
   const showBranchCount = chats.some((c) => (c as Record<string, unknown>).branchCount != null);
 
   for (const chat of chats) {
-    const id = pc.dim((chat.id ?? "").padEnd(36));
+    const id = pc.dim(safeText(chat.id ?? "").padEnd(36));
     const rawTitle =
       ((chat as Record<string, unknown>).metaTitle as string | undefined) ??
       chat.title ??
       "(untitled)";
-    const title = truncate(rawTitle, 32).padEnd(33);
-    const platform = formatPlatform(chat.source ?? "").padEnd(10);
+    const title = truncate(safeText(rawTitle), 32).padEnd(33);
+    const platform = formatPlatform(safeText(chat.source ?? "")).padEnd(10);
     const time = pc.dim(formatRelativeTime(chat.lastSyncedTimestamp).padStart(9));
     const messageCountValue = Number((chat as Record<string, unknown>).messageCount ?? 0);
     const branchCountValue = Number((chat as Record<string, unknown>).branchCount ?? 0);
@@ -206,7 +213,7 @@ export function formatChatListText(
     const branchBadge = heavilyBranched ? pc.yellow("branched") : "";
 
     const models = chat.models ?? [];
-    const modelLabel = models.length > 0 ? pc.dim(truncate(models[0], 22)) : "";
+    const modelLabel = models.length > 0 ? pc.dim(truncate(safeText(models[0]), 22)) : "";
 
     lines.push(
       `  ${id}  ${title}  ${platform}  ${time}${msgCount ? `  ${msgCount}` : ""}${
@@ -229,12 +236,12 @@ function formatMetadataLines(chat: Partial<Chat>, keys: ListMetadataKey[]): stri
   const lines: string[] = [];
   for (const key of keys) {
     if (key === "description") {
-      const value = typeof meta.description === "string" ? meta.description.trim() : "";
+      const value = typeof meta.description === "string" ? safeText(meta.description.trim()) : "";
       if (value) {
         lines.push(`      ${pc.dim("desc:")} ${pc.dim(truncate(value, METADATA_DESC_MAX_LEN))}`);
       }
     } else if (key === "synopsis") {
-      const value = typeof meta.synopsis === "string" ? meta.synopsis.trim() : "";
+      const value = typeof meta.synopsis === "string" ? safeText(meta.synopsis.trim()) : "";
       if (value) {
         lines.push(
           `      ${pc.dim("synopsis:")} ${pc.dim(truncate(value, METADATA_SYNOPSIS_MAX_LEN))}`,
@@ -243,12 +250,12 @@ function formatMetadataLines(chat: Partial<Chat>, keys: ListMetadataKey[]): stri
     } else if (key === "categories") {
       const value = Array.isArray(meta.categories) ? (meta.categories as string[]) : [];
       if (value.length > 0) {
-        lines.push(`      ${pc.dim("categories:")} ${pc.dim(value.join(", "))}`);
+        lines.push(`      ${pc.dim("categories:")} ${pc.dim(safeText(value.join(", ")))}`);
       }
     } else if (key === "keywords") {
       const value = Array.isArray(meta.keywords) ? (meta.keywords as string[]) : [];
       if (value.length > 0) {
-        lines.push(`      ${pc.dim("keywords:")} ${pc.dim(value.join(", "))}`);
+        lines.push(`      ${pc.dim("keywords:")} ${pc.dim(safeText(value.join(", ")))}`);
       }
     }
   }

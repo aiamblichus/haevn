@@ -63,6 +63,24 @@ export function formatPlatform(platform: string): string {
 }
 
 /**
+ * The stand-in for a control character in conversation text. U+FFFD keeps one
+ * column per character, so widths and truncation do not move, and it is not a
+ * control, so a terminal cannot act on it. A caret form such as `^[` would take
+ * two columns, read like literal text, and has no form for C1 controls.
+ */
+const CONTROL_STAND_IN = "\uFFFD";
+
+/**
+ * Make conversation text safe to print. Every control character (C0, DEL and C1)
+ * except tab and newline becomes the stand-in, so a chat cannot move the cursor,
+ * rewrite earlier output or set the window title. Call it on archive text before
+ * colour codes are added; never on `--format json` output.
+ */
+export function safeText(text: string): string {
+  return text.replace(/\p{Cc}/gu, (ch) => (ch === "\t" || ch === "\n" ? ch : CONTROL_STAND_IN));
+}
+
+/**
  * Truncate a string to a max length, adding ellipsis if needed.
  */
 export function truncate(str: string, maxLength: number): string {
