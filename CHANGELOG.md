@@ -14,6 +14,7 @@
 
 ### Changed
 
+- **Search** (rebuilds the index once): `--limit` and the archive count chats, not messages, and both say when more chats matched (`hasMore` in the CLI's JSON); filters apply before the limit; a hyphen, colon or plus in a query no longer changes its meaning; long chats are searchable to the end (the 100,000-character cap is gone); `~N` is capped at 2; leaving out a phrase (`-"…"`) is refused rather than reversed.
 - Search snippets mark every match and show up to three passages (`haevn search --context` is per passage); the viewer opens a branched chat on its current branch.
 - The Markdown export of a branched chat writes the current branch (from the first message to the chat's current message) instead of every branch interleaved by time; `haevn export --all-branches` adds the others as `## Branch N` sections (a reading format, not importable).
 - The extension no longer loads fonts from Google: they ship with the extension.
@@ -23,6 +24,7 @@
 
 ### Fixed
 
+- A chat synced on its own is found and marked correctly by search right away, not only after a rebuild; a rebuild leaves deleted chats out of its count and says when it fails.
 - The archive's "search index incomplete" notice and the metadata failure box fit the dark theme.
 - The archive's search-rebuild notice follows the rebuild and clears when it ends, in the dark theme; viewer search highlighting no longer breaks links or entities; opening a chat with inline handlers no longer logs CSP errors; focus stays on a disabled branch arrow.
 - A search typed with punctuation (`word,`) finds the bare word, and the prefix fallback ignores it too; snippets stay on the match in text with a capital İ.
