@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildChat } from "../testing/fixtures";
 import { resolveMessageRef } from "../utils/messageRefs";
-import { formatBranchAsJson } from "./json";
+import { formatBranchAsJson, toJsonString } from "./json";
 
 const chat = buildChat(
   [
@@ -63,5 +63,15 @@ describe("formatBranchAsJson", () => {
     expect(withoutSystem.branch.messages.map((m) => m.role)).not.toContain("system");
     expect(withoutSystem.branch.messageCount).toBe(4);
     expect(withoutSystem.branch.messages).toHaveLength(4);
+  });
+});
+
+describe("toJsonString", () => {
+  it("escapes DEL and C1, which JSON.stringify leaves raw, without changing the value", () => {
+    const value = { title: "a\u009b2Jb\u007fc", plain: "ok é 😀" };
+    const out = toJsonString(value, false);
+    expect(out).not.toMatch(/[\u007f-\u009f]/);
+    expect(out).toContain("\\u009b");
+    expect(JSON.parse(out)).toEqual(value);
   });
 });

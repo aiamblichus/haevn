@@ -47,3 +47,10 @@ describe("safeText (HVN-58)", () => {
     expect(safeText(text)).toBe(text);
   });
 });
+
+describe("safeText and line endings", () => {
+  it("folds CRLF to a line break and still replaces a lone CR", () => {
+    expect(safeText("one\r\ntwo")).toBe("one\ntwo");
+    expect(safeText("one\rtwo")).toBe("one�two");
+  });
+});

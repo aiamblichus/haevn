@@ -77,7 +77,9 @@ const CONTROL_STAND_IN = "\uFFFD";
  * colour codes are added; never on `--format json` output.
  */
 export function safeText(text: string): string {
-  return text.replace(/\p{Cc}/gu, (ch) => (ch === "\t" || ch === "\n" ? ch : CONTROL_STAND_IN));
+  return text
+    .replace(/\r\n/g, "\n") // a pasted Windows line break is a line break, not a control
+    .replace(/\p{Cc}/gu, (ch) => (ch === "\t" || ch === "\n" ? ch : CONTROL_STAND_IN));
 }
 
 /**

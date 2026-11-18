@@ -49,5 +49,10 @@ export function formatBranchAsJson(
  * Stringify with pretty formatting.
  */
 export function toJsonString(data: unknown, pretty = true): string {
-  return JSON.stringify(data, null, pretty ? 2 : 0);
+  // JSON.stringify escapes C0 but leaves DEL and C1 raw, and some terminals act on C1 (U+009B is
+  // a CSI). Escaping them keeps the JSON valid and the parsed value unchanged.
+  return JSON.stringify(data, null, pretty ? 2 : 0).replace(
+    /[\u007f-\u009f]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 }
