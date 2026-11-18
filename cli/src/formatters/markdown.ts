@@ -160,32 +160,3 @@ function formatMetadata(chat: Chat): string {
 
   return parts.join(" | ");
 }
-
-/**
- * Format a search result fragment as Markdown.
- */
-export function formatFragmentAsMarkdown(
-  chat: Chat,
-  messageId: string,
-  fragment: string,
-  matchStart: number,
-  matchEnd: number,
-): string {
-  const message = chat.messages[messageId];
-  if (!message) return "";
-
-  const role = getMessageRole(message);
-  const before = fragment.slice(0, matchStart);
-  const match = fragment.slice(matchStart, matchEnd);
-  const after = fragment.slice(matchEnd);
-
-  const lines: string[] = [];
-
-  lines.push(`**${chat.title}** (chat: \`${chat.id}\`, message: \`${messageId}\`)`);
-  lines.push("");
-  lines.push(`${before}**${match}**${after}`);
-  lines.push("");
-  lines.push(`_${role} • ${formatTimestamp(message.timestamp)}_`);
-
-  return lines.join("\n");
-}

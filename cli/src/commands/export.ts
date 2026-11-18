@@ -120,11 +120,3 @@ export function formatExportResultSummary(
 }
 
 // Legacy helper retained for compatibility with prior imports/tests.
-export function formatExportSummary(chat: Chat, outputPath: string): string {
-  return formatExportResultSummary(chat.id || chat.sourceId, outputPath, {
-    format: "haevn_json",
-    filename: outputPath,
-    contentType: "application/json;charset=utf-8",
-    content: "",
-  });
-}

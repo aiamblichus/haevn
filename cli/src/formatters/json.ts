@@ -2,7 +2,6 @@
  * JSON formatter for structured output.
  */
 
-import type { CliResponse } from "../types";
 import type { Chat } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
 import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
@@ -51,11 +50,4 @@ export function formatBranchAsJson(
  */
 export function toJsonString(data: unknown, pretty = true): string {
   return JSON.stringify(data, null, pretty ? 2 : 0);
-}
-
-/**
- * Format a CLI response for stdout.
- */
-export function formatResponse<T>(response: CliResponse<T>, pretty = true): string {
-  return toJsonString(response, pretty);
 }
