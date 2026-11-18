@@ -47,7 +47,7 @@ haevn search "api design" --after 2024-01-01 --format json
 Options:
 - `-p, --platform <name>` - Filter by platform (claude, chatgpt, gemini, etc.)
 - `-l, --limit <n>` - Max chats to scan (default: 20)
-- `-c, --context <chars>` - Context around match (default: 120)
+- `-c, --context <chars>` - Context on each side of a match (default: 120); a result shows up to three such passages when matches are far apart
 - `-f, --format <fmt>` - Output format (text, json)
 - `--no-metadata` - Skip chat metadata in output (default includes metadata)
 - `--after <date>` - Only messages after date (YYYY-MM-DD)

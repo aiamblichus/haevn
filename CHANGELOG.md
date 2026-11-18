@@ -13,6 +13,7 @@
 
 ### Changed
 
+- Search snippets mark every match and show up to three passages (`haevn search --context` is per passage); the viewer opens a branched chat on its current branch.
 - The Markdown export of a branched chat writes the current branch (from the first message to the chat's current message) instead of every branch interleaved by time; `haevn export --all-branches` adds the others as `## Branch N` sections (a reading format, not importable).
 - The extension no longer loads fonts from Google: they ship with the extension.
 - The docs, README and settings say exactly what leaves your machine: the AI platforms you sync from, and an AI metadata or embeddings endpoint only if you turn it on and set one.
@@ -21,6 +22,8 @@
 
 ### Fixed
 
+- Search results in the archive no longer render a conversation's markup: snippets are escaped before their matches are marked.
+- A search hit only in an assistant's reply now returns the result.
 - `haevn list` and `haevn search` refuse a `--limit` or `--context` that is not a whole number, instead of silently using the default.
 - A chat saved, changed or deleted while the search index rebuilds is no longer left out of the index (the rebuild pages by chat id and indexes the chats added during it).
 - `haevn info --generate` no longer leaves the chat queued for a second generation, and `haevn import` queues AI metadata for the imported chats when auto-generate is on.
