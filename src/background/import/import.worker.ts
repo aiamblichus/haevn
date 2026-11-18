@@ -51,7 +51,7 @@ import type {
 } from "../../services/exportManifest";
 import { getExtensionFromMimeType } from "../../services/mediaStorage";
 import { sha256Hex, validateAndNormalizeChat } from "../../utils/jsonImporter";
-import { createWritableStream } from "../../utils/opfs";
+import { abortWritable, createWritableStream } from "../../utils/opfs";
 import { createZipReader, readEntryText } from "../../utils/zipReader";
 import { rewriteChatMediaRefs } from "./rewriteMediaRefs";
 
@@ -524,9 +524,15 @@ async function processImport(
                 mediaEntry.mediaType,
               );
               const writable = await createWritableStream(targetPath);
-              // Note: entry.getData() closes the writable stream internally when done,
-              // so we must NOT call writable.close() ourselves
-              await entry.getData(writable, { useWebWorkers: false });
+              try {
+                // Note: entry.getData() closes the writable stream internally when done,
+                // so we must NOT call writable.close() ourselves
+                await entry.getData(writable, { useWebWorkers: false });
+              } catch (writeError) {
+                // A stream that failed part-way is still open, and holds the file
+                await abortWritable(writable);
+                throw writeError;
+              }
               restoredMedia += 1;
               bytesWritten += mediaEntry.size || 0;
             } catch (error) {

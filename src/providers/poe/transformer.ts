@@ -3,7 +3,6 @@
  * Converts Poe GraphQL API responses to HAEVN.Chat format
  */
 
-import { v4 as uuidv4 } from "uuid";
 import type {
   AudioResponsePart,
   Chat,
@@ -20,6 +19,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { Message, PoeConversationData } from "./model";
 
@@ -66,9 +66,12 @@ async function createChat(poeData: PoeConversationData): Promise<Chat> {
     roots: newRootIndices.size,
   });
 
-  // Generate unique IDs for each real message
-  const messageIds = realMessages.map(() => uuidv4());
+  // The same message gets the same id on every sync, so its media files keep their names (HVN-90)
   const chatId = poeData.chatCode;
+  const messageIds = await stableMessageIds(
+    chatId,
+    realMessages.map((msg, position) => poeMessageSeed(msg, position)),
+  );
 
   // Process attachments per message to enable OPFS storage with proper chatId/messageId context
   // This is slightly slower than batch download but enables proper media storage
@@ -318,6 +321,17 @@ function createAssistantMessage(
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+/**
+ * What names a Poe message across syncs: the id Poe gives it, or failing that its numeric id or
+ * its code. Only a message with none of the three falls back to its place in the conversation.
+ */
+function poeMessageSeed(msg: Message, position: number): string {
+  if (msg.id) return `id:${msg.id}`;
+  if (typeof msg.messageId === "number") return `mid:${msg.messageId}`;
+  if (msg.messageCode) return `code:${msg.messageCode}`;
+  return `pos:${position}:${msg.author}:${msg.creationTime}`;
+}
 
 /**
  * Extract inline image URLs from markdown text.

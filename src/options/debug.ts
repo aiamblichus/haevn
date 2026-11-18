@@ -4,6 +4,7 @@
  */
 
 import { HaevnDatabase } from "../services/db";
+import { sweepMedia } from "../services/mediaSweep";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -122,6 +123,24 @@ export const haevnDebug = {
       console.log("Chat not found");
     }
     return chat;
+  },
+
+  /**
+   * The media sweep (HVN-90): deletes files in OPFS media/ that no message refers to, and the
+   * folders of chats that no longer exist. A dry run (the default) deletes nothing and returns the
+   * counts; pass { dryRun: false } to sweep for real. Files younger than a day are never deleted.
+   * Usage: haevnDebug.mediaSweep()  or  haevnDebug.mediaSweep({ dryRun: false })
+   */
+  async mediaSweep(options: { dryRun?: boolean } = {}) {
+    const report = await sweepMedia({ dryRun: options.dryRun ?? true });
+    console.log(
+      `${report.dryRun ? "Dry run" : "Swept"}: ${report.files} files, ` +
+        `${(report.bytes / 1024 / 1024).toFixed(1)} MB, ${report.chats} chats, ` +
+        `${report.orphanFolders} folders without a chat, ${report.skippedChats} chats skipped ` +
+        `(${report.skippedFiles} files, ${(report.skippedBytes / 1024 / 1024).toFixed(1)} MB stay; ` +
+        `${report.skippedForRemoteMedia.chats} of them for media held only as a link)`,
+    );
+    return report;
   },
 
   /**
@@ -416,6 +435,7 @@ export const haevnDebug = {
     console.log("  haevnDebug.search(q)         - Performs a detailed search");
     console.log("  haevnDebug.rebuildIndex()    - Rebuilds search index from scratch");
     console.log("  haevnDebug.regenerateThumbnails() - Clears and regenerates all thumbnails");
+    console.log("  haevnDebug.mediaSweep(opts)  - Media sweep; dry run unless { dryRun: false }");
     console.log("  haevnDebug.getStorage()      - Dumps chrome.storage.local");
     console.log("  haevnDebug.opfs.ls(path)     - List OPFS directory");
     console.log("  haevnDebug.opfs.tree(path)   - Recursive tree view");

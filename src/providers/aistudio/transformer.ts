@@ -1,6 +1,5 @@
 // AI Studio to HAEVN.Chat Transformer
 
-import { v4 as uuidv4 } from "uuid";
 import type {
   AudioResponsePart,
   Chat,
@@ -18,15 +17,21 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { AIStudioConversationData } from "./model";
 
 export async function transformAIStudioToHaevn(
   aistudioData: AIStudioConversationData,
 ): Promise<HAEVN.Chat> {
-  // Pre-generate message IDs
-  const messageIds: string[] = aistudioData.messages.map(() => uuidv4());
   const chatId = aistudioData.conversationId;
+  // AI Studio's page carries no message ids, and its timestamps are invented when the page shows
+  // none, so a message is named by its place in the conversation and who spoke. The same message
+  // keeps its id, and so its media files, from one sync to the next (HVN-90).
+  const messageIds: string[] = await stableMessageIds(
+    chatId,
+    aistudioData.messages.map((msg, position) => `${position}:${msg.role}`),
+  );
 
   log.info(
     `[AI Studio Transformer] Creating chat with ID: ${chatId}, messageCount: ${aistudioData.messages.length}`,

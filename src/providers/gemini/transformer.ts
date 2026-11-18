@@ -1,6 +1,5 @@
 // src/providers/gemini/transformer.ts
 
-import { v4 as uuidv4 } from "uuid";
 import type {
   HAEVN,
   ImageResponsePart,
@@ -13,6 +12,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { GeminiConversationData } from "./model";
 
@@ -23,8 +23,14 @@ export async function transformGeminiToHaevn(
   // IDs are already normalized (no 'c_' prefix) when extracted from URL
   const conversationId = geminiData.conversationId;
 
-  // Create a unique ID for each message
-  const messageIds: string[] = geminiData.messages.map(() => uuidv4());
+  // Gemini's page carries no message ids, and neither its text (still streaming at the first sync,
+  // reformatted when the extractor changes) nor its timestamps (invented when the page shows none)
+  // hold still between syncs. What does is the turn's place in the conversation and who spoke, so
+  // that names the message; the same message keeps its id, and so its media files (HVN-90).
+  const messageIds: string[] = await stableMessageIds(
+    conversationId,
+    geminiData.messages.map((msg, position) => `${position}:${msg.role}`),
+  );
 
   // Process files per message to enable OPFS storage with proper chatId/messageId context
   const messageFiles: Map<number, UserContent[]> = new Map();
