@@ -14,6 +14,7 @@
 
 ### Changed
 
+- **Search engine** (rebuilds the index once): search runs on SQLite FTS5 in a file the extension keeps on disk (OPFS) instead of Lunr in memory. On a large archive the search worker uses a few MB instead of more than a gigabyte, starts at once, and keeps answering during a rebuild. Phrases are exact, accents are folded (`cafe` finds `café`), a chat whose title matches is found even when no message does, and `word^N` is accepted and ignored. A query is limited to 100 words and phrases. The extension's policy now allows WebAssembly (`'wasm-unsafe-eval'`), which SQLite needs.
 - **Search** (rebuilds the index once): `--limit` and the archive count chats, not messages, and both say when more chats matched (`hasMore` in the CLI's JSON); filters apply before the limit; a hyphen, colon or plus in a query no longer changes its meaning; long chats are searchable to the end (the 100,000-character cap is gone); `~N` is capped at 2; leaving out a phrase (`-"…"`) is refused rather than reversed.
 - Search snippets mark every match and show up to three passages (`haevn search --context` is per passage); the viewer opens a branched chat on its current branch.
 - The Markdown export of a branched chat writes the current branch (from the first message to the chat's current message) instead of every branch interleaved by time; `haevn export --all-branches` adds the others as `## Branch N` sections (a reading format, not importable).
