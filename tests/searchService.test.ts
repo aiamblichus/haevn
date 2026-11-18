@@ -13,6 +13,7 @@ vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { SearchQueryError } from "../src/services/searchQuery";
 import { SearchService } from "../src/services/searchService";
 
 type Chunk = {
@@ -217,5 +218,26 @@ describe("SearchService.searchChatsStreaming for an id, with a limit and filters
     expect(dated.stats.wasLimited).toBe(false);
     expect(categorised.results.map((r) => r.chatId)).toEqual(["abc3"]);
     expect(categorised.stats.wasLimited).toBe(false);
+  });
+});
+
+describe("SearchService.searchChatsStreaming and a query with nothing to look for (HVN-78)", () => {
+  it("fails with the worker's sentence, and does not complete as if nothing matched", async () => {
+    workerAnswers([{ results: [], done: true, queryProblem: "Type a word to search for." }]);
+    let completed = false;
+
+    const failure = await new Promise<Error>((resolve) => {
+      SearchService.searchChatsStreaming("* -", {
+        onResults: () => {},
+        onComplete: () => {
+          completed = true;
+        },
+        onError: resolve,
+      });
+    });
+
+    expect(failure).toBeInstanceOf(SearchQueryError);
+    expect(failure.message).toBe("Type a word to search for.");
+    expect(completed).toBe(false);
   });
 });

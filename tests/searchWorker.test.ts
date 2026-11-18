@@ -1684,3 +1684,144 @@ describe("search worker: the limit counts chats (HVN-77)", () => {
     });
   });
 });
+
+describe("search worker: the query is parsed by us, not by Lunr (HVN-78)", () => {
+  async function indexChats(...pairs: [string, string][]): Promise<void> {
+    await seedChats(pairs.map(([id, text]) => buildChat(id, text)));
+    await send({ type: "rebuild" });
+  }
+
+  const found = async (query: string): Promise<string[]> =>
+    [...new Set(hitIds(await search(query, false)))].sort();
+
+  const passages = async (query: string): Promise<SearchResult[]> =>
+    (await search(query, true)).flatMap((c) => c.results as SearchResult[]);
+
+  describe("a hyphen", () => {
+    const CHATS: [string, string][] = [
+      ["joined", "I like local-first software"],
+      ["apart", "first the cat, then local"],
+      ["only-local", "a local shop"],
+      ["only-first", "the first shop"],
+    ];
+
+    it("means the same as a space: both words, and not either", async () => {
+      await indexChats(...CHATS);
+
+      expect(await found("local-first")).toEqual(["apart", "joined"]);
+      expect(await found("local first")).toEqual(await found("local-first"));
+    });
+
+    it("means the same inside a phrase", async () => {
+      await indexChats(...CHATS);
+
+      expect(await found('"local-first"')).toEqual(["joined"]);
+      expect(await found('"local first"')).toEqual(["joined"]);
+    });
+  });
+
+  describe("punctuation that Lunr takes for syntax", () => {
+    it("finds a word with a colon in it, and does not fail", async () => {
+      await indexChats(["colon", "set foo:bar in the config"], ["other", "set foo and bar"]);
+
+      expect(await found("foo:bar")).toEqual(["colon"]);
+      expect((await passages("foo:bar")).map((p) => p.chatId)).toEqual(["colon"]);
+    });
+
+    it("takes c++ templates as two words that both have to be there", async () => {
+      await indexChats(
+        ["both", "c++ templates are generic"],
+        ["templates-only", "html templates are generic"],
+        ["c-only", "learning c++ today"],
+      );
+
+      expect(await found("c++ templates")).toEqual(["both"]);
+    });
+
+    it("takes a plus, a caret or a tilde that is not an operator as part of the typing", async () => {
+      await indexChats(["a", "the wombat sat"], ["b", "a numbat sat"]);
+
+      expect(await found("wombat+")).toEqual(["a"]);
+      expect(await found("(wombat)")).toEqual(["a"]);
+      expect(await found("wombat~")).toEqual(["a"]);
+    });
+  });
+
+  describe("the operators the CLI documents", () => {
+    it("leaves out a word with a leading minus", async () => {
+      await indexChats(["a", "alignment and rlhf"], ["b", "alignment alone"]);
+
+      expect(await found("alignment -rlhf")).toEqual(["b"]);
+    });
+
+    it("matches a prefix typed with a trailing star", async () => {
+      await indexChats(["a", "recursion is recursive"], ["b", "a rectangle"]);
+
+      expect(await found("recurs*")).toEqual(["a"]);
+    });
+
+    it("finds a nearby spelling with ~N, and shows the passage that has it", async () => {
+      await indexChats(["a", "we run kubernetes at work"], ["b", "we run nothing"]);
+
+      expect(await found("kubernates~2")).toEqual(["a"]);
+      const [passage] = await passages("kubernates~2");
+      expect(passage.messageSnippet).toContain("{{HIGHLIGHT}}kubernetes{{/HIGHLIGHT}}");
+    });
+
+    it("takes ^N as a boost and still needs every word", async () => {
+      await indexChats(["a", "api design notes"], ["b", "api only"]);
+
+      expect(await found("api^5 design")).toEqual(["a"]);
+    });
+
+    it("keeps a quoted phrase exact", async () => {
+      await indexChats(["a", "you may not recognize me"], ["b", "me not recognize may you"]);
+
+      expect(await found('"may not recognize"')).toEqual(["a"]);
+    });
+  });
+
+  describe("when the strict search finds nothing", () => {
+    it("falls back to the prefixes of the words, without the stop words", async () => {
+      await indexChats(["db", "how we migrate the database"], ["cook", "how to cook rice"]);
+
+      // "quickly" is in neither, so the strict search is empty; "how" is in both, and says nothing.
+      expect(await found("how should I migrate my database quickly")).toEqual(["db"]);
+    });
+
+    it("keeps the stop words when they are all the query has", async () => {
+      await indexChats(["a", "to be or not to be"], ["b", "something else"]);
+
+      expect(await found("to be or not")).toEqual(["a"]);
+    });
+  });
+
+  describe("a phrase of stop words", () => {
+    it("finds the chats that have the phrase", async () => {
+      await indexChats(["a", "to be or not"], ["b", "not to be"], ["c", "do be well"]);
+
+      expect(await found('"to be"')).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("a query with nothing to look for", () => {
+    const problemOf = async (query: string) => {
+      const [chunk] = await search(query, true);
+      return chunk.queryProblem as string | undefined;
+    };
+
+    it("says so, rather than answering with no results", async () => {
+      await indexChats(["a", "alignment"]);
+
+      expect(await problemOf("-alignment")).toMatch(/not only words to leave out/);
+      expect(await problemOf("* - ~2")).toMatch(/Type a word/);
+      expect(await problemOf("alignment")).toBeUndefined();
+    });
+
+    it("posts the problem as the last chunk, with no results", async () => {
+      const [chunk] = await search("-alignment", true);
+
+      expect(chunk).toMatchObject({ results: [], done: true });
+    });
+  });
+});

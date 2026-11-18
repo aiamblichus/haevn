@@ -70,6 +70,11 @@ export type SearchWorkerResponse =
        */
       wasLimited?: boolean;
       /**
+       * The query has nothing to look for (only punctuation, or only words to leave out), so
+       * the search did not run: a sentence for the reader, and `results` is empty.
+       */
+      queryProblem?: string;
+      /**
        * Set when the index is being rebuilt and the search was not run. An empty `results` then
        * means "not searched", never "no matches".
        */

@@ -25,7 +25,7 @@ import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
 import { getDB } from "./db";
 import { inCategory, inDateRange, needsCategory } from "./searchFilters";
-import { parseSearchQuery } from "./searchQuery";
+import { parseSearchQuery, SearchQueryError } from "./searchQuery";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 
 // --- Worker Communication ---
@@ -357,6 +357,12 @@ export namespace SearchService {
 
               if (chunk.indexRebuilding) indexRebuilding = chunk.indexRebuilding;
               if (chunk.indexIncomplete) indexIncomplete = chunk.indexIncomplete;
+
+              if (chunk.queryProblem) {
+                // The query has nothing to look for: a failure the reader can fix, not zero results.
+                if (onError) onError(new SearchQueryError(chunk.queryProblem));
+                return;
+              }
 
               // The worker now returns SearchResult[] when hydrate: true
               let results = chunk.results as SearchResult[];

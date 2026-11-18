@@ -68,7 +68,7 @@ haevn search '"you may not recognize me"'
 
 When you run an unquoted multi-word query, CLI text output shows a tip, and JSON output includes a top-level `hint` field.
 
-HAEVN uses **Lunr.js** query syntax with these operators:
+HAEVN reads these operators itself (it does not pass the query to Lunr.js as typed). Nothing else is syntax: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
 
 | Operator | Example | Description |
 |----------|---------|-------------|
@@ -101,7 +101,9 @@ haevn search "async* await*"
 haevn search "api^5 design documentation"
 ```
 
-If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics).
+If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics) on the words that say something: stop words such as `how` or `should` are left out of the retry.
+
+A query with nothing to look for (only words to leave out, or no words at all) exits 1 with the reason instead of printing no results.
 
 ### `get` - Fetch a chat branch
 

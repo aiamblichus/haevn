@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SearchQueryError } from "../src/services/searchQuery";
 import { log } from "../src/utils/logger";
 
 const searchChatsStreaming = vi.hoisted(() => vi.fn());
@@ -435,5 +436,47 @@ describe("the bridge answering a search with a limit and filters (HVN-77)", () =
     ]);
 
     expect(reply).toMatchObject({ data: { results: [{ chatId: "c1" }] } });
+  });
+});
+
+describe("the bridge answering a search that has nothing to look for (HVN-78)", () => {
+  type Failing = (e: Error) => void;
+
+  /** Answer a search with the error `makeError` makes; the class is the bridge's own copy. */
+  async function replyTo(
+    makeError: (QueryError: typeof SearchQueryError) => Error,
+  ): Promise<Record<string, unknown>> {
+    const bridge = await loadBridge();
+    // loadBridge resets the modules: the error has to come from the copy the bridge imported.
+    const { SearchQueryError: QueryError } = await import("../src/services/searchQuery");
+    searchChatsStreaming.mockImplementation((_query: string, options: { onError: Failing }) => {
+      options.onError(makeError(QueryError));
+      return { cancel: () => {} };
+    });
+    await bridge.applyWsBridgeSettings();
+    const socket = latest();
+    socket.accept();
+    socket.receive({ id: "r1", action: "search", query: "-rlhf" });
+    await vi.waitFor(() => expect(socket.sent.some((f) => f.id === "r1")).toBe(true));
+    return socket.sent.find((f) => f.id === "r1") as Record<string, unknown>;
+  }
+
+  it("fails with BAD_QUERY and the sentence, which a script can show as it is", async () => {
+    const reply = await replyTo(
+      (QueryError) => new QueryError("A search needs a word to look for."),
+    );
+
+    expect(reply).toMatchObject({
+      id: "r1",
+      success: false,
+      code: "BAD_QUERY",
+      error: "A search needs a word to look for.",
+    });
+  });
+
+  it("still fails with INTERNAL_ERROR for any other error", async () => {
+    const reply = await replyTo(() => new Error("boom"));
+
+    expect(reply).toMatchObject({ success: false, code: "INTERNAL_ERROR", error: "boom" });
   });
 });

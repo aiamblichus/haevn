@@ -27,9 +27,11 @@ import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searc
 import { buildSnippet, lowerCaseRangeMapper, type TextRange, trimToWord } from "./searchSnippet";
 import { buildSearchResultsForChat } from "./searchTextMatch";
 import {
-  buildLunrQueryPlan,
-  buildRelaxedPrefixQuery,
+  applyClauses,
+  buildQueryPlan,
+  buildRelaxedPlan,
   type PhraseConstraint,
+  type QueryClause,
   queryNeedsExactPhrasePath,
 } from "./searchWorkerQuery";
 
@@ -257,6 +259,10 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
 }
 
 function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
+  // A word typed with `~` matches a spelling the text has, not the one typed: only the index
+  // knows which, and it has already placed the match in this message.
+  if (parsed.required.some((term) => term.editDistance)) return true;
+
   const hay = text.toLowerCase();
 
   if (parsed.phrases.length > 0) {
@@ -1059,16 +1065,14 @@ function currentIndexIncomplete(): { indexIncomplete: SearchIndexIncompleteStatu
 }
 
 async function performSearch(
-  query: string,
+  parsed: ParsedQuery,
   hydrate: boolean = false,
   options: { exactTextFilter?: boolean } = {},
 ): Promise<string[] | LunrResult[]> {
-  if (!query) return [];
-
   if (segments.size === 0) await loadSegments();
 
-  // 1. Normalize the query path before handing it to Lunr.
-  const { finalQuery, hasPhrases, phraseConstraints } = buildLunrQueryPlan(query);
+  // 1. What to ask the index for. The query text never reaches Lunr's own parser (HVN-78).
+  const { clauses, hasPhrases, phraseConstraints } = buildQueryPlan(parsed);
   const metadataPhraseConstraints = phraseConstraints.filter(
     (constraint) => !constraint.requiresTextVerification,
   );
@@ -1076,15 +1080,15 @@ async function performSearch(
     (constraint) => constraint.requiresTextVerification,
   );
 
-  if (!finalQuery.trim()) {
+  if (clauses.length === 0) {
     return [];
   }
 
-  const runSegmentSearch = (queryText: string): LunrResult[] => {
+  const runSegmentSearch = (queryClauses: QueryClause[]): LunrResult[] => {
     const found: LunrResult[] = [];
     for (const [id, seg] of segments) {
       try {
-        const results = seg.index.search(queryText) as LunrResult[];
+        const results = seg.index.query((q) => applyClauses(q, queryClauses)) as LunrResult[];
         const filtered = hasPhrases
           ? results.filter((r) =>
               metadataPhraseConstraints.every((constraint) =>
@@ -1105,13 +1109,13 @@ async function performSearch(
   };
 
   // 2. Search (Get IDs and Metadata)
-  let rawResults: LunrResult[] = runSegmentSearch(finalQuery);
+  let rawResults: LunrResult[] = runSegmentSearch(clauses);
 
   // Relaxed fallback: if strict query returns nothing, retry with prefix matching (OR semantics).
   if (rawResults.length === 0 && !hasPhrases) {
-    const relaxedQuery = buildRelaxedPrefixQuery(query);
-    if (relaxedQuery) {
-      rawResults = runSegmentSearch(relaxedQuery);
+    const relaxed = buildRelaxedPlan(parsed);
+    if (relaxed) {
+      rawResults = runSegmentSearch(relaxed.clauses);
     }
   }
 
@@ -1196,9 +1200,21 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         msg.passagesPerChat && msg.passagesPerChat > 0 ? msg.passagesPerChat : Infinity;
       const filters = msg.filters ?? {};
       const parsedQuery = parseSearchQuery(msg.query);
-      const needsExactPhraseHydration = queryNeedsExactPhrasePath(msg.query);
+      if (parsedQuery.problem) {
+        // Nothing to look for is not "no results": say why, so the caller can tell the reader.
+        self.postMessage({
+          type: "searchResultChunk",
+          requestId: msg.requestId,
+          results: [],
+          done: true,
+          queryProblem: parsedQuery.problem,
+          ...incomplete,
+        });
+        return;
+      }
+      const needsExactPhraseHydration = queryNeedsExactPhrasePath(parsedQuery);
 
-      const results = await performSearch(msg.query, hydrate, {
+      const results = await performSearch(parsedQuery, hydrate, {
         exactTextFilter: !hydrate && needsExactPhraseHydration,
       });
 

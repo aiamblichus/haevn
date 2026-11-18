@@ -45,6 +45,7 @@ import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateOnRequest, setManualMetadata } from "../services/metadataService";
+import { SearchQueryError } from "../services/searchQuery";
 import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
@@ -644,31 +645,41 @@ async function handleSearch(
     ...(options.category ? { category: options.category } : {}),
   };
 
-  const { results, wasLimited, indexRebuilding, indexIncomplete } = await new Promise<{
-    results: SearchResult[];
-    wasLimited: boolean;
-    indexRebuilding?: SearchIndexRebuildStatus;
-    indexIncomplete?: SearchIndexIncompleteStatus;
-  }>((resolve, reject) => {
-    const collected: SearchResult[] = [];
-    SyncService.searchChatsStreaming(query, {
-      streamBatchSize: 50,
-      maxChatsToScan: options.limit ?? 1000,
-      resultsPerChat: 4,
-      filterProvider: options.platform,
-      filters,
-      contextChars: options.contextChars,
-      onResults: (batch) => collected.push(...batch),
-      onComplete: (stats) =>
-        resolve({
-          results: collected,
-          wasLimited: stats.wasLimited,
-          indexRebuilding: stats.indexRebuilding,
-          indexIncomplete: stats.indexIncomplete,
-        }),
-      onError: reject,
+  const { results, wasLimited, queryProblem, indexRebuilding, indexIncomplete } =
+    await new Promise<{
+      results: SearchResult[];
+      wasLimited: boolean;
+      queryProblem?: string;
+      indexRebuilding?: SearchIndexRebuildStatus;
+      indexIncomplete?: SearchIndexIncompleteStatus;
+    }>((resolve, reject) => {
+      const collected: SearchResult[] = [];
+      SyncService.searchChatsStreaming(query, {
+        streamBatchSize: 50,
+        maxChatsToScan: options.limit ?? 1000,
+        resultsPerChat: 4,
+        filterProvider: options.platform,
+        filters,
+        contextChars: options.contextChars,
+        onResults: (batch) => collected.push(...batch),
+        onComplete: (stats) =>
+          resolve({
+            results: collected,
+            wasLimited: stats.wasLimited,
+            indexRebuilding: stats.indexRebuilding,
+            indexIncomplete: stats.indexIncomplete,
+          }),
+        onError: (err) =>
+          err instanceof SearchQueryError
+            ? resolve({ results: [], wasLimited: false, queryProblem: err.message })
+            : reject(err),
+      });
     });
-  });
+
+  // A query with nothing to look for is the caller's to fix, not an empty answer.
+  if (queryProblem) {
+    return { id, success: false, error: queryProblem, code: "BAD_QUERY" };
+  }
 
   // An empty list during a rebuild is not "no matches": say so, so the caller can retry.
   if (indexRebuilding) {
