@@ -79,6 +79,7 @@ vi.mock("../src/utils/opfs", async (importOriginal) => {
     ],
     // A stream that zip.js can pipe to, with the write and close the manifest writer calls.
     createWritableStream: async (path: string) => {
+      await opfs.onWrite?.(path);
       const chunks: Uint8Array[] = [];
       const store = () => opfs.files.set(path, join(chunks));
       const stream = new WritableStream<Uint8Array>({
@@ -270,9 +271,13 @@ describe("a second bulk export start while a job runs or is paused (HVN-55)", ()
 
 // ---- HVN-60: the queue and a pause ------------------------------------------------------------
 
-/** `count` chats c0..c(count-1), the database holding all of them. */
-function seedChats(count: number, attachmentsOf: Record<string, number> = {}): string[] {
-  const ids = Array.from({ length: count }, (_, i) => `c${i}`);
+/** `count` chats c0..c(count-1) (or with another prefix), the database holding all of them. */
+function seedChats(
+  count: number,
+  attachmentsOf: Record<string, number> = {},
+  prefix = "c",
+): string[] {
+  const ids = Array.from({ length: count }, (_, i) => `${prefix}${i}`);
   for (const id of ids) {
     const attachments = attachmentsOf[id] ?? 0;
     const messages =
@@ -418,5 +423,174 @@ describe("a pause that lands mid-batch (HVN-60)", () => {
     expect(stagedChatIds("e1").sort()).toEqual(["c0", "c1", "c2"]);
     expect(manifestLines("e1", "media").map((entry) => entry.chatId)).toEqual(["c0", "c0", "c0"]);
     expect((await zipEntryNames("e1")).filter((name) => name.startsWith("media/"))).toHaveLength(3);
+  });
+});
+
+// ---- HVN-61: a cancel and a resume ------------------------------------------------------------
+
+/** A promise a test settles by hand, to hold a chat load until it says so. */
+function gate(): { wait: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
+describe("a cancel mid-batch and a start after it (HVN-61)", () => {
+  it("ends the cancelled job quietly and leaves the next job its own counters", async () => {
+    await loadWorker();
+    const first = seedChats(101);
+    const second = seedChats(3, {}, "d");
+    const heldFirst = gate();
+    const heldSecond = gate();
+    onChatLoad = async (id) => {
+      if (id === "c0") await heldFirst.wait;
+      if (id === "d0") await heldSecond.wait;
+    };
+
+    const firstRun = send(startMessage("r1", "e1", first));
+    await vi.waitFor(() => expect(chatLoads).toContain("c0"));
+    await send({ type: "cancel" });
+    expect(posted).toContainEqual(expect.objectContaining({ type: "cancelled" }));
+
+    // A start is accepted after the cancel, and is mid-chat when the cancelled batch wakes.
+    const secondRun = send(startMessage("r2", "e2", second));
+    await vi.waitFor(() => expect(chatLoads).toContain("d0"));
+    heldFirst.open();
+    await firstRun;
+
+    // The cancelled job's batch has ended; it posted nothing after `cancelled`, and it did
+    // not take the second job's chats.
+    const afterCancel = posted.slice(posted.findIndex((m) => m.type === "cancelled") + 1);
+    expect(afterCancel.filter((m) => m.requestId === "r1")).toEqual([]);
+    expect(chatLoads.filter((id) => id.startsWith("d"))).toEqual(["d0"]);
+
+    heldSecond.open();
+    await secondRun;
+    expect(posted.filter((m) => m.type === "error")).toEqual([]);
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: "complete",
+        requestId: "r2",
+        processed: 3,
+        skipped: 0,
+        batches: 1,
+      }),
+    );
+    expect(stagedChatIds("e2").sort()).toEqual(["d0", "d1", "d2"]);
+  });
+
+  it("leaves the next job alone when a cancelled job wakes between batches", async () => {
+    await loadWorker();
+    const first = seedChats(101);
+    const second = seedChats(3, {}, "d");
+    // The cancel and a new start land right after the first batch, while the cancelled job
+    // waits on the event loop. Its next call must not pick up the new job's state.
+    workerSelf.postMessage = (message) => {
+      posted.push(message);
+      if (message.type === "progress" && String(message.status).startsWith("Completed batch 1/2")) {
+        void send({ type: "cancel" });
+        void send(startMessage("r2", "e2", second));
+      }
+    };
+
+    await send(startMessage("r1", "e1", first));
+    await vi.waitFor(() =>
+      expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r2" })),
+    );
+
+    expect(chatLoads.filter((id) => id.startsWith("d"))).toEqual(["d0", "d1", "d2"]);
+    expect(posted.filter((m) => m.type === "error")).toEqual([]);
+    expect(posted.filter((m) => m.requestId === "r1" && m.type === "complete")).toEqual([]);
+  });
+
+  it("does not report a failure in a cancelled job's batch, nor end the next job", async () => {
+    await loadWorker();
+    const first = seedChats(101);
+    const second = seedChats(3, {}, "d");
+    const heldFirst = gate();
+    const heldSecond = gate();
+    onChatLoad = async (id) => {
+      if (id === "c0") {
+        await heldFirst.wait;
+        throw new Error("db closed");
+      }
+      if (id === "d0") await heldSecond.wait;
+    };
+
+    const firstRun = send(startMessage("r1", "e1", first));
+    await vi.waitFor(() => expect(chatLoads).toContain("c0"));
+    await send({ type: "cancel" });
+    const secondRun = send(startMessage("r2", "e2", second));
+    await vi.waitFor(() => expect(chatLoads).toContain("d0"));
+
+    heldFirst.open();
+    await firstRun;
+    expect(posted.filter((m) => m.type === "error")).toEqual([]);
+
+    heldSecond.open();
+    await secondRun;
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "complete", requestId: "r2", processed: 3 }),
+    );
+  });
+
+  // The cancel lands at each step of the finalizing, after the last batch: the job stops
+  // before the next step, so a cancelled export does not zip its whole staging tree.
+  it.each([
+    ["writes the manifest meta", "/meta.json", false, false],
+    ["writes the manifest", "/staging/manifest.json", true, false],
+    ["builds the ZIP", buildExportZipPath("e1"), true, true],
+  ])("stops a job cancelled while it %s", async (_step, pathEnd, manifestWritten, zipBuilt) => {
+    await loadWorker();
+    const ids = seedChats(2);
+    opfs.onWrite = async (path) => {
+      if (path.endsWith(pathEnd)) await send({ type: "cancel" });
+    };
+
+    await send(startMessage("r1", "e1", ids));
+
+    expect(posted).toContainEqual(expect.objectContaining({ type: "cancelled" }));
+    expect(posted.filter((m) => m.type === "error" || m.type === "complete")).toEqual([]);
+    expect(opfs.files.has("exports/e1/staging/manifest.json")).toBe(manifestWritten);
+    expect(opfs.files.has(buildExportZipPath("e1"))).toBe(zipBuilt);
+  });
+});
+
+describe("what the job posts reaches the start's listener (HVN-61)", () => {
+  it("answers a cancel while paused on the requestId of the start", async () => {
+    await loadWorker();
+    const ids = seedChats(3);
+    onChatLoad = async (id) => {
+      if (id === "c0") await send({ type: "pause" });
+    };
+    await send(startMessage("r1", "e1", ids));
+    expect(posted).toContainEqual(expect.objectContaining({ type: "paused", requestId: "r1" }));
+
+    posted = [];
+    // The service worker sends a cancel with no requestId of its own.
+    await send({ type: "cancel" });
+    expect(posted).toEqual([{ type: "cancelled", requestId: "r1" }]);
+  });
+
+  it("carries the start's requestId on everything a resumed job posts", async () => {
+    await loadWorker();
+    const ids = seedChats(101);
+    onChatLoad = async (id) => {
+      if (id === "c0") await send({ type: "pause" });
+    };
+    await send(startMessage("r1", "e1", ids));
+    onChatLoad = undefined;
+    posted = [];
+
+    // The service worker sends a resume with no requestId of its own.
+    await send({ type: "resume" });
+
+    const announced = posted.filter(
+      (m) => m.type !== "progress" || String(m.status).startsWith("Processing batch"),
+    );
+    expect(announced.map((m) => m.type)).toContain("complete");
+    expect(announced.filter((m) => m.requestId !== "r1")).toEqual([]);
   });
 });
