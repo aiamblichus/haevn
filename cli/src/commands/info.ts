@@ -16,7 +16,7 @@ import { defineCommand } from "citty";
 import { daemonRequest } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { ChatMetadataRecord, MetadataUpdate } from "../types";
-import { consola, formatRelativeTime, header, pc, truncate } from "../utils/output";
+import { consola, formatRelativeTime, header, pc, safeText, truncate } from "../utils/output";
 
 export default defineCommand({
   meta: {
@@ -155,11 +155,11 @@ function formatMetadataText(chatId: string, record: ChatMetadataRecord | null): 
   const lbl = (s: string) => pc.dim(`${s}:`.padEnd(15));
   const empty = pc.dim("(not set)");
 
-  lines.push(`  ${lbl("Title")}${record.title || empty}`);
-  lines.push(`  ${lbl("Description")}${record.description || empty}`);
+  lines.push(`  ${lbl("Title")}${record.title ? safeText(record.title) : empty}`);
+  lines.push(`  ${lbl("Description")}${record.description ? safeText(record.description) : empty}`);
 
   if (record.synopsis) {
-    const wrapped = wrapText(record.synopsis, 65);
+    const wrapped = wrapText(safeText(record.synopsis), 65);
     lines.push(`  ${lbl("Synopsis")}${wrapped[0]}`);
     for (const l of wrapped.slice(1)) {
       lines.push(`  ${"".padEnd(15)}${l}`);
@@ -169,9 +169,11 @@ function formatMetadataText(chatId: string, record: ChatMetadataRecord | null): 
   }
 
   lines.push(
-    `  ${lbl("Categories")}${record.categories?.length ? record.categories.join(", ") : empty}`,
+    `  ${lbl("Categories")}${record.categories?.length ? safeText(record.categories.join(", ")) : empty}`,
   );
-  lines.push(`  ${lbl("Keywords")}${record.keywords?.length ? record.keywords.join(", ") : empty}`);
+  lines.push(
+    `  ${lbl("Keywords")}${record.keywords?.length ? safeText(record.keywords.join(", ")) : empty}`,
+  );
   lines.push("");
 
   const sourceLabel = record.source === "ai" ? pc.green("ai") : pc.cyan("manual");

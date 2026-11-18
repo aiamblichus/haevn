@@ -8,7 +8,15 @@ import { toJsonString } from "../formatters/json";
 import type { SearchResult } from "../types";
 import { parseWholeNumber } from "../utils/args";
 import { createMessageRef } from "../utils/messageRefs";
-import { consola, formatPlatform, formatRelativeTime, header, pc, truncate } from "../utils/output";
+import {
+  consola,
+  formatPlatform,
+  formatRelativeTime,
+  header,
+  pc,
+  safeText,
+  truncate,
+} from "../utils/output";
 
 export default defineCommand({
   meta: {
@@ -166,27 +174,29 @@ export function formatSearchResultsText(
         ? result.metaTitle || result.chatTitle
         : result.chatTitle;
       lines.push("");
-      lines.push(header(`${result.chatId}  "${truncate(displayTitle, 45)}"`));
+      lines.push(header(`${safeText(result.chatId)}  "${truncate(safeText(displayTitle), 45)}"`));
 
       if (includeMetadata && result.metadata) {
         const description = result.metadata.description?.trim();
         const keywords = result.metadata.keywords ?? [];
 
         if (description) {
-          lines.push(`  ${pc.dim("desc:")} ${pc.dim(description)}`);
+          lines.push(`  ${pc.dim("desc:")} ${pc.dim(safeText(description))}`);
         }
         if (keywords.length > 0) {
-          lines.push(`  ${pc.dim("keywords:")} ${pc.dim(keywords.join(", "))}`);
+          lines.push(`  ${pc.dim("keywords:")} ${pc.dim(safeText(keywords.join(", ")))}`);
         }
       }
     }
 
     const roleLabel = result.messageRole === "user" ? pc.cyan("user") : pc.magenta("asst");
 
-    const snippet = renderSnippet(result.messageSnippet ?? result.messageContent.slice(0, 150));
+    const snippet = renderSnippet(
+      safeText(result.messageSnippet ?? result.messageContent.slice(0, 150)),
+    );
     const time = formatRelativeTime(result.messageTimestamp);
-    const platform = formatPlatform(result.source);
-    const modelSuffix = result.model ? ` · ${pc.dim(truncate(result.model, 24))}` : "";
+    const platform = formatPlatform(safeText(result.source));
+    const modelSuffix = result.model ? ` · ${pc.dim(truncate(safeText(result.model), 24))}` : "";
 
     lines.push(
       `  ${pc.dim("┌─")} ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`,

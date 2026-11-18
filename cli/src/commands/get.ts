@@ -9,7 +9,7 @@ import { formatBranchAsJson, toJsonString } from "../formatters/json";
 import { formatBranchAsMarkdown } from "../formatters/markdown";
 import type { Chat } from "../types/chat";
 import { resolveMessageRef } from "../utils/messageRefs";
-import { consola } from "../utils/output";
+import { consola, safeText } from "../utils/output";
 import { getBranchContainingMessage, getPrimaryBranch } from "../utils/tree";
 
 export default defineCommand({
@@ -124,7 +124,10 @@ export default defineCommand({
       fs.writeFileSync(output, content, "utf8");
       consola.success(`Written to ${output}`);
     } else {
-      process.stdout.write(`${content}\n`);
+      // Markdown on the terminal carries conversation text, so its control characters
+      // become stand-ins. JSON is left as it is, because scripts read it raw.
+      const shown = format === "json" ? content : safeText(content);
+      process.stdout.write(`${shown}\n`);
     }
   },
 });

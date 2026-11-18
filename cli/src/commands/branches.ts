@@ -8,7 +8,7 @@ import { toJsonString } from "../formatters/json";
 import type { TreeNode } from "../types";
 import type { Chat, ChatMessage } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
-import { consola, pc, truncate } from "../utils/output";
+import { consola, pc, safeText, truncate } from "../utils/output";
 import {
   getAllBranches,
   getMessagePreview,
@@ -90,10 +90,10 @@ export function buildTree(chat: Chat): TreeNode {
 
 function summarizeNode(chat: Chat, messageId: string): string {
   const msg = chat.messages[messageId];
-  if (!msg) return truncate(messageId, 12);
+  if (!msg) return truncate(safeText(messageId), 12);
   const role = getMessageRole(msg);
   const roleLabel = role === "system" ? "S" : role === "user" ? "U" : "A";
-  return `${roleLabel}:${truncate(getMessagePreview(msg, 22), 22)}`;
+  return `${roleLabel}:${truncate(safeText(getMessagePreview(msg, 22)), 22)}`;
 }
 
 export function formatTreeText(chat: Chat, showIds = false): string {
@@ -105,7 +105,7 @@ export function formatTreeText(chat: Chat, showIds = false): string {
   const lines: string[] = [];
   lines.push(
     pc.bold(
-      `${chat.id}  "${truncate(chat.title, 50)}"  ${pc.dim(`${branches.length} branch${branches.length === 1 ? "" : "es"}`)}`,
+      `${safeText(chat.id ?? "")}  "${truncate(safeText(chat.title), 50)}"  ${pc.dim(`${branches.length} branch${branches.length === 1 ? "" : "es"}`)}`,
     ),
   );
   lines.push("");
@@ -130,9 +130,10 @@ function formatNodeLine(node: TreeNode, showIds: boolean): string {
       : node.role === "user"
         ? pc.cyan("[user]")
         : pc.magenta("[asst]");
-  const preview = pc.dim(truncate(node.preview, 40));
-  const leafId = showIds && node.isLeaf ? ` ${pc.yellow(`→ ${node.messageId}`)}` : "";
-  const inlineId = showIds && !node.isLeaf ? ` ${pc.dim(`(${truncate(node.messageId, 12)})`)}` : "";
+  const preview = pc.dim(truncate(safeText(node.preview), 40));
+  const leafId = showIds && node.isLeaf ? ` ${pc.yellow(`→ ${safeText(node.messageId)}`)}` : "";
+  const inlineId =
+    showIds && !node.isLeaf ? ` ${pc.dim(`(${truncate(safeText(node.messageId), 12)})`)}` : "";
   const star = node.isOnPrimaryPath ? pc.bold("*") : " ";
   return `${star} ${roleLabel} ${preview}${inlineId}${leafId}`;
 }
