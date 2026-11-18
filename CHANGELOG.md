@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- A search typed with punctuation (`word,`) finds the bare word, and the prefix fallback ignores it too; snippets stay on the match in text with a capital İ.
 - Search finds a word followed by punctuation (`word,` `(word)` `word.`) and words in any script; titles weigh the same in every part of the index. The search index rebuilds once after this update, and a search made during it says so.
 - A paused export can be cancelled, and closing the export dialog while an export runs asks first instead of leaving exporting locked; the archive answers normally while the popup is open.
 - An export no longer leaves a full copy of the archive in the extension's storage: its staging files and ZIP are deleted once the download settles, or when it fails or is cancelled, and leftovers older than a day are swept.
