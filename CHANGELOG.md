@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- A paused export can be cancelled, and closing the export dialog while an export runs asks first instead of leaving exporting locked; the archive answers normally while the popup is open.
 - An export no longer leaves a full copy of the archive in the extension's storage: its staging files and ZIP are deleted once the download settles, or when it fails or is cancelled, and leftovers older than a day are swept.
 - Pausing a bulk export no longer drops the rest of the batch (up to 99 chats) or a chat's media from the ZIP; a paused and resumed export now finishes and downloads; cancelling, also while paused, releases the operation lock; an export or import that runs longer than 10 minutes no longer loses its completion.
 - `haevn` no longer passes terminal control characters from a conversation to the terminal: text output shows them as U+FFFD, and JSON output escapes them.
