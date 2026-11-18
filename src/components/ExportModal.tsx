@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import type { ExporterId, ExportOptions } from "../formatters";
 import type { BackgroundEvent } from "../types/messaging";
 import { log } from "../utils/logger";
+import {
+  dismissNeedsConfirm,
+  type ExportProgress,
+  exportFooter,
+  exportProgressHeading,
+} from "./exportProgressState";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -21,17 +27,8 @@ interface ExportModalProps {
   onClose: () => void;
   onStatus?: (text: string, kind?: "ok" | "warn" | "error" | "work") => void;
   onExportChatById?: (chatId: string, options: ExportOptions) => Promise<void>;
-}
-
-interface ExportProgress {
-  processed: number;
-  total: number;
-  currentBatch: number;
-  totalBatches: number;
-  status: string;
-  downloadedFiles: string[];
-  isPaused: boolean;
-  isComplete: boolean;
+  /** Shown above the options when the chats are a part of the archive (a search), not all of it. */
+  scopeNote?: string | null;
 }
 
 interface ExporterChoice {
@@ -77,6 +74,7 @@ export const ExportModal = ({
   onClose,
   onStatus,
   onExportChatById,
+  scopeNote,
 }: ExportModalProps) => {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState<ExportProgress | null>(null);
@@ -292,11 +290,25 @@ export const ExportModal = ({
     onClose();
   };
 
+  // The X, Escape and a click outside all come here. Closing a running or paused export without
+  // cancelling it leaves the job going with no dialog to show it (HVN-66), so that asks first.
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && dismissNeedsConfirm(isExporting, progress)) {
+      if (window.confirm("Cancel the export?")) {
+        handleCancel();
+      }
+      return;
+    }
+    onOpenChange(nextOpen);
+  };
+
   const progressPercent =
     progress && progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
+  const footer = exportFooter(progress);
+  const heading = exportProgressHeading(progress);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       {exportModalIds && (
         <DialogContent className="max-w-2xl">
           {!isExporting ? (
@@ -306,6 +318,8 @@ export const ExportModal = ({
                 <DialogTitle>Export</DialogTitle>
                 <DialogDescription>{exportModalIds.length} chat(s) selected.</DialogDescription>
               </DialogHeader>
+
+              {scopeNote && <p className="text-sm text-yellow-600">{scopeNote}</p>}
 
               <div className="space-y-3">
                 <div className="space-y-1">
@@ -349,12 +363,8 @@ export const ExportModal = ({
             // Progress View
             <>
               <DialogHeader>
-                <DialogTitle>Exporting Chats</DialogTitle>
-                <DialogDescription>
-                  {progress
-                    ? `Exporting batch ${progress.currentBatch} of ${progress.totalBatches}...`
-                    : "Preparing export..."}
-                </DialogDescription>
+                <DialogTitle>{heading.title}</DialogTitle>
+                <DialogDescription>{heading.description}</DialogDescription>
               </DialogHeader>
               <div className="mt-4 space-y-4">
                 {/* Overall Status */}
@@ -402,19 +412,17 @@ export const ExportModal = ({
                 )}
               </div>
               <DialogFooter>
-                {progress?.isComplete ? (
-                  <Button onClick={onClose}>Close</Button>
-                ) : progress?.isPaused ? (
-                  <Button onClick={handleResume}>Resume</Button>
-                ) : (
-                  <>
-                    <Button variant="outline" onClick={handlePause}>
-                      Pause
-                    </Button>
-                    <Button variant="destructive" onClick={handleCancel}>
-                      Cancel
-                    </Button>
-                  </>
+                {footer.close && <Button onClick={onClose}>Close</Button>}
+                {footer.resume && <Button onClick={handleResume}>Resume</Button>}
+                {footer.pause && (
+                  <Button variant="outline" onClick={handlePause} disabled={footer.pauseDisabled}>
+                    Pause
+                  </Button>
+                )}
+                {footer.cancel && (
+                  <Button variant="destructive" onClick={handleCancel}>
+                    Cancel
+                  </Button>
                 )}
               </DialogFooter>
             </>

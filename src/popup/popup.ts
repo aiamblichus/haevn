@@ -2,6 +2,7 @@ import type { BulkSyncState } from "../background/bulkSync/types";
 import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
 import type { PlatformInfo } from "../utils/platform";
+import { listenForPopupBroadcasts } from "./popupBroadcasts";
 
 log.info("HAEVN Popup loaded");
 
@@ -484,7 +485,7 @@ function setupEventListeners(): void {
   }
 
   // Listen for bulk sync progress updates
-  chrome.runtime.onMessage.addListener(async (message) => {
+  listenForPopupBroadcasts(async (message) => {
     if (message.action === "bulkSyncProgress") {
       // Show progress immediately, even before state is set
       const isSyncingThisProvider = message.provider === currentPlatform?.name;
