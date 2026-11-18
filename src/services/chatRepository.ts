@@ -703,8 +703,14 @@ export namespace ChatRepository {
         const mediaStorage = getMediaStorageService();
 
         // Run OPFS deletions in parallel
-        await Promise.all(chatIds.map((chatId) => mediaStorage.deleteChatDir(chatId)));
-        log.info(`Cleaned up OPFS media for ${chatIds.length} chats`);
+        const results = await Promise.all(
+          chatIds.map((chatId) => mediaStorage.deleteChatDir(chatId)),
+        );
+        const failed = results.filter((ok) => !ok).length;
+        log.info(`Cleaned up OPFS media for ${chatIds.length - failed} of ${chatIds.length} chats`);
+        if (failed > 0) {
+          log.warn(`${failed} chat media folders could not be deleted; the media sweep will retry`);
+        }
       } catch (e) {
         log.warn("Failed to clean up OPFS media for deletions", e);
         // Don't throw - deletion failures shouldn't block chat deletion

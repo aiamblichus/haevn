@@ -164,29 +164,56 @@ export async function writeFile(
     "importScripts" in self;
 
   if (useSyncHandle || isWorkerContext) {
+    let accessHandle: FileSystemSyncAccessHandle | undefined;
     try {
-      const accessHandle = await fileHandle.createSyncAccessHandle();
+      accessHandle = await fileHandle.createSyncAccessHandle();
       const writeBuffer = new Uint8Array(buffer);
 
       // Synchronous write (blazing fast!)
       accessHandle.truncate(0); // Clear file first
-      accessHandle.write(writeBuffer, { at: 0 });
+      const written = accessHandle.write(writeBuffer, { at: 0 });
+      if (written !== writeBuffer.byteLength) {
+        throw new Error(`Short write: ${written} of ${writeBuffer.byteLength} bytes`);
+      }
       accessHandle.flush();
-      accessHandle.close();
 
       return path;
     } catch (error) {
       // Fall back to async if sync fails
       log.warn("[OPFS] Sync write failed, falling back to async:", error);
+    } finally {
+      // An open handle locks the file: the async write below needs it free
+      try {
+        accessHandle?.close();
+      } catch (closeError) {
+        log.warn("[OPFS] Closing the sync handle failed:", closeError);
+      }
     }
   }
 
   // Async write (main thread or fallback)
   const writable = await fileHandle.createWritable();
-  await writable.write(buffer);
-  await writable.close();
+  try {
+    await writable.write(buffer);
+    await writable.close();
+  } catch (error) {
+    await abortWritable(writable);
+    throw error;
+  }
 
   return path;
+}
+
+/**
+ * Drop a writable stream whose write or close failed, so its half-written swap file does not
+ * linger and the file is not left locked. Resolves whether or not the stream could be aborted.
+ */
+export async function abortWritable(writable: FileSystemWritableFileStream): Promise<void> {
+  try {
+    await writable.abort();
+  } catch (_error) {
+    // Already closed or aborted: nothing is left to drop
+  }
 }
 
 /**
@@ -277,36 +304,50 @@ export async function deleteFile(path: string): Promise<boolean> {
 }
 
 /**
- * Recursively delete a directory and all its contents
+ * Remove a directory, recursively unless told otherwise.
  *
- * @param path - Directory path to delete
- * @returns true if deleted, false if directory didn't exist
+ * @param path - Directory path to remove
+ * @param options.recursive - false removes the directory only when it is empty
+ * @returns true if removed, false if the directory did not exist
+ * @throws Any other failure (a locked file, a directory that is not empty without `recursive`)
  */
-export async function deleteDirectory(path: string): Promise<boolean> {
+export async function removeDirectory(
+  path: string,
+  options: { recursive?: boolean } = {},
+): Promise<boolean> {
+  const segments = splitPath(path);
+
+  if (segments.length === 0) {
+    throw new Error("Cannot delete root directory");
+  }
+
+  const root = await getRootDirectory();
+  const parentSegments = segments.slice(0, -1);
+  const targetDirName = segments[segments.length - 1];
+
   try {
-    const segments = splitPath(path);
-
-    if (segments.length === 0) {
-      throw new Error("Cannot delete root directory");
-    }
-
-    const root = await getRootDirectory();
-
-    // Navigate to parent directory
-    const parentSegments = segments.slice(0, -1);
-    const targetDirName = segments[segments.length - 1];
-
     const parentDir =
       parentSegments.length > 0
         ? await getDirectoryHandleForPath(root, parentSegments, false)
         : root;
-
-    // Delete the target directory recursively
-    await parentDir.removeEntry(targetDirName, { recursive: true });
-
+    await parentDir.removeEntry(targetDirName, { recursive: options.recursive ?? true });
     return true;
+  } catch (error) {
+    if ((error as DOMException).name === "NotFoundError") return false;
+    throw error;
+  }
+}
+
+/**
+ * Recursively delete a directory and all its contents
+ *
+ * @param path - Directory path to delete
+ * @returns true if deleted, false if the directory didn't exist or could not be deleted
+ */
+export async function deleteDirectory(path: string): Promise<boolean> {
+  try {
+    return await removeDirectory(path);
   } catch (_error) {
-    // Directory doesn't exist or other error
     return false;
   }
 }

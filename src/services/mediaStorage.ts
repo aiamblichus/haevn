@@ -19,6 +19,14 @@
 import { log } from "../utils/logger";
 import * as OPFS from "../utils/opfs";
 
+/** The OPFS directory that holds every chat's media folder. Nothing else lives in it. */
+export const MEDIA_ROOT_PATH = "media";
+
+/** The folder name a chat's media goes in: the chat id with the characters a path cannot hold replaced. */
+export function mediaFolderName(chatId: string): string {
+  return chatId.replace(/[/\\:*?"<>|]/g, "_");
+}
+
 /**
  * Reference to a stored media file
  * Stored in IndexedDB mediaContent table
@@ -64,9 +72,11 @@ export interface MediaStorageService {
   delete(storagePath: string): Promise<void>;
 
   /**
-   * Deletes a directory of files (e.g., deleting a chat)
+   * Deletes a directory of files (e.g., deleting a chat).
+   * Resolves true when the directory is gone (or never was), false when it could not be removed:
+   * the folder is then left for the media sweep, which finds it unreferenced.
    */
-  deleteChatDir(chatId: string): Promise<void>;
+  deleteChatDir(chatId: string): Promise<boolean>;
 
   /**
    * Reads file content as ArrayBuffer
@@ -89,7 +99,7 @@ export interface MediaStorageService {
  * Implementation of Media Storage Service
  */
 class MediaStorageServiceImpl implements MediaStorageService {
-  private readonly mediaRootPath = "media";
+  private readonly mediaRootPath = MEDIA_ROOT_PATH;
 
   /**
    * Generate storage path for a media file
@@ -116,8 +126,7 @@ class MediaStorageServiceImpl implements MediaStorageService {
    * Sanitize a path segment to remove potentially unsafe characters
    */
   private sanitizePathSegment(segment: string): string {
-    // Replace unsafe characters with underscores
-    return segment.replace(/[/\\:*?"<>|]/g, "_");
+    return mediaFolderName(segment);
   }
 
   /**
@@ -221,20 +230,26 @@ class MediaStorageServiceImpl implements MediaStorageService {
   /**
    * Delete all media files for a chat
    */
-  async deleteChatDir(chatId: string): Promise<void> {
+  async deleteChatDir(chatId: string): Promise<boolean> {
     const safeChatId = this.sanitizePathSegment(chatId);
     const dirPath = `${this.mediaRootPath}/${safeChatId}`;
 
     try {
-      const deleted = await OPFS.deleteDirectory(dirPath);
+      const deleted = await OPFS.removeDirectory(dirPath);
       if (deleted) {
         log.info(`[MediaStorage] Deleted chat media directory: ${dirPath}`);
       } else {
         log.info(`[MediaStorage] Chat media directory not found: ${dirPath}`);
       }
+      return true;
     } catch (error) {
-      log.error(`[MediaStorage] Failed to delete chat media directory: ${dirPath}`, error);
-      // Don't throw - deletion failures shouldn't block chat deletion
+      // Don't throw - deletion failures shouldn't block chat deletion. The chat row is gone by
+      // now, so nothing refers to the folder: the media sweep takes it on its next run.
+      log.warn(
+        `[MediaStorage] Could not delete the media of chat ${chatId} (${dirPath}); the media sweep will remove it`,
+        error,
+      );
+      return false;
     }
   }
 
