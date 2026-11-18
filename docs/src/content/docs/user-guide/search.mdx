@@ -82,7 +82,7 @@ If your strict AND query returns no results, HAEVN automatically retries with re
 
 - **Titles are boosted:** Conversation titles have 10x relevance weight, so short queries often surface the right conversation first.
 - **Case-insensitive:** Search ignores case, and the accents of Latin letters: `cafe` finds `café`.
-- **Stop words filtered:** Common words like "the", "a", "is" are excluded from the index.
+- **Stop words are skipped in a query:** common words like "the", "a" and "is" do not narrow a search that has other words in it; inside a "quoted phrase" they count.
 
 ## How search works
 

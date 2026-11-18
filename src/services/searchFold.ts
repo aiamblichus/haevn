@@ -6,10 +6,12 @@
 // is `istanbul`, and `й` and `ё` stay what they are (a Russian reader means a different word by
 // `еж` and `ёж`). This module folds a character the same way, one code point at a time, so that a
 // mark in the viewer lands on what the index matched. `tests/searchFold.test.ts` compares it with
-// the real tokenizer over the Latin, Greek and Cyrillic blocks. A few scripts that Unicode gave a
-// case after the tokenizer's table was made (Cherokee, Georgian Mtavruli, four Cyrillic letters of
-// Komi and Chuvash) are lower-cased here and left alone there: a mark in the viewer then misses a
-// word typed in the other case, and the index is not affected.
+// the real tokenizer over the Latin, Greek and Cyrillic blocks, where it is exact. Beyond them it
+// disagrees on 444 of the 74,957 letters, marks and digits up to U+1FFFF (measured by comparing
+// every one): scripts whose case pairs are newer than SQLite's case table (Cherokee, Georgian
+// Mtavruli, Latin Extended-D, Osage, Vithkuqi, Old Hungarian, Warang Citi, Medefaidrin, Adlam,
+// Glagolitic, and four Cyrillic letters). They are lower-cased here and left alone there, so a
+// mark in the viewer misses a word typed in the other case. The index itself is not affected.
 
 const LATIN = /\p{Script=Latin}/u;
 // The combining marks the tokenizer drops wherever they stand. It keeps the other marks of
