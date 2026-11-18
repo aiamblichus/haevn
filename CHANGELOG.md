@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- `haevn` no longer passes terminal control characters from a conversation to the terminal: text output shows them as U+FFFD, and JSON output escapes them.
 - Search results in the archive no longer render a conversation's markup: snippets are escaped before their matches are marked.
 - A search hit only in an assistant's reply now returns the result.
 - `haevn list` and `haevn search` refuse a `--limit` or `--context` that is not a whole number, instead of silently using the default.
