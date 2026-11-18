@@ -512,7 +512,9 @@ export async function startImportJob(
         },
         {
           onProgress: handleWorkerResponse,
-          timeout: 600000, // 10 minutes for large imports
+          // No timeout: the listener of this start carries the job's end (complete, cancelled,
+          // error), however long it runs.
+          timeout: 0,
         },
       ),
       "Import job progress monitoring",

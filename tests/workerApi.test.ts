@@ -92,10 +92,28 @@ describe("the listener of a long job (HVN-61)", () => {
     await vi.waitFor(() => expect(job.settled()).toBe(true));
   });
 
-  it("ends at cancelled, complete and error", async () => {
+  // Nothing posts `paused` on an import's requestId today (its pause is answered on the pause
+  // command's, which has none), but the day it does, the listener must not end there.
+  it("lives through a pause for an import as well", async () => {
+    await loadWorkerApi();
+    const job = await startJob("import");
+
+    fromWorker({ type: "progress", requestId: job.id });
+    fromWorker({ type: "paused", requestId: job.id });
+    fromWorker({ type: "progress", requestId: job.id });
+    fromWorker({ type: "complete", requestId: job.id });
+
+    expect(job.seen).toEqual(["progress", "paused", "progress", "complete"]);
+    await vi.waitFor(() => expect(job.settled()).toBe(true));
+  });
+
+  it.each([
+    "bulkExport",
+    "import",
+  ] as const)("ends at cancelled, complete and error (%s)", async (workerType) => {
     for (const end of ["cancelled", "complete", "error"]) {
       await loadWorkerApi();
-      const job = await startJob("bulkExport");
+      const job = await startJob(workerType);
       fromWorker({ type: end, requestId: job.id, error: "boom" });
       fromWorker({ type: "progress", requestId: job.id });
       await vi.waitFor(() => expect(job.settled()).toBe(true));

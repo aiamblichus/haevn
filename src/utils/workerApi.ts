@@ -195,7 +195,7 @@ function getCompletionTypes(workerType: WorkerType): Set<string> {
     bulkSync: ["cancelled", "paused", "error"],
     // A pause does not end a job: the resumed job answers on the same requestId.
     bulkExport: ["complete", "cancelled", "error"],
-    import: ["complete", "cancelled", "paused", "count", "error"],
+    import: ["complete", "cancelled", "count", "error"],
     starmap: ["layoutResult", "pong", "error"],
   };
 
