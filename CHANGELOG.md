@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- `haevn list` and `haevn search` refuse a `--limit` or `--context` that is not a whole number, instead of silently using the default.
 - A chat saved, changed or deleted while the search index rebuilds is no longer left out of the index (the rebuild pages by chat id and indexes the chats added during it).
 - `haevn info --generate` no longer leaves the chat queued for a second generation, and `haevn import` queues AI metadata for the imported chats when auto-generate is on.
 - `haevn import` takes the operation lock (it fails with "Another operation is running" during a bulk sync or an import), indexes small imports as it saves them so search keeps answering, seeds metadata from HAEVN exports, and exits 1 with `index=failed` if indexing could not run; `haevn info` metadata edits queue the same embedding update as the archive.
