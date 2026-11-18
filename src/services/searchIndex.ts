@@ -280,6 +280,18 @@ const MARK_CLOSE = "\u0002";
 
 type Binding = (string | number | null)[];
 
+const SQLITE_ERROR = 1; // no such table, a schema that is not ours
+const SQLITE_CORRUPT = 11;
+const SQLITE_NOTADB = 26;
+
+/** Whether SQLite said, reading a file, that it is not an index of ours (cut short, or torn). */
+function isNotAnIndex(error: unknown): boolean {
+  const code = (error as { resultCode?: unknown } | null)?.resultCode;
+  if (typeof code !== "number") return false;
+  const primary = code & 0xff;
+  return primary === SQLITE_ERROR || primary === SQLITE_CORRUPT || primary === SQLITE_NOTADB;
+}
+
 function firstRowid(chat: number): number {
   return chat * ORDINAL_SPAN;
 }
@@ -710,17 +722,33 @@ export class SqliteSearchIndex implements SearchIndex {
 
     // Read what each file holds; the live one is the newest of those finished in this format.
     let live: { slot: Slot; generation: number } | undefined;
-    for (const name of SLOT_FILES) {
-      const slot = this.openSlot(name);
-      const generation = this.finishedGeneration(slot);
-      if (generation === undefined) {
-        this.wipe(slot);
-      } else if (!live || generation > live.generation) {
-        if (live) this.wipe(live.slot);
-        live = { slot, generation };
-      } else {
-        this.wipe(slot);
+    const opened: Slot[] = [];
+    try {
+      for (const name of SLOT_FILES) {
+        const slot = this.openSlot(name);
+        opened.push(slot);
+        const generation = this.finishedGeneration(slot);
+        if (generation === undefined) {
+          this.wipe(slot);
+        } else if (!live || generation > live.generation) {
+          if (live) this.wipe(live.slot);
+          live = { slot, generation };
+        } else {
+          this.wipe(slot);
+        }
       }
+    } catch (e) {
+      // A file that could not be read is left as it is, and its handle is let go, so that the
+      // next open (in this worker or the next) is not met by a handle that is still held.
+      for (const slot of opened) {
+        try {
+          host.close(slot.db);
+        } catch {
+          // already closed by a wipe
+        }
+      }
+      this.host = undefined;
+      throw e;
     }
     this.live = live?.slot;
     this.live?.tune(false);
@@ -743,9 +771,11 @@ export class SqliteSearchIndex implements SearchIndex {
       if (slot.getMeta("state") !== "live") return undefined;
       if (Number(slot.getMeta("format")) !== INDEX_FORMAT_VERSION) return undefined;
       return Number(slot.getMeta("generation"));
-    } catch {
-      // Not a database, or one cut short: it holds nothing to read.
-      return undefined;
+    } catch (e) {
+      // Only what says the file is not an index is a reason to wipe it. A read that failed for
+      // another reason (the file is busy, memory ran out) may pass, and the index in it is whole.
+      if (isNotAnIndex(e)) return undefined;
+      throw e;
     }
   }
 

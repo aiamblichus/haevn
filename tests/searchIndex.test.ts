@@ -635,3 +635,93 @@ describe("the near spellings of a word are looked up once for a query (HVN-87)",
     expect(scans).toBe(2);
   });
 });
+
+describe("which file of the SQLite index is read, and which is wiped (HVN-87)", () => {
+  let index: SearchIndex;
+
+  beforeEach(async () => {
+    sqliteKit.reset();
+    index = sqliteKit.create();
+    await index.open();
+  });
+
+  afterEach(() => {
+    index.close();
+  });
+
+  function write(target: SearchIndex, ...chats: IndexedChat[]): void {
+    const build = target.beginRebuild();
+    for (const c of chats) build.put(c);
+    build.commit();
+  }
+
+  const names = ["/haevn-search-a.db", "/haevn-search-b.db"];
+  const ids = (query: string) => index.search(plan(query)).map((r) => r.chatId);
+
+  /** The memory host hands out the same database for the same name, so a test can reach it. */
+  async function databases() {
+    const host = await openSqliteHost();
+    return names.map((name) => host.open(name));
+  }
+
+  /** Make the read of the file's tables fail the way SQLite reports `code`, while `armed.on`. */
+  async function failReads(code: number, message: string): Promise<{ on: boolean }> {
+    const armed = { on: true };
+    for (const db of await databases()) {
+      const selectValue = db.selectValue.bind(db);
+      db.selectValue = ((...args: Parameters<typeof db.selectValue>) => {
+        if (armed.on) throw Object.assign(new Error(message), { resultCode: code });
+        return selectValue(...args);
+      }) as typeof db.selectValue;
+    }
+    return armed;
+  }
+
+  it("does not wipe a good index when reading it fails for a reason that may pass", async () => {
+    write(index, chat("kept", ["pineapple"]));
+    index.close();
+    const armed = await failReads(5, "database is locked"); // SQLITE_BUSY
+
+    index = sqliteKit.create();
+    await expect(index.open()).rejects.toThrow(/locked/);
+    armed.on = false;
+    index.close();
+
+    index = sqliteKit.create();
+    expect(await index.open()).toBe(true);
+    expect(ids("pineapple")).toEqual(["kept"]);
+  });
+
+  it.each([
+    [26, "file is not a database"],
+    [11, "database disk image is malformed"],
+    [1, "no such column: value"],
+  ])("wipes a file that SQLite says is not an index (%s)", async (code, message) => {
+    write(index, chat("lost", ["pineapple"]));
+    index.close();
+    const armed = await failReads(code, message);
+
+    index = sqliteKit.create();
+    expect(await index.open()).toBe(false);
+    armed.on = false;
+    index.close();
+
+    index = sqliteKit.create();
+    expect(await index.open()).toBe(false);
+    expect(ids("pineapple")).toEqual([]);
+  });
+
+  it("reads the newer of two finished files, as a crash between the swap and the wipe leaves them", async () => {
+    write(index, chat("older", ["pineapple"]));
+    // The swap happens, and the process dies before the old file is wiped.
+    const host = (index as unknown as { host: { unlink: (name: string) => void } }).host;
+    host.unlink = () => {};
+    write(index, chat("newer", ["pineapple"]));
+    index.close();
+
+    index = sqliteKit.create();
+    expect(await index.open()).toBe(true);
+
+    expect(ids("pineapple")).toEqual(["newer"]);
+  });
+});
