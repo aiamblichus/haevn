@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type ExportOptions,
   generateExportContent,
@@ -6,6 +6,10 @@ import {
 } from "../src/formatters";
 import type { Chat, ChatMessage, ModelRequest, ModelResponse } from "../src/model/haevn_model";
 import { parseMarkdownContent } from "../src/utils/markdownImporter";
+
+// A heavy file (a chat 20,000 messages deep): the 5 s default fails it on a loaded machine while
+// it passes alone in well under a second (HVN-70). The other files keep the default.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 function makeChat(overrides: Partial<Chat> = {}): Chat {
   const req: ModelRequest = {

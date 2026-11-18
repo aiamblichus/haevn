@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
 
+// A heavy file: every test re-imports the worker and most run full index rebuilds, so the 5 s
+// default fails it on a loaded machine while it passes alone (HVN-70). The other files keep it.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
