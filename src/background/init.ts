@@ -91,7 +91,11 @@ import { JanitorService } from "../services/janitorService";
 
 // Run Janitor cleanup on startup (fire-and-forget)
 diagnosticsService
-  .wrap("init:Janitor", () => JanitorService.cleanupSoftDeletedChats())
+  .wrap("init:Janitor", async () => {
+    await JanitorService.cleanupSoftDeletedChats();
+    // After the hard deletes, so the folders they leave behind are in the sweep's first look
+    await JanitorService.sweepMediaIfDue();
+  })
   .catch((err) => log.error("[Janitor] Cleanup failed", err));
 
 // The same rhythm sweeps the orphans of bulk exports in OPFS (HVN-62).
@@ -105,7 +109,10 @@ chrome.alarms.create(JANITOR_ALARM_NAME, { periodInMinutes: 30 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === JANITOR_ALARM_NAME) {
     diagnosticsService
-      .wrap("alarm:Janitor", () => JanitorService.cleanupSoftDeletedChats())
+      .wrap("alarm:Janitor", async () => {
+        await JanitorService.cleanupSoftDeletedChats();
+        await JanitorService.sweepMediaIfDue();
+      })
       .catch((err) => {
         log.error("[Janitor] Cleanup failed", err);
       });

@@ -52,9 +52,13 @@ export class FakeOpfs {
   /** Names of entries `removeEntry` was asked to remove, in order. */
   removed: string[] = [];
 
-  /** Makes `navigator.storage.getDirectory()` answer with this file system. */
-  install(): void {
+  /**
+   * Makes `navigator.storage.getDirectory()` answer with this file system. `extra` adds other
+   * members to the stubbed `navigator` (`locks`, for one).
+   */
+  install(extra: Record<string, unknown> = {}): void {
     vi.stubGlobal("navigator", {
+      ...extra,
       storage: { getDirectory: async () => this.dirHandle(this.rootNode, "") },
     });
   }
