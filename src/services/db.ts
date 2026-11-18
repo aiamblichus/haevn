@@ -531,7 +531,8 @@ export class HaevnDatabase extends Dexie {
       });
 
     // Version 17: Extract Chat.messages into dedicated chatMessages table.
-    // No upgrade() here by design; data migration runs lazily in background alarm batches.
+    // No upgrade() here by design: the move of rows written before v17 is not a schema step. It runs
+    // once per install, at service worker start, from services/messageMigration.ts (HVN-31).
     this.version(17).stores({
       chats:
         "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",

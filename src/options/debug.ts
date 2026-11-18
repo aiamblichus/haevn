@@ -5,6 +5,7 @@
 
 import { HaevnDatabase } from "../services/db";
 import { sweepMedia } from "../services/mediaSweep";
+import { runMessageMigration } from "../services/messageMigration";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -144,52 +145,16 @@ export const haevnDebug = {
   },
 
   /**
-   * One-off migration: move inline chat.messages into chatMessages table.
-   * Safe to run multiple times.
+   * The v17 move (HVN-31), run by hand. The service worker runs the same pass at each start until
+   * its flag is set. Usage: haevnDebug.migrateMessagesToTable(batchSize?)
    */
   async migrateMessagesToTable(batchSize = 20) {
-    const total = await db.chats.count();
-    let offset = 0;
-    let migratedChats = 0;
-    let migratedMessages = 0;
-
-    console.log(`[MessagesMigration] Starting one-off migration over ${total} chats...`);
-
-    while (offset < total) {
-      const chats = await db.chats.offset(offset).limit(batchSize).toArray();
-      if (chats.length === 0) break;
-
-      for (const chat of chats) {
-        if (!chat.id) continue;
-        const inlineMessages = Object.values(chat.messages || {}).map((message) => ({
-          ...message,
-          chatId: chat.id as string,
-        }));
-        if (inlineMessages.length === 0) continue;
-
-        await db.transaction("rw", db.chats, db.chatMessages, async () => {
-          await db.chatMessages
-            .where("chatId")
-            .equals(chat.id as string)
-            .delete();
-          await db.chatMessages.bulkPut(inlineMessages);
-          await db.chats.update(chat.id as string, { messages: {} });
-        });
-
-        migratedChats += 1;
-        migratedMessages += inlineMessages.length;
-      }
-
-      offset += chats.length;
-      console.log(
-        `[MessagesMigration] Progress: ${Math.min(offset, total)}/${total} chats scanned`,
-      );
-    }
-
+    const report = await runMessageMigration({ batchSize, force: true });
     console.log(
-      `[MessagesMigration] Done. Migrated ${migratedChats} chats and ${migratedMessages} messages.`,
+      `[MessagesMigration] ${report.status}: ${report.migrated} chats (${report.messages} messages) moved, ` +
+        `${report.failed.length} failed`,
     );
-    return { scanned: total, migratedChats, migratedMessages };
+    return report;
   },
 
   /**
@@ -431,7 +396,9 @@ export const haevnDebug = {
     console.log("  haevnDebug.setLogLevel(l)    - 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR");
     console.log("  haevnDebug.getStats()        - Shows media/database stats");
     console.log("  haevnDebug.getChat(id)       - Get a chat by ID with summary");
-    console.log("  haevnDebug.migrateMessagesToTable(batchSize?) - One-off DB v17 migration");
+    console.log(
+      "  haevnDebug.migrateMessagesToTable(batchSize?) - Moves chat messages to their table now",
+    );
     console.log("  haevnDebug.search(q)         - Performs a detailed search");
     console.log("  haevnDebug.rebuildIndex()    - Rebuilds search index from scratch");
     console.log("  haevnDebug.regenerateThumbnails() - Clears and regenerates all thumbnails");
