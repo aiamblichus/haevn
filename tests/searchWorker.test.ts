@@ -1017,6 +1017,24 @@ describe("search worker: punctuation and scripts in the index (HVN-65)", () => {
     expect(await ids("wombat,")).toEqual(["comma", "plain"]);
   });
 
+  it("finds the chats that have the word bare when the search is typed with punctuation, hydrated too (HVN-71)", async () => {
+    await indexChats(["comma", "I saw a wombat, then left"], ["plain", "a wombat sat down"]);
+
+    expect([...new Set((await hydrated("wombat,")).map((r) => r.chatId))].sort()).toEqual([
+      "comma",
+      "plain",
+    ]);
+    const plain = (await hydrated("(wombat),")).find((r) => r.chatId === "plain");
+    expect(marksOf(plain?.messageSnippet ?? "", "wombat")).toBe(1);
+  });
+
+  it("falls back to the prefix of a word typed with punctuation after it (HVN-71)", async () => {
+    await indexChats(["run", "we were running late"], ["other", "a wombat sat down"]);
+
+    expect(await ids("runn,")).toEqual(["run"]);
+    expect((await hydrated("runn,")).map((r) => r.chatId)).toEqual(["run"]);
+  });
+
   it("finds a quoted phrase that has punctuation after it", async () => {
     await indexChats(["p", "say hello world, please"], ["q", "hello there world"]);
 
@@ -1122,6 +1140,24 @@ describe("search worker: the index format version (HVN-65)", () => {
     await restart();
     expect(rebuilds()).toBe(0);
     expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+  });
+
+  it("does not load the stored segments of another version, which the rebuild discards (HVN-71)", async () => {
+    await seedOldArchive();
+    const load = vi.spyOn(lunr.Index, "load");
+    await loadWorker();
+
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+
+    expect(rebuilds()).toBe(1);
+    expect(load).not.toHaveBeenCalled();
+    expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+
+    // The control: a start on the index that rebuild wrote does load it.
+    await restart();
+    expect(rebuilds()).toBe(0);
+    expect(load).toHaveBeenCalled();
   });
 
   it("tells a search that comes right after the start that the index is rebuilding", async () => {

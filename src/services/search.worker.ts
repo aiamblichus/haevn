@@ -327,6 +327,19 @@ async function loadSegments(): Promise<void> {
       return;
     }
 
+    if (storedFormat !== INDEX_FORMAT_VERSION) {
+      // The consistency check forces a rebuild for this, and the rebuild clears what is stored:
+      // deserializing the segments and rehydrating the active one would only spend the time of
+      // init's window on a large archive (HVN-71). Start empty; the format record is left as it
+      // is, so the check still sees it stale.
+      log.info(
+        `[SearchWorker] ${segmentKeys.length} stored segments are in format ${storedFormat ?? "unrecorded"}, not ${INDEX_FORMAT_VERSION}. Not loading them; a rebuild replaces them.`,
+      );
+      activeSegmentId = "segment_0";
+      segments.set("segment_0", createNewSegment("segment_0"));
+      return;
+    }
+
     log.info(`[SearchWorker] Loading ${segmentKeys.length} segments...`);
 
     for (const key of segmentKeys) {

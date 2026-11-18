@@ -1,6 +1,6 @@
 import lunr from "lunr";
 import { createQueryTermPipeline } from "./searchPipeline";
-import { normalizeSearchToken, splitQuotedSearchQuery } from "./searchQuery";
+import { normalizeSearchToken, splitQuotedSearchQuery, trimSearchTerm } from "./searchQuery";
 
 export type PhraseConstraint = {
   normalizedPhrase: string;
@@ -88,7 +88,7 @@ export function queryNeedsExactPhrasePath(query: string): boolean {
 export function buildRelaxedPrefixQuery(query: string): string | null {
   const relaxedTerms = query
     .split(/\s+/)
-    .map((term) => normalizeSearchToken(term).replace(/[+\-~*^:"()]/g, ""))
+    .map((term) => trimSearchTerm(normalizeSearchToken(term).replace(/[+\-~*^:"()]/g, "")))
     .filter((term) => term.length >= 3)
     .map((term) => `${term}*`);
 

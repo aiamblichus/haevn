@@ -56,6 +56,22 @@ describe("search query normalization", () => {
     expect(buildRelaxedPrefixQuery("FISH Hello")).toBe("fish* hello*");
   });
 
+  it("trims the punctuation typed against a relaxed prefix term (HVN-71)", () => {
+    expect(buildRelaxedPrefixQuery("runn,")).toBe("runn*");
+    expect(buildRelaxedPrefixQuery("(Fish), Hello!")).toBe("fish* hello*");
+  });
+
+  it("trims the punctuation typed against a term, and keeps a phrase as written (HVN-71)", () => {
+    expect(parseSearchQuery("wombat, (Wombat) wombat.")).toEqual({
+      phrases: [],
+      terms: ["wombat"],
+    });
+    expect(parseSearchQuery('"hello, world" wombat,')).toEqual({
+      phrases: ["hello, world"],
+      terms: ["wombat"],
+    });
+  });
+
   it("normalizes searchable text for exact phrase verification", () => {
     expect(normalizeSearchText("Dear   Gemini,\nThis is a test")).toBe(
       "dear gemini, this is a test",
