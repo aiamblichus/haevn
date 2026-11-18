@@ -14,6 +14,7 @@ import {
   handleSearchChats,
   handleSearchChatsStreaming,
 } from "../src/background/handlers/searchHandlers";
+import { SearchQueryError } from "../src/services/searchQuery";
 
 const rebuilding = { processed: 3, total: 10, percentage: 30 };
 
@@ -106,5 +107,37 @@ describe("search handlers and an index left part-built by a failed rebuild", () 
     });
 
     expect(response).toEqual({ success: true, results: [], indexIncomplete: incomplete });
+  });
+});
+
+describe("search handlers and a query with nothing to look for (HVN-78)", () => {
+  type FailingOptions = { onError: (error: Error) => void };
+
+  async function failedEventFor(makeError: (QueryError: typeof SearchQueryError) => Error) {
+    searchChatsStreaming.mockImplementation((_query: string, options: FailingOptions) => {
+      options.onError(makeError(SearchQueryError));
+      return { cancel: () => {} };
+    });
+
+    await handleSearchChatsStreaming({ action: "searchChatsStreaming", query: "-" }, () => {});
+
+    return safeSendMessage.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.action === "searchStreamingFailed");
+  }
+
+  it("marks the failure as a problem with the query, so the archive can show a hint", async () => {
+    const event = await failedEventFor(
+      (QueryError) => new QueryError("Type a word to search for."),
+    );
+
+    expect(event).toMatchObject({ error: "Type a word to search for.", queryProblem: true });
+  });
+
+  it("does not mark any other failure that way", async () => {
+    const event = await failedEventFor(() => new Error("boom"));
+
+    expect(event).toMatchObject({ error: "boom" });
+    expect(event).not.toHaveProperty("queryProblem");
   });
 });

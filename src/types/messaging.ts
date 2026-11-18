@@ -801,6 +801,8 @@ export type BackgroundEvent =
       query: string;
       filterProvider?: string;
       error: string;
+      /** The query has nothing to look for; `error` says why, for the reader to act on. */
+      queryProblem?: boolean;
     }
   | {
       action: "providerStatsUpdated";

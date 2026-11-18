@@ -2,6 +2,7 @@
 
 import type { SearchResult } from "../../model/haevn_model";
 import * as MetadataRepository from "../../services/metadataRepository";
+import { SearchQueryError } from "../../services/searchQuery";
 import { SyncService } from "../../services/syncService";
 import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
@@ -201,6 +202,9 @@ export async function handleSearchChatsStreaming(
           query,
           filterProvider,
           error: error.message,
+          // A query with nothing to look for is not a failure of the search: the archive says it
+          // as a hint, since a search as you type meets it on the way to a word.
+          ...(error instanceof SearchQueryError ? { queryProblem: true } : {}),
         });
         // Clean up
         activeStreamingSearches.delete(query);

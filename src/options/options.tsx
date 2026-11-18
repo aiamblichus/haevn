@@ -439,17 +439,22 @@ const App = () => {
           case "searchStreamingFailed":
             // Search failed
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
-              log.error(`[Options] Search streaming failed:`, {
-                query: event.query,
-                filterProvider: event.filterProvider,
-                error: event.error,
-              });
+              if (!event.queryProblem) {
+                log.error(`[Options] Search streaming failed:`, {
+                  query: event.query,
+                  filterProvider: event.filterProvider,
+                  error: event.error,
+                });
+              }
               setIsSearching(false);
               setSearchResults([]);
               setSearchIndexRebuild(null);
               setSearchIndexIncomplete(null);
               setSearchLimited(false);
-              setStatus(`Search failed: ${event.error}`, "error");
+              // A query with nothing to look for (a quote, a minus, typed on the way to a word)
+              // is a hint, not a failure: the search as you type meets it on every pause.
+              if (event.queryProblem) setStatus(event.error, "work");
+              else setStatus(`Search failed: ${event.error}`, "error");
             } else {
               log.warn(`[Options] Received failure for different query:`, {
                 receivedQuery: event.query,
