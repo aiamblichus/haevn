@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate HAEVN export ZIP fixtures for the browser walk (HVN-56, 20, 51, 33, 40/50, 54, 60-62).
+"""Generate HAEVN export ZIP fixtures for the browser walk (HVN-56, 20, 51, 33, 40/50, 54, 60-62, 65).
 
 Usage: python3 scripts/fixtures/browser-fixtures.py [N_FILLER=300] [OUT_DIR]
 
@@ -155,6 +155,25 @@ chats.append(b.chat(a3e))
 b = ChatBuilder("fx-delete", "Fixture to delete", ts + 6000)
 last = b.linear([("user", "The dodecahedron question. " + words(30)), ("assistant", words(40))])
 chats.append(b.chat(last))
+
+# HVN-65: punctuation stuck to a word. fx-punct has the word six times, each spelled differently;
+# in fx-wombat-comma the only occurrence has a comma after it, in fx-wombat-plain it is bare;
+# the same pair in Cyrillic.
+b = ChatBuilder("fx-punct", "Fixture punctuation", ts + 7000)
+last = b.linear([
+    ("user", "one wombatz two wombatz, three wombatz. four wombatz; five (wombatz) six wombatz!"),
+    ("assistant", words(20)),
+])
+chats.append(b.chat(last))
+for cid, title, text in [
+    ("fx-wombat-comma", "Fixture wombat comma", "I saw a wombat, then it left."),
+    ("fx-wombat-plain", "Fixture wombat plain", "A wombat sat down."),
+    ("fx-privet-comma", "Fixture privet comma", "Он сказал привет, и ушёл."),
+    ("fx-privet-plain", "Fixture privet plain", "Привет мир."),
+]:
+    b = ChatBuilder(cid, title, ts + 7100)
+    last = b.linear([("user", text), ("assistant", words(20))])
+    chats.append(b.chat(last))
 
 # Filler, some with an image
 for i in range(N_FILLER):

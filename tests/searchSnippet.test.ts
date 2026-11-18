@@ -169,6 +169,28 @@ describe("trimToWord", () => {
     expect(trimmed("v2_beta!", 0, 8)).toBe("v2_beta");
   });
 
+  it("keeps a combining mark that ends the word", () => {
+    expect(trimmed("हिन्दी, ठीक", 0, 7)).toBe("हिन्दी");
+    expect(trimmed("cafe\u0301;", 0, 6)).toBe("cafe\u0301");
+  });
+
+  it("keeps a symbol that is the word, and takes the punctuation off it", () => {
+    expect(trimmed("great 😀, thanks", 6, 4)).toBe("😀");
+  });
+
+  it("marks every spelling of a word in a sentence", () => {
+    const text =
+      "one wombatz two wombatz, three wombatz. four wombatz; five (wombatz) six wombatz!";
+    const tokens = [...text.matchAll(/\S+/g)].filter((m) => m[0].includes("wombatz"));
+    const anchors = tokens.map((m) =>
+      trimToWord(text, { start: m.index ?? 0, length: m[0].length }),
+    );
+
+    const snippet = buildSnippet(text, anchors, { radius: 200 });
+
+    expect(snippet.split("{{HIGHLIGHT}}wombatz{{/HIGHLIGHT}}")).toHaveLength(7);
+  });
+
   it("leaves a range of nothing but punctuation as it was", () => {
     expect(trimToWord("a ++ b", { start: 2, length: 2 })).toEqual({ start: 2, length: 2 });
   });

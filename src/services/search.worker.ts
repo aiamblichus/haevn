@@ -16,6 +16,11 @@ import type {
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import {
+  createIndexBuilder,
+  createQueryTermPipeline,
+  INDEX_FORMAT_VERSION,
+} from "./searchPipeline";
 import { normalizeSearchText, type ParsedQuery, parseSearchQuery } from "./searchQuery";
 import { buildSnippet, type TextRange, trimToWord } from "./searchSnippet";
 import { buildSearchResultsForChat } from "./searchTextMatch";
@@ -31,6 +36,10 @@ const SEGMENT_SIZE = 200; // Chats per segment
 const REBUILD_DEBOUNCE_MS = 2000;
 const MAX_CONTENT_LENGTH = 100000; // Increased limit since we segment
 const SNIPPET_RADIUS = 60; // Context characters around match
+// The record in `lunrIndex` that says which format the segments are in (HVN-65). A rebuild
+// removes it with the segments and writes it back as its last step, so only a pass that ended
+// well leaves it.
+const FORMAT_RECORD_ID = "format";
 
 // --- Types ---
 
@@ -149,6 +158,10 @@ let rebuildAgain = false;
 // Chats an `add` named while a pass ran (HVN-54). The pass owns the segments, so the add only
 // leaves its id here; the pass indexes these from the database before it ends.
 const addedDuringRebuild = new Set<string>();
+// The format version the stored segments carry, or undefined when none is on record (an index
+// from before versions, or a rebuild that has not ended). The consistency check compares it with
+// INDEX_FORMAT_VERSION.
+let storedFormat: number | undefined;
 // Set when the last rebuild pass failed; the index is then part-built until a rebuild succeeds.
 let rebuildFailure: string | null = null;
 // A failed pass is retried by `init` once per worker lifetime, so a failure that never goes away
@@ -261,11 +274,7 @@ function messageMatchesQuery(text: string, parsed: ParsedQuery): boolean {
 // --- Segment Management (Identical to previous step) ---
 
 function createNewSegment(id: string): Segment {
-  const builder = new lunr.Builder();
-  builder.ref("id");
-  builder.field("title", { boost: 10 });
-  builder.field("content");
-  builder.metadataWhitelist = ["position"];
+  const builder = createIndexBuilder();
 
   return {
     id,
@@ -275,6 +284,21 @@ function createNewSegment(id: string): Segment {
     dirty: false,
     timestamp: Date.now(),
   };
+}
+
+/** Record that the segments written from now on are in the current format. */
+async function writeIndexFormat(): Promise<void> {
+  await db.lunrIndex.put({ id: FORMAT_RECORD_ID, format: INDEX_FORMAT_VERSION });
+  storedFormat = INDEX_FORMAT_VERSION;
+}
+
+/** `writeIndexFormat` outside a rebuild: a failure only means the next start rebuilds once. */
+async function stampIndexFormat(): Promise<void> {
+  try {
+    await writeIndexFormat();
+  } catch (e) {
+    log.warn("[SearchWorker] Could not record the index format version", e);
+  }
 }
 
 async function loadSegments(): Promise<void> {
@@ -288,9 +312,16 @@ async function loadSegments(): Promise<void> {
       return;
     }
 
+    storedFormat = keys.includes(FORMAT_RECORD_ID)
+      ? (await db.lunrIndex.get(FORMAT_RECORD_ID))?.format
+      : undefined;
+
     const segmentKeys = keys.filter((k) => k.startsWith("segment_"));
     if (segmentKeys.length === 0) {
       log.info("[SearchWorker] No indices found. Starting fresh.");
+      // Nothing is stored in an old format, so a first run needs no rebuild for it; a chat that
+      // exists without an index is found by the count check.
+      await stampIndexFormat();
       activeSegmentId = "segment_0";
       segments.set("segment_0", createNewSegment("segment_0"));
       return;
@@ -366,8 +397,17 @@ async function checkIndexConsistency(): Promise<void> {
       `[SearchWorker] Consistency check: ${indexedDocCount} indexed docs, ${actualChatCount} chats in DB`,
     );
 
-    // Missing docs, or a rebuild that failed and left the index part-built: rebuild in the background
-    if (rebuildFailure !== null || indexedDocCount < actualChatCount) {
+    // An index built before the current format holds terms the search no longer asks for (HVN-65)
+    const formatStale = storedFormat !== INDEX_FORMAT_VERSION;
+    if (formatStale) {
+      log.warn(
+        `[SearchWorker] Index format is ${storedFormat ?? "unrecorded"}, the current one is ${INDEX_FORMAT_VERSION}.`,
+      );
+    }
+
+    // Missing docs, a stale format, or a rebuild that failed and left the index part-built:
+    // rebuild in the background
+    if (rebuildFailure !== null || formatStale || indexedDocCount < actualChatCount) {
       if (rebuildFailure !== null) {
         if (failureRetried) {
           log.warn(
@@ -378,7 +418,9 @@ async function checkIndexConsistency(): Promise<void> {
         failureRetried = true;
       }
       log.warn(
-        `[SearchWorker] Index is incomplete (${indexedDocCount}/${actualChatCount}${
+        `[SearchWorker] Index is incomplete or out of date (${indexedDocCount}/${actualChatCount}${
+          formatStale ? ", format out of date" : ""
+        }${
           rebuildFailure !== null ? `, last rebuild failed: ${rebuildFailure}` : ""
         }). Triggering self-healing rebuild...`,
       );
@@ -393,22 +435,14 @@ async function checkIndexConsistency(): Promise<void> {
 async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
   const ids = Array.from(segment.docIds);
   if (ids.length === 0) {
-    const builder = new lunr.Builder();
-    builder.ref("id");
-    builder.field("title", { boost: 10 });
-    builder.field("content");
-    builder.metadataWhitelist = ["position"];
+    const builder = createIndexBuilder();
     segment.builder = builder;
     segment.index = builder.build();
     return;
   }
 
   const chats = await attachMessages((await db.chats.bulkGet(ids)).filter((c): c is Chat => !!c));
-  const builder = new lunr.Builder();
-  builder.ref("id");
-  builder.field("title", { boost: 10 });
-  builder.field("content");
-  builder.metadataWhitelist = ["position"];
+  const builder = createIndexBuilder();
 
   for (const chat of chats) {
     const data = extractTextAndMap(chat);
@@ -452,11 +486,7 @@ function indexDocument(doc: SearchDoc): void {
   }
 
   if (!activeSeg.builder) {
-    const builder = new lunr.Builder();
-    builder.ref("id");
-    builder.field("title");
-    builder.field("content");
-    builder.metadataWhitelist = ["position"];
+    const builder = createIndexBuilder();
     activeSeg.builder = builder;
   }
 
@@ -477,11 +507,7 @@ function indexDocument(doc: SearchDoc): void {
 /** Rebuild the active segment from the document cache, in memory. */
 function refreshActiveSegment(seg: Segment) {
   if (!seg.builder) return;
-  const builder = new lunr.Builder();
-  builder.ref("id");
-  builder.field("title");
-  builder.field("content");
-  builder.metadataWhitelist = ["position"];
+  const builder = createIndexBuilder();
   for (const doc of docCache.values()) {
     builder.add(doc);
   }
@@ -617,6 +643,7 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // Storage follows the pass: segments of the old index would otherwise outlive a failed pass
     // and make a restarted worker count a full index and skip the rebuild. A pass that dies
     // leaves a short index, which the next init rebuilds.
+    storedFormat = undefined;
     await db.lunrIndex.clear();
     const count = await db.chats.count();
     log.info(`[SearchWorker] Starting FULL REBUILD of ${count} chats...`);
@@ -713,6 +740,9 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     }
 
     await indexChatsAddedDuringRebuild();
+    // Last, so that a pass that dies on the way leaves no record and the next start rebuilds. A
+    // failed write fails the pass, like a failed segment write.
+    await writeIndexFormat();
 
     log.info("[SearchWorker] Full rebuild complete.");
 
@@ -824,10 +854,9 @@ function verifyPhrase(
   phraseTerms: string[],
   searchPipeline: lunr.Pipeline,
 ): boolean {
-  // We mimic the Indexing Pipeline: Trimmer -> StopWord -> SearchPipeline (Stemmer)
+  // We mimic what a query term goes through: trim, drop stop words, then the index's pipeline
 
-  const prePipeline = new lunr.Pipeline();
-  prePipeline.add(lunr.trimmer, lunr.stopWordFilter);
+  const prePipeline = createQueryTermPipeline();
 
   const tokens = phraseTerms.map((t) => {
     // 1. Trimmer & StopWord
