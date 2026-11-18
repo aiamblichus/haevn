@@ -156,8 +156,8 @@ class MapWriter {
   put(chat: IndexedChat): void {
     this.file.docs.set(chat.id, {
       chatId: chat.id,
-      source: chat.source,
-      timestamp: chat.timestamp,
+      source: chat.source ?? "",
+      timestamp: Number.isFinite(chat.timestamp) ? chat.timestamp : 0,
       rows: rowsOf(chat),
     });
   }

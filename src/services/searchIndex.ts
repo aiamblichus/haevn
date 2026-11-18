@@ -416,13 +416,17 @@ class Slot implements IndexWriter {
 
   put(chat: IndexedChat): void {
     this.nearSpellings.clear();
+    // The types say a source and a time; a row the database holds may lack either, and one such
+    // chat must not fail the rebuild of the rest (the columns are NOT NULL).
+    const source = chat.source ?? "";
+    const timestamp = Number.isFinite(chat.timestamp) ? chat.timestamp : 0;
     this.transaction(() => {
       const known = this.chatKey(chat.id);
       let key: number;
       if (known === undefined) {
         this.db.exec({
           sql: "INSERT INTO docs(chat_id, provider, ts) VALUES (?, ?, ?)",
-          bind: [chat.id, chat.source, chat.timestamp],
+          bind: [chat.id, source, timestamp],
         });
         key = Number(this.db.selectValue("SELECT last_insert_rowid()"));
       } else {
@@ -430,7 +434,7 @@ class Slot implements IndexWriter {
         this.clearRows(key);
         this.db.exec({
           sql: "UPDATE docs SET provider = ?, ts = ? WHERE id = ?",
-          bind: [chat.source, chat.timestamp, key],
+          bind: [source, timestamp, key],
         });
       }
 

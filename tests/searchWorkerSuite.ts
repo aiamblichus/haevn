@@ -411,6 +411,20 @@ async function waitUntilIndexReady(query = "pineapple"): Promise<void> {
   throw new Error("the index never became ready");
 }
 
+describe("search worker: a chat the database holds in an odd shape (HVN-87)", () => {
+  it("rebuilds the index with it in, instead of failing the whole rebuild", async () => {
+    const odd = buildChat("odd", "a wombat");
+    (odd as unknown as { source: unknown }).source = undefined;
+    (odd as unknown as { timestamp: unknown }).timestamp = Number.NaN;
+    await seedChats([odd, buildChat("fine", "a wombat")]);
+
+    await send({ type: "rebuild" });
+
+    expect(lastReply().success).toBe(true);
+    expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["odd", "fine"]));
+  });
+});
+
 describe("search worker: a rebuild that fails (HVN-50)", () => {
   /**
    * 200 good chats, and "zzz-bad", whose message list cannot be read: a rebuild reads the good

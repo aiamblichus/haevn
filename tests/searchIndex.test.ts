@@ -60,6 +60,19 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
   });
 
   describe("what a chat is when it matches", () => {
+    it("takes a chat that has no source and a time that is not a number, as the old index did", async () => {
+      const odd = {
+        ...chat("odd", ["a wombat"]),
+        source: undefined,
+        timestamp: Number.NaN,
+        messages: [{ id: "m", role: "user", text: "a wombat", timestamp: Number.NaN }],
+      } as unknown as IndexedChat;
+      await openWith(odd, chat("fine", ["a wombat"]));
+
+      expect(ids("wombat")).toEqual(["fine", "odd"].sort());
+      expect(ids("wombat", { provider: "" })).toEqual(["odd"]);
+    });
+
     it("answers a query of as many words as the parser lets through", async () => {
       await openWith(chat("a", ["word0 word1"]));
       const words = Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ");
