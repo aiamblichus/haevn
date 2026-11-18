@@ -188,7 +188,8 @@ async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState)
 
   const attachments = extractAttachmentsFromChat(chat, options.messageIds);
   for (const attachment of attachments) {
-    if (state.status !== "running") {
+    // A pause waits for the chat boundary (a chat is staged whole); only a cancel cuts it short.
+    if (state.status === "cancelled") {
       break;
     }
     const filename = generateAttachmentFilename(
@@ -436,6 +437,8 @@ async function processBatch(
 ): Promise<{
   processedCount: number;
   skippedCount: number;
+  /** How many of batchChatIds were dealt with, from the front: staged, missing or failed. */
+  consumedCount: number;
   nextAttachmentIndex: number;
 }> {
   log.info(
@@ -444,6 +447,7 @@ async function processBatch(
 
   let batchProcessedCount = 0;
   let batchSkippedCount = 0;
+  let batchConsumedCount = 0;
   const attachmentIndex = globalAttachmentIndex;
 
   // Process each chat in the batch
@@ -457,6 +461,7 @@ async function processBatch(
     if (!chat) {
       log.warn(`[BulkExportWorker] Chat ${chatId} not found, skipping`);
       batchSkippedCount++;
+      batchConsumedCount++;
       continue;
     }
 
@@ -491,6 +496,7 @@ async function processBatch(
       batchSkippedCount++;
       // Continue with other chats in the batch
     }
+    batchConsumedCount++;
   }
 
   log.info(
@@ -500,6 +506,7 @@ async function processBatch(
   return {
     processedCount: batchProcessedCount,
     skippedCount: batchSkippedCount,
+    consumedCount: batchConsumedCount,
     nextAttachmentIndex: attachmentIndex,
   };
 }
@@ -544,8 +551,10 @@ async function processNextBatch(requestId?: string): Promise<void> {
     return;
   }
 
-  // Take the next batch
-  const batchChatIds = workerState.remainingChatIds.slice(0, BATCH_SIZE);
+  // Take the next batch. Batches are fixed windows of BATCH_SIZE over the original list, so a
+  // batch that a pause cut short is finished first: what is left of its window is the next batch.
+  const done = workerState.totalChats - workerState.remainingChatIds.length;
+  const batchChatIds = workerState.remainingChatIds.slice(0, BATCH_SIZE - (done % BATCH_SIZE));
   const batchNumber = workerState.currentBatchNumber + 1;
 
   // Send progress update
@@ -572,11 +581,18 @@ async function processNextBatch(requestId?: string): Promise<void> {
       workerState,
     );
 
-    // Update state
-    workerState.currentBatchNumber = batchNumber;
+    // Update state. Only the chats the batch dealt with leave the queue: a pause that lands
+    // mid-batch stops it early, and the rest must still be there when the export resumes.
     workerState.skippedCount += result.skippedCount;
-    workerState.remainingChatIds = workerState.remainingChatIds.slice(BATCH_SIZE);
+    workerState.remainingChatIds = workerState.remainingChatIds.slice(result.consumedCount);
     workerState.globalAttachmentIndex = result.nextAttachmentIndex;
+
+    if (result.consumedCount < batchChatIds.length) {
+      // The batch is not finished: no batch-complete, and the next call reports the pause.
+      await processNextBatch(requestId);
+      return;
+    }
+    workerState.currentBatchNumber = batchNumber;
 
     // Send batch complete message (staging-only)
     self.postMessage({
