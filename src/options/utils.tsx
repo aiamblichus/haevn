@@ -48,13 +48,7 @@ export function downloadBase64File(
   downloadFile(bytes, filename, contentType);
 }
 
-export const escapeHtml = (input: string): string =>
-  (input || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+export { escapeHtml } from "../utils/html";
 
 export const formatTime = (ts?: number) => {
   if (!ts) return "—";

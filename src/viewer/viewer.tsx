@@ -26,6 +26,7 @@ import type {
   VideoUrl,
 } from "../model/haevn_model";
 import type { BackgroundRequest } from "../types/messaging";
+import { escapeHtml } from "../utils/html";
 
 type Params = {
   chatId: string;
@@ -67,15 +68,6 @@ function buildChatUrl(source: string, sourceId: string | undefined): string | nu
   if (s.includes("chatgpt") || s.includes("openai")) return `https://chatgpt.com/c/${sourceId}`;
   if (s.includes("aistudio")) return `https://aistudio.google.com/prompts/${sourceId}`;
   return null;
-}
-
-function escapeHtml(s: string): string {
-  return (s || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function escapeRegExp(s: string): string {
@@ -124,7 +116,8 @@ function renderMarkdown(text: string, query?: string): string {
   if (query) {
     html = highlightTerms(html, query);
   }
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+  // Conversation text is untrusted: no <style> or <form> from a chat, even sanitized.
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ["style", "form"] });
 }
 
 function renderPlainText(text: string, query?: string): string {

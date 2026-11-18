@@ -1,14 +1,7 @@
+import { escapeHtml } from "./html";
+
 const MARK_OPEN =
   '<mark style="background-color: rgba(212, 175, 55, 0.3); padding: 0 2px; border-radius: 2px; box-shadow: 0 0 8px rgba(212, 175, 55, 0.4);">';
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /**
  * Turn a search snippet into HTML for the archive: the snippet is raw conversation text, so it is
