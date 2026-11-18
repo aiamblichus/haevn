@@ -75,4 +75,41 @@ describe("buildSearchResultsForChat", () => {
 
     expect(results).toHaveLength(0);
   });
+
+  it("holds a phrase that sits far into the message, with every word of it marked", () => {
+    const filler = "lorem ipsum dolor ".repeat(60);
+    const chat = buildChatWithText(`${filler}dear eliezer, hello again ${filler}`);
+    const parsed = parseSearchQuery('"dear eliezer"');
+
+    const [result] = buildSearchResultsForChat(chat, parsed, { radius: 30 });
+
+    expect(result.messageSnippet).toContain(
+      "{{HIGHLIGHT}}dear{{/HIGHLIGHT}} {{HIGHLIGHT}}eliezer{{/HIGHLIGHT}}",
+    );
+    expect(result.messageSnippet.startsWith("... ")).toBe(true);
+    expect(result.messageSnippet.length).toBeLessThan(160);
+  });
+
+  it("shows a second window for a term that recurs far from its first match", () => {
+    const filler = "lorem ipsum dolor ".repeat(40);
+    const chat = buildChatWithText(`pineapple ${filler}and a second pineapple here`);
+    const parsed = parseSearchQuery("pineapple");
+
+    const [result] = buildSearchResultsForChat(chat, parsed, { radius: 20 });
+
+    expect(result.messageSnippet.split(" ... ")).toHaveLength(2);
+    expect(
+      result.messageSnippet.match(/\{\{HIGHLIGHT\}\}pineapple\{\{\/HIGHLIGHT\}\}/g),
+    ).toHaveLength(2);
+  });
+
+  it("finds the match in text whose lower case is longer than the text", () => {
+    // "İ" lower-cases to two code units, which shifted an index taken from the lower-cased copy.
+    const chat = buildChatWithText(`${"İ".repeat(80)} pineapple ${"İ".repeat(80)}`);
+    const parsed = parseSearchQuery("pineapple");
+
+    const [result] = buildSearchResultsForChat(chat, parsed, { radius: 20 });
+
+    expect(result.messageSnippet).toContain("{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}");
+  });
 });

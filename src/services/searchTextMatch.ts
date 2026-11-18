@@ -8,6 +8,7 @@ import type {
   UserPromptPart,
 } from "../model/haevn_model";
 import type { ParsedQuery } from "./searchQuery";
+import { buildSnippet, type TextRange } from "./searchSnippet";
 
 function messageMatches(text: string, parsed: ParsedQuery): boolean {
   const hay = text.toLowerCase();
@@ -24,8 +25,6 @@ type MatchCandidate = {
   chatMessage: ChatMessage;
   role: "user" | "assistant";
   text: string;
-  matchIndex: number;
-  matchedLength: number;
   timestampMs?: number;
 };
 
@@ -92,54 +91,21 @@ function flattenChatMessageText(cm: ChatMessage): {
   };
 }
 
-function locateMatch(text: string, parsed: ParsedQuery): { index: number; length: number } | null {
-  if (!text) return null;
-  const hay = text.toLowerCase();
-
-  for (const p of parsed.phrases) {
-    const idx = hay.indexOf(p);
-    if (idx >= 0) return { index: idx, length: p.length };
-  }
-
-  let bestIdx = -1;
-  let bestLen = 0;
-  for (const t of parsed.terms) {
-    const i = hay.indexOf(t);
-    if (i >= 0 && (bestIdx === -1 || i < bestIdx)) {
-      bestIdx = i;
-      bestLen = t.length;
-    }
-  }
-  return bestIdx >= 0 ? { index: bestIdx, length: bestLen } : null;
-}
-
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function buildSnippet(
-  text: string,
-  index: number,
-  len: number,
-  terms: string[],
-  radius = 90,
-): string {
-  if (!text) return "";
-  const start = Math.max(0, index - radius);
-  const end = Math.min(text.length, index + len + radius);
-  let snippet = text.slice(start, end);
-  snippet = snippet.replace(/\s+/g, " ").trim();
-  if (terms.length > 0) {
-    const pattern = terms
-      .map((t) => escapeRegExp(t))
-      .filter((t) => !!t)
-      .join("|");
-    if (pattern) {
-      const re = new RegExp(`(${pattern})`, "gi");
-      snippet = snippet.replace(re, "{{HIGHLIGHT}}$1{{/HIGHLIGHT}}");
+/** Every case-insensitive occurrence of each needle in the text, as the text spells it. */
+function occurrences(text: string, needles: string[]): TextRange[] {
+  const found: TextRange[] = [];
+  for (const needle of needles) {
+    if (!needle) continue;
+    const re = new RegExp(escapeRegExp(needle), "gi");
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      found.push({ start: m.index, length: m[0].length });
     }
   }
-  return snippet;
+  return found;
 }
 
 function findAllMatchingMessages(chat: Chat, parsed: ParsedQuery): MatchCandidate[] {
@@ -151,31 +117,21 @@ function findAllMatchingMessages(chat: Chat, parsed: ParsedQuery): MatchCandidat
       flattenChatMessageText(cm);
 
     if (userText && messageMatches(userText, parsed)) {
-      const m = locateMatch(userText, parsed);
-      if (m) {
-        out.push({
-          chatMessage: cm,
-          role: "user",
-          text: userText,
-          matchIndex: m.index,
-          matchedLength: m.length,
-          timestampMs: cm.timestamp || userFirstTimestamp,
-        });
-      }
+      out.push({
+        chatMessage: cm,
+        role: "user",
+        text: userText,
+        timestampMs: cm.timestamp || userFirstTimestamp,
+      });
     }
 
     if (assistantText && messageMatches(assistantText, parsed)) {
-      const m = locateMatch(assistantText, parsed);
-      if (m) {
-        out.push({
-          chatMessage: cm,
-          role: "assistant",
-          text: assistantText,
-          matchIndex: m.index,
-          matchedLength: m.length,
-          timestampMs: cm.timestamp || assistantFirstTimestamp,
-        });
-      }
+      out.push({
+        chatMessage: cm,
+        role: "assistant",
+        text: assistantText,
+        timestampMs: cm.timestamp || assistantFirstTimestamp,
+      });
     }
   }
 
@@ -192,6 +148,9 @@ export function buildSearchResultsForChat(
   if (matches.length === 0 || !chat.id) return [];
 
   matches.sort((a, b) => (a.timestampMs || 0) - (b.timestampMs || 0));
+  // The windows are centred on the phrases and terms as the query wrote them; every word of a
+  // phrase is marked wherever it falls inside a window.
+  const anchorNeedles = [...parsed.phrases, ...parsed.terms];
   const highlightTerms = [...parsed.phrases.flatMap((p) => p.split(/\s+/)), ...parsed.terms];
 
   return matches.map((match) => ({
@@ -200,13 +159,10 @@ export function buildSearchResultsForChat(
     source: chat.source,
     messageId: match.chatMessage.id,
     messageContent: match.text,
-    messageSnippet: buildSnippet(
-      match.text,
-      match.matchIndex,
-      match.matchedLength,
-      highlightTerms,
+    messageSnippet: buildSnippet(match.text, occurrences(match.text, anchorNeedles), {
       radius,
-    ),
+      marks: occurrences(match.text, highlightTerms),
+    }),
     messageRole: match.role,
     messageTimestamp: match.timestampMs,
     model: match.chatMessage.model || undefined,
