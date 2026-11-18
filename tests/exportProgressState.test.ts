@@ -5,7 +5,7 @@ import {
   exportFooter,
   exportProgressHeading,
 } from "../src/components/exportProgressState";
-import { BULK_EXPORT_ZIP_STATUS } from "../src/types/workerMessages";
+import { BULK_EXPORT_MANIFEST_STATUS, BULK_EXPORT_ZIP_STATUS } from "../src/types/workerMessages";
 
 function progress(overrides: Partial<ExportProgress> = {}): ExportProgress {
   return {
@@ -50,6 +50,12 @@ describe("exportFooter", () => {
       pauseDisabled: true,
       cancel: true,
     });
+  });
+
+  it("disables Pause while the worker finalizes the manifest", () => {
+    expect(exportFooter(progress({ status: BULK_EXPORT_MANIFEST_STATUS })).pauseDisabled).toBe(
+      true,
+    );
   });
 
   it("offers only Close once the export is finished", () => {

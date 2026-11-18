@@ -93,6 +93,7 @@ import type { ExportOptions } from "../formatters";
 
 /** The status the export worker reports while it zips the staged chats. Pause cannot stop that phase. */
 export const BULK_EXPORT_ZIP_STATUS = "Building ZIP archive...";
+export const BULK_EXPORT_MANIFEST_STATUS = "Finalizing manifest...";
 
 export type BulkExportWorkerMessage = (
   | {

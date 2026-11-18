@@ -1,4 +1,7 @@
-import { BULK_EXPORT_ZIP_STATUS } from "../types/workerMessages";
+import { BULK_EXPORT_MANIFEST_STATUS, BULK_EXPORT_ZIP_STATUS } from "../types/workerMessages";
+
+/** The phases after the last batch: the worker no longer checks for a pause in them. */
+const UNPAUSABLE = new Set<string>([BULK_EXPORT_MANIFEST_STATUS, BULK_EXPORT_ZIP_STATUS]);
 
 /** The bulk export events folded into the shape the progress view shows. */
 export interface ExportProgress {
@@ -23,7 +26,8 @@ export interface ExportFooter {
 /**
  * Which buttons the progress view shows. A finished export offers only Close. A paused one offers
  * Resume and Cancel. A running one offers Pause and Cancel; Pause is shown but disabled while the
- * worker builds the ZIP, because that phase has no point where a pause takes effect.
+ * worker finalizes the manifest or builds the ZIP, because those phases have no point where a
+ * pause takes effect.
  */
 export function exportFooter(progress: ExportProgress | null): ExportFooter {
   if (progress?.isComplete) {
@@ -36,7 +40,7 @@ export function exportFooter(progress: ExportProgress | null): ExportFooter {
     close: false,
     resume: false,
     pause: true,
-    pauseDisabled: progress !== null && progress.status === BULK_EXPORT_ZIP_STATUS,
+    pauseDisabled: progress !== null && UNPAUSABLE.has(progress.status),
     cancel: true,
   };
 }

@@ -24,6 +24,7 @@ import {
   ensureExportStagingDirectories,
 } from "../../services/exportStaging";
 import {
+  BULK_EXPORT_MANIFEST_STATUS,
   BULK_EXPORT_ZIP_STATUS,
   type BulkExportWorkerMessage,
   type BulkExportWorkerResponse,
@@ -649,7 +650,7 @@ async function processNextBatch(): Promise<void> {
         type: "progress",
         processed: state.processedChats,
         total: state.totalChats,
-        status: "Finalizing manifest...",
+        status: BULK_EXPORT_MANIFEST_STATUS,
         processedMedia: state.processedMedia,
         bytesWritten: state.totalSizeBytes,
         currentBatch: batchNumber,
