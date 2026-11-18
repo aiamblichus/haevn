@@ -4,6 +4,7 @@
 
 ### Added
 
+- Undo a delete: the archive shows "Deleted N chats — Undo" for the five minutes before deleted chats are removed for good.
 - `haevn list --offset N` pages through the archive; the JSON output's `hasMore` says whether more chats follow.
 - **Starmap**: an interactive 3D constellation of your chats in the archive, laid out from embeddings of their metadata (UMAP + clustering in a worker), with runtime controls, an embedding queue that can be paused, and rebuild controls.
 - **Exporters**: single chats export as HAEVN JSON, HAEVN Markdown or Pi session JSONL (with thinking signatures); the CLI's exports go through the same exporters.
@@ -22,6 +23,7 @@
 
 ### Fixed
 
+- The archive's "search index incomplete" notice and the metadata failure box fit the dark theme.
 - The archive's search-rebuild notice follows the rebuild and clears when it ends, in the dark theme; viewer search highlighting no longer breaks links or entities; opening a chat with inline handlers no longer logs CSP errors; focus stays on a disabled branch arrow.
 - A search typed with punctuation (`word,`) finds the bare word, and the prefix fallback ignores it too; snippets stay on the match in text with a capital İ.
 - Search finds a word followed by punctuation (`word,` `(word)` `word.`) and words in any script; titles weigh the same in every part of the index. The search index rebuilds once after this update, and a search made during it says so.
