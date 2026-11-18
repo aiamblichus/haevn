@@ -54,9 +54,25 @@ const OPEN_RETRY_MS = 1500;
 
 type WasmInit = (options?: { locateFile?: (file: string) => string }) => Promise<Sqlite3Static>;
 
-function inOpfsWorker(): boolean {
+function hasOpfs(): boolean {
   const storage = (globalThis.navigator as Navigator | undefined)?.storage;
   return typeof storage?.getDirectory === "function";
+}
+
+/**
+ * Whether the memory host was asked for. Only tests ask (tests/setup.ts sets the flag, on
+ * `globalThis` so that a module the test reloads still sees it): where the extension has no OPFS,
+ * an index in memory would rebuild at every start and keep in RAM what this index exists to free.
+ */
+const MEMORY_HOST_FLAG = Symbol.for("haevn.search.useMemoryHost");
+
+/** Ask for the memory host, or take the request back. For tests. */
+export function useMemorySqliteHost(on = true): void {
+  (globalThis as unknown as Record<symbol, boolean>)[MEMORY_HOST_FLAG] = on;
+}
+
+function memoryHostChosen(): boolean {
+  return (globalThis as unknown as Record<symbol, boolean | undefined>)[MEMORY_HOST_FLAG] === true;
 }
 
 /** What the memory host keeps on `globalThis`, so that a reloaded module finds it again. */
@@ -140,7 +156,13 @@ async function openOpfsHost(): Promise<SqliteHost> {
  * failed install.
  */
 export async function openSqliteHost(): Promise<SqliteHost> {
-  if (!inOpfsWorker()) return openMemoryHost();
+  if (memoryHostChosen()) return openMemoryHost();
+  if (!hasOpfs()) {
+    // Nothing to wait for: a pause does not give a context its file system.
+    throw new Error(
+      "The search index needs the origin private file system (OPFS), and this context has no navigator.storage.getDirectory.",
+    );
+  }
   try {
     return await openOpfsHost();
   } catch {

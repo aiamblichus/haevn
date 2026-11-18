@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSearchIndex, resetMemorySqliteHost } from "../src/services/searchIndex";
+import {
+  createSearchIndex,
+  openSqliteHost,
+  resetMemorySqliteHost,
+  useMemorySqliteHost,
+} from "../src/services/searchIndex";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
 
@@ -61,5 +66,23 @@ describe("the search index's build (HVN-87)", () => {
     expect(index.describe()).toMatch(/^SQLite 3\.\d+\.\d+/);
     expect(index.search(buildQueryPlan(parseSearchQuery("pineapple")))).toHaveLength(1);
     index.close();
+  });
+
+  it("does not keep the index in memory where there is no OPFS, and says why", async () => {
+    // The tests choose the memory host in tests/setup.ts; the extension never does.
+    useMemorySqliteHost(false);
+    try {
+      await expect(openSqliteHost()).rejects.toThrow(/OPFS/);
+      const index = createSearchIndex();
+      await expect(index.open()).rejects.toThrow(/navigator\.storage\.getDirectory/);
+    } finally {
+      useMemorySqliteHost(true);
+    }
+  });
+
+  it("is the memory host that the tests ask for", async () => {
+    const host = await openSqliteHost();
+
+    expect(host.kind).toBe("memory");
   });
 });
