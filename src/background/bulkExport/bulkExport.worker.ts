@@ -799,11 +799,12 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
           `[BulkExportWorker] Starting export: ${msg.chatIds.length} chats split into ${totalBatches} batch(es)`,
         );
 
-        await ensureExportStagingDirectories(msg.exportId);
         const manifestWriter = new ExportManifestWriter(msg.exportId);
 
-        // Initialize state
-        workerState = {
+        // The job owns workerState from here, before the staging setup is awaited: a cancel (or
+        // a pause) that lands during the setup finds it and acts on it, and a second start is
+        // refused by the guard above instead of racing the setup (HVN-63).
+        const state: WorkerState = {
           status: "running",
           requestId,
           remainingChatIds: msg.chatIds,
@@ -822,6 +823,21 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
           totalSizeBytes: 0,
           processedMedia: 0,
         };
+        workerState = state;
+
+        try {
+          await ensureExportStagingDirectories(msg.exportId);
+        } catch (error) {
+          // A setup that failed has no job: free the guard, then report it as any start's failure.
+          if (workerState === state) {
+            workerState = null;
+          }
+          throw error;
+        }
+        if (workerState !== state) {
+          // Cancelled during the setup: the cancel has answered, and the job never begins.
+          break;
+        }
 
         // Start processing
         await processNextBatch();
