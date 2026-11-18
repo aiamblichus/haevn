@@ -361,3 +361,79 @@ describe("the bridge after the daemon closes it (HVN-44)", () => {
     expect(sockets().length).toBeGreaterThan(1);
   });
 });
+
+describe("the bridge answering a search with a limit and filters (HVN-77)", () => {
+  type StreamingOptions = {
+    onResults: (b: unknown[]) => void;
+    onComplete: (s: unknown) => void;
+    maxChatsToScan?: number;
+    resultsPerChat?: number;
+    filters?: Record<string, unknown>;
+  };
+
+  async function ask(
+    options: Record<string, unknown>,
+    stats: Record<string, unknown> = {},
+    collected: unknown[] = [{ chatId: "c1", messageId: "m1" }],
+  ): Promise<{ reply: Record<string, unknown>; sent: StreamingOptions }> {
+    let sent: StreamingOptions | undefined;
+    searchChatsStreaming.mockImplementation((_query: string, streaming: StreamingOptions) => {
+      sent = streaming;
+      streaming.onResults(collected);
+      streaming.onComplete({ totalResults: collected.length, wasLimited: false, ...stats });
+      return { cancel: () => {} };
+    });
+    const bridge = await loadBridge();
+    await bridge.applyWsBridgeSettings();
+    const socket = latest();
+    socket.accept();
+    socket.receive({ id: "r1", action: "search", query: "pineapple", options });
+    await vi.waitFor(() => expect(socket.sent.some((f) => f.id === "r1")).toBe(true));
+    return {
+      reply: socket.sent.find((f) => f.id === "r1") as Record<string, unknown>,
+      sent: sent as StreamingOptions,
+    };
+  }
+
+  it("answers the results with hasMore, which is whether the limit cut off chats", async () => {
+    const cut = await ask({}, { wasLimited: true });
+    const whole = await ask({}, { wasLimited: false });
+
+    expect(cut.reply).toMatchObject({
+      success: true,
+      data: { results: [{ chatId: "c1" }], hasMore: true },
+    });
+    expect(whole.reply).toMatchObject({ success: true, data: { hasMore: false } });
+  });
+
+  it("passes the limit, the dates and the category down to the search", async () => {
+    const { sent } = await ask({
+      limit: 5,
+      after: "2026-01-01",
+      before: "2026-02-01",
+      category: "code",
+    });
+
+    expect(sent.maxChatsToScan).toBe(5);
+    expect(sent.filters).toEqual({
+      after: new Date("2026-01-01").getTime(),
+      before: new Date("2026-02-01").getTime(),
+      category: "code",
+    });
+  });
+
+  it("sends no filter for a date that does not parse, or a category not named", async () => {
+    const { sent } = await ask({ after: "yesterday-ish" });
+
+    expect(sent.filters).toEqual({});
+  });
+
+  it("does not filter what came back: the search has already", async () => {
+    // A result outside the dates is the search's business now; the bridge returns what it got.
+    const { reply } = await ask({ after: "2030-01-01" }, {}, [
+      { chatId: "c1", messageId: "m1", messageTimestamp: 1 },
+    ]);
+
+    expect(reply).toMatchObject({ data: { results: [{ chatId: "c1" }] } });
+  });
+});

@@ -49,6 +49,7 @@ import { getCliSettings } from "../services/settingsService";
 import { SyncService } from "../services/syncService";
 import type { AllProviderRawData } from "../types/messaging";
 import type {
+  SearchFilters,
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
 } from "../types/workerMessages";
@@ -626,15 +627,26 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
 async function handleSearch(
   id: string,
   req: Extract<WsRequest, { action: "search" }>,
-): Promise<WsResponse<SearchResult[]>> {
+): Promise<WsResponse<{ results: SearchResult[]; hasMore: boolean }>> {
   const { query, options = {} } = req;
 
   if (!query?.trim()) {
     return { id, success: false, error: "Query is required", code: "BAD_REQUEST" };
   }
 
-  const { results, indexRebuilding, indexIncomplete } = await new Promise<{
+  // The date range and the category go down with the search, so the limit is a limit on the chats
+  // that pass them; a date that does not parse is no filter, as it always was.
+  const afterMs = options.after ? new Date(options.after).getTime() : Number.NaN;
+  const beforeMs = options.before ? new Date(options.before).getTime() : Number.NaN;
+  const filters: SearchFilters = {
+    ...(Number.isFinite(afterMs) ? { after: afterMs } : {}),
+    ...(Number.isFinite(beforeMs) ? { before: beforeMs } : {}),
+    ...(options.category ? { category: options.category } : {}),
+  };
+
+  const { results, wasLimited, indexRebuilding, indexIncomplete } = await new Promise<{
     results: SearchResult[];
+    wasLimited: boolean;
     indexRebuilding?: SearchIndexRebuildStatus;
     indexIncomplete?: SearchIndexIncompleteStatus;
   }>((resolve, reject) => {
@@ -644,11 +656,13 @@ async function handleSearch(
       maxChatsToScan: options.limit ?? 1000,
       resultsPerChat: 4,
       filterProvider: options.platform,
+      filters,
       contextChars: options.contextChars,
       onResults: (batch) => collected.push(...batch),
       onComplete: (stats) =>
         resolve({
           results: collected,
+          wasLimited: stats.wasLimited,
           indexRebuilding: stats.indexRebuilding,
           indexIncomplete: stats.indexIncomplete,
         }),
@@ -679,27 +693,15 @@ async function handleSearch(
     };
   }
 
-  const afterMs = options.after ? new Date(options.after).getTime() : undefined;
-  const beforeMs = options.before ? new Date(options.before).getTime() : undefined;
-
-  const filtered = results.filter((r) => {
-    if (afterMs && (r.messageTimestamp ?? 0) < afterMs) return false;
-    if (beforeMs && (r.messageTimestamp ?? 0) > beforeMs) return false;
-    return true;
-  });
-
   const includeMetadata = options.includeMetadata !== false;
-  const category = options.category;
-  const needsMetadataLookup = includeMetadata || (!!category && category !== "all");
-
-  const uniqueChatIds = [...new Set(filtered.map((r) => r.chatId))];
+  const uniqueChatIds = [...new Set(results.map((r) => r.chatId))];
   const metaMap =
-    needsMetadataLookup && uniqueChatIds.length > 0
+    includeMetadata && uniqueChatIds.length > 0
       ? await MetadataRepository.getMany(uniqueChatIds)
       : new Map();
 
   const enriched = includeMetadata
-    ? filtered.map((r) => {
+    ? results.map((r) => {
         const meta = metaMap.get(r.chatId);
         if (!meta) return r;
         return {
@@ -717,19 +719,9 @@ async function handleSearch(
           },
         };
       })
-    : filtered;
+    : results;
 
-  // Apply category filter if requested
-  const categoryFiltered =
-    category && category !== "all"
-      ? enriched.filter((r) => {
-          const meta = metaMap.get(r.chatId);
-          if (category === "_unset") return !meta || meta.source === "unset";
-          return Array.isArray(meta?.categories) && meta.categories.includes(category);
-        })
-      : enriched;
-
-  return { id, success: true, data: categoryFiltered };
+  return { id, success: true, data: { results: enriched, hasMore: wasLimited } };
 }
 
 async function handleList(

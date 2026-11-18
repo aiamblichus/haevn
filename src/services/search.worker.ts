@@ -10,12 +10,14 @@ import type {
   UserPromptPart,
 } from "../model/haevn_model";
 import type {
+  SearchFilters,
   SearchIndexIncompleteStatus,
   SearchIndexRebuildStatus,
   SearchWorkerMessage,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import { inCategory, inDateRange, needsCategory } from "./searchFilters";
 import {
   createIndexBuilder,
   createQueryTermPipeline,
@@ -35,6 +37,7 @@ import {
 const SEGMENT_SIZE = 200; // Chats per segment
 const REBUILD_DEBOUNCE_MS = 2000;
 const SNIPPET_RADIUS = 60; // Context characters around match
+const DEFAULT_MAX_CHATS = 1000; // Chats a hydrated search returns when the caller names no limit
 // The record in `lunrIndex` that says which format the segments are in (HVN-65). A rebuild
 // removes it with the segments and writes it back as its last step, so only a pass that ended
 // well leaves it.
@@ -1020,6 +1023,19 @@ async function softDeletedChatIds(): Promise<Set<string>> {
 }
 
 /**
+ * Whether a chat is inside the date range and the category a search asked for. These run on each
+ * chat before it counts toward the limit, so a filtered search is cut from the chats that pass,
+ * not from all that matched (HVN-77). The date is the chat's, as it has always been for results.
+ */
+async function chatPassesFilters(chat: Chat, filters: SearchFilters): Promise<boolean> {
+  if (!inDateRange(chat.timestamp, filters)) return false;
+  if (needsCategory(filters) && chat.id) {
+    return inCategory(await db.chatMetadata.get(chat.id), filters.category);
+  }
+  return true;
+}
+
+/**
  * The rebuild's progress while one is running, otherwise undefined. A rebuild empties the index
  * and refills it, so it cannot answer queries until it ends. Keeping the previous index to answer
  * from would double the index's memory for the length of the rebuild (HVN-40).
@@ -1174,8 +1190,11 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
         typeof msg.contextChars === "number" && msg.contextChars > 0
           ? Math.min(500, msg.contextChars)
           : SNIPPET_RADIUS;
-      // maxResults is used to limit total hydration
-      const maxResults = msg.maxResults || 1000;
+      // The limit is a number of chats (HVN-77); a chat sends at most `passagesPerChat` passages.
+      const maxChats = msg.maxChats && msg.maxChats > 0 ? msg.maxChats : DEFAULT_MAX_CHATS;
+      const passagesPerChat =
+        msg.passagesPerChat && msg.passagesPerChat > 0 ? msg.passagesPerChat : Infinity;
+      const filters = msg.filters ?? {};
       const parsedQuery = parseSearchQuery(msg.query);
       const needsExactPhraseHydration = queryNeedsExactPhrasePath(msg.query);
 
@@ -1194,15 +1213,14 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           ...incomplete,
         });
       } else {
-        let sentCount = 0;
-
-        // Helper to send chunk
-        const sendChunk = (chunk: string[] | SearchResult[], done: boolean) => {
+        // Helper to send chunk. The last one says whether more chats matched than were sent.
+        const sendChunk = (chunk: string[] | SearchResult[], done: boolean, wasLimited = false) => {
           self.postMessage({
             type: "searchResultChunk",
             requestId: msg.requestId,
             results: chunk,
             done,
+            ...(done && hydrate ? { wasLimited } : {}),
             ...(done ? incomplete : {}),
           });
         };
@@ -1219,29 +1237,32 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           // 'results' is array of Lunr Result objects with matchData
           const lunrResults = results as LunrResult[];
           let currentChunk: SearchResult[] = [];
+          let chatsSent = 0;
+          let wasLimited = false;
 
-          for (let i = 0; i < lunrResults.length; i++) {
-            if (sentCount >= maxResults) break;
-
-            const r = lunrResults[i];
-            const chatId = r.ref;
-
-            const chat = await loadChatWithMessages(chatId);
-            if (chat) {
-              if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
-                continue;
-              }
-
-              const snippets = needsExactPhraseHydration
-                ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
-                : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
-                    (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
-                  );
-
-              const limitedSnippets = snippets.slice(0, Math.max(0, maxResults - sentCount));
-              currentChunk.push(...limitedSnippets);
-              sentCount += limitedSnippets.length;
+          for (const r of lunrResults) {
+            const chat = await loadChatWithMessages(r.ref);
+            if (!chat) continue;
+            if (filterProvider && filterProvider !== "all" && chat.source !== filterProvider) {
+              continue;
             }
+            if (!(await chatPassesFilters(chat, filters))) continue;
+
+            const snippets = needsExactPhraseHydration
+              ? buildSearchResultsForChat(chat, parsedQuery, { radius: snippetRadius })
+              : generateSnippets(chat, collectMatchPositions(r.matchData), snippetRadius).filter(
+                  (snippet) => messageMatchesQuery(snippet.messageContent, parsedQuery),
+                );
+            // A chat counts when it has a passage to show, so a chat after the limit that has
+            // none is not "more results". The first one that has one is the proof there are more.
+            if (snippets.length === 0) continue;
+            if (chatsSent >= maxChats) {
+              wasLimited = true;
+              break;
+            }
+
+            currentChunk.push(...snippets.slice(0, passagesPerChat));
+            chatsSent++;
 
             // Flush chunk
             if (currentChunk.length >= CHUNK) {
@@ -1252,7 +1273,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
           }
 
           // Final chunk
-          sendChunk(currentChunk, true);
+          sendChunk(currentChunk, true, wasLimited);
         }
       }
       return;

@@ -62,6 +62,7 @@ export async function handleSearchChats(
         sendResponse({
           success: true,
           results: allResults,
+          wasLimited: stats.wasLimited,
           ...(stats.indexRebuilding ? { indexRebuilding: stats.indexRebuilding } : {}),
           ...(stats.indexIncomplete ? { indexIncomplete: stats.indexIncomplete } : {}),
         });

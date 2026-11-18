@@ -367,6 +367,8 @@ export type BackgroundResponse =
   | {
       success: true;
       results: unknown[];
+      /** More chats matched than the search's limit let through. */
+      wasLimited?: boolean;
       indexRebuilding?: SearchIndexRebuildStatus;
       indexIncomplete?: SearchIndexIncompleteStatus;
     }

@@ -46,7 +46,7 @@ haevn search "api design" --after 2024-01-01 --format json
 
 Options:
 - `-p, --platform <name>` - Filter by platform (claude, chatgpt, gemini, etc.)
-- `-l, --limit <n>` - Max chats to scan (default: 20)
+- `-l, --limit <n>` - Max chats to return (default: 20), with at most 4 matching messages from each. `--platform`, `--category`, `--after` and `--before` narrow the chats first, so the limit counts the chats that pass them. When more chats matched, the text output ends with a line saying so and the JSON has `"hasMore": true`
 - `-c, --context <chars>` - Context on each side of a match (default: 120); a result shows up to three such passages when matches are far apart
 - `-f, --format <fmt>` - Output format (text, json)
 - `--no-metadata` - Skip chat metadata in output (default includes metadata)

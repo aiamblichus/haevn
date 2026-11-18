@@ -49,7 +49,7 @@ export default defineCommand({
     limit: {
       type: "string",
       alias: "l",
-      description: "Maximum number of chats to scan (default: 20)",
+      description: "Maximum number of chats to return (default: 20)",
     },
     context: {
       type: "string",
@@ -90,9 +90,9 @@ export default defineCommand({
     }
     const hint = getQueryHint(query);
 
-    let results: SearchResult[];
+    let response: SearchResponse | SearchResult[];
     try {
-      results = await daemonRequest<SearchResult[]>({
+      response = await daemonRequest<SearchResponse | SearchResult[]>({
         action: "search",
         query,
         options: { platform, category, limit, after, before, contextChars, includeMetadata },
@@ -101,22 +101,10 @@ export default defineCommand({
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
+    const { results, hasMore } = readSearchResponse(response);
 
     if (format === "json") {
-      const jsonResults = includeMetadata
-        ? results
-        : results.map(({ metadata, metaTitle, ...rest }) => rest);
-
-      consola.log(
-        toJsonString({
-          results: jsonResults.map((result) => ({
-            ...result,
-            messageRef: createMessageRef(result.chatId, result.messageId),
-          })),
-          total: jsonResults.length,
-          ...(hint ? { hint } : {}),
-        }),
-      );
+      consola.log(searchJson(results, { includeMetadata, hasMore, hint }));
       return;
     }
 
@@ -126,10 +114,44 @@ export default defineCommand({
       return;
     }
 
-    const output = formatSearchResultsText(results, { includeMetadata });
+    const output = formatSearchResultsText(results, { includeMetadata, hasMore });
     consola.log(hint ? `${output}\n${pc.dim(hint)}` : output);
   },
 });
+
+/**
+ * What the extension answers a search with. An extension older than the CLI answers the results
+ * alone, as a list, and does not say whether the limit cut any chats.
+ */
+interface SearchResponse {
+  results: SearchResult[];
+  /** True when more chats matched than `--limit` let through. */
+  hasMore: boolean;
+}
+
+export function readSearchResponse(response: SearchResponse | SearchResult[]): SearchResponse {
+  return Array.isArray(response) ? { results: response, hasMore: false } : response;
+}
+
+/** The `--format json` output of a search. */
+export function searchJson(
+  results: SearchResult[],
+  options: { includeMetadata: boolean; hasMore: boolean; hint?: string },
+): string {
+  const jsonResults = options.includeMetadata
+    ? results
+    : results.map(({ metadata, metaTitle, ...rest }) => rest);
+
+  return toJsonString({
+    results: jsonResults.map((result) => ({
+      ...result,
+      messageRef: createMessageRef(result.chatId, result.messageId),
+    })),
+    total: jsonResults.length,
+    hasMore: options.hasMore,
+    ...(options.hint ? { hint: options.hint } : {}),
+  });
+}
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
@@ -160,7 +182,7 @@ function getQueryHint(query: string): string | undefined {
 
 export function formatSearchResultsText(
   results: SearchResult[],
-  options: { includeMetadata?: boolean } = {},
+  options: { includeMetadata?: boolean; hasMore?: boolean } = {},
 ): string {
   const lines: string[] = [];
   const includeMetadata = options.includeMetadata !== false;
@@ -207,5 +229,8 @@ export function formatSearchResultsText(
 
   lines.push("");
   lines.push(pc.dim(`${results.length} result${results.length === 1 ? "" : "s"}`));
+  if (options.hasMore) {
+    lines.push(pc.dim("More chats match than were returned. Raise --limit to see them."));
+  }
   return lines.join("\n");
 }

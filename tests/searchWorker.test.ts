@@ -1307,31 +1307,31 @@ describe("search worker: the index format version (HVN-65)", () => {
   });
 });
 
+/** A chat of messages, each with one prompt; the reply says nothing that is searched for. */
+function buildThread(id: string, prompts: string[]): Chat {
+  const chat = buildChat(id, "unused");
+  const messages: Record<string, ChatMessage> = {};
+  prompts.forEach((prompt, i) => {
+    const msgId = `${id}-m${i + 1}`;
+    messages[msgId] = {
+      ...chat.messages[`${id}-m1`],
+      id: msgId,
+      message: [
+        {
+          kind: "request",
+          parts: [{ part_kind: "user-prompt", content: prompt, timestamp: "t" }],
+        },
+        { kind: "response", parts: [{ part_kind: "text", content: "noted" }], timestamp: "t" },
+      ] as ChatMessage["message"],
+    };
+  });
+  chat.messages = messages;
+  chat.currentId = `${id}-m${prompts.length}`;
+  return chat;
+}
+
 describe("search worker: one indexing path (HVN-76)", () => {
   const MARK = "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}";
-
-  /** A chat of messages, each with one prompt; the reply says nothing that is searched for. */
-  function buildThread(id: string, prompts: string[]): Chat {
-    const chat = buildChat(id, "unused");
-    const messages: Record<string, ChatMessage> = {};
-    prompts.forEach((prompt, i) => {
-      const msgId = `${id}-m${i + 1}`;
-      messages[msgId] = {
-        ...chat.messages[`${id}-m1`],
-        id: msgId,
-        message: [
-          {
-            kind: "request",
-            parts: [{ part_kind: "user-prompt", content: prompt, timestamp: "t" }],
-          },
-          { kind: "response", parts: [{ part_kind: "text", content: "noted" }], timestamp: "t" },
-        ] as ChatMessage["message"],
-      };
-    });
-    chat.messages = messages;
-    chat.currentId = `${id}-m${prompts.length}`;
-    return chat;
-  }
 
   /** What a save does: write the row, then tell the index through the manager. */
   async function saveAndIndex(chat: Chat): Promise<void> {
@@ -1497,5 +1497,190 @@ describe("search worker: a rebuild that fails says so as it ends (HVN-74)", () =
     await send({ type: "rebuild" });
 
     expect(posted.some((m) => m.type === "indexRebuildFailed")).toBe(false);
+  });
+});
+
+describe("search worker: the limit counts chats (HVN-77)", () => {
+  beforeEach(async () => {
+    await getDB().chatMetadata.clear();
+  });
+
+  type Answer = { results: SearchResult[]; wasLimited: boolean | undefined; chunks: Posted[] };
+
+  /** A hydrated search for "pineapple", with the limits and filters a caller can send. */
+  async function limited(extra: Record<string, unknown> = {}): Promise<Answer> {
+    const requestId = `test-${++requestCounter}`;
+    await send({ type: "search", query: "pineapple", requestId, hydrate: true, ...extra });
+    const chunks = posted.filter(
+      (m) => m.type === "searchResultChunk" && m.requestId === requestId,
+    );
+    return {
+      results: chunks.flatMap((c) => c.results as SearchResult[]),
+      wasLimited: chunks[chunks.length - 1]?.wasLimited as boolean | undefined,
+      chunks,
+    };
+  }
+
+  const chatsOf = (results: SearchResult[]) => [...new Set(results.map((r) => r.chatId))].sort();
+
+  /** A chat with `messages` messages that each hold the word. */
+  const manyMatches = (id: string, messages: number) =>
+    buildThread(
+      id,
+      Array.from({ length: messages }, (_, i) => `pineapple number ${i}`),
+    );
+
+  async function index(...chats: Chat[]): Promise<void> {
+    await seedChats(chats);
+    await send({ type: "rebuild" });
+  }
+
+  describe("the limit", () => {
+    it("is a number of chats: five matching chats of six passages each, limit three, give three chats", async () => {
+      await index(...["a", "b", "c", "d", "e"].map((id) => manyMatches(id, 6)));
+
+      const { results, wasLimited } = await limited({ maxChats: 3 });
+
+      expect(chatsOf(results)).toHaveLength(3);
+      expect(wasLimited).toBe(true);
+    });
+
+    it("says it was not limited when the chats that match are exactly the limit", async () => {
+      await index(...["a", "b", "c"].map((id) => manyMatches(id, 2)));
+
+      const { results, wasLimited } = await limited({ maxChats: 3 });
+
+      expect(chatsOf(results)).toEqual(["a", "b", "c"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("says it was not limited when fewer chats match than the limit", async () => {
+      await index(manyMatches("a", 2));
+
+      expect((await limited({ maxChats: 10 })).wasLimited).toBe(false);
+    });
+
+    it("does not count a chat the index holds but whose text no longer has the word", async () => {
+      await index(manyMatches("a", 1), manyMatches("b", 1), manyMatches("c", 1));
+      await seedChats([buildThread("a", ["nothing to find here"])]); // saved, not yet re-indexed
+
+      const { results, wasLimited } = await limited({ maxChats: 2 });
+
+      expect(chatsOf(results)).toEqual(["b", "c"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("does not count a chat that was deleted after it was indexed", async () => {
+      await index(manyMatches("a", 1), manyMatches("b", 1), manyMatches("gone", 1));
+      await getDB().chats.update("gone", { deleted: 1, deletedAt: Date.now() });
+
+      const { results, wasLimited } = await limited({ maxChats: 2 });
+
+      expect(chatsOf(results)).toEqual(["a", "b"]);
+      expect(wasLimited).toBe(false);
+    });
+  });
+
+  describe("passages per chat", () => {
+    it("sends at most that many from a chat, whatever the limit on chats is", async () => {
+      await index(manyMatches("a", 6), manyMatches("b", 1));
+
+      const { results } = await limited({ passagesPerChat: 2 });
+
+      expect(results.filter((r) => r.chatId === "a")).toHaveLength(2);
+      expect(results.filter((r) => r.chatId === "b")).toHaveLength(1);
+    });
+
+    it("sends every passage when none is asked for", async () => {
+      await index(manyMatches("a", 6));
+
+      expect((await limited()).results).toHaveLength(6);
+    });
+  });
+
+  describe("filters, which run before the cut", () => {
+    const at = (chat: Chat, timestamp: number): Chat => ({ ...chat, timestamp });
+    const DAY = 86_400_000;
+    const NOW = 1_800_000_000_000;
+
+    // Four chats match; the one that passes the filter has the longest text, so it ranks last.
+    const crowd = (): Chat[] => [
+      at(manyMatches("old1", 1), NOW - 30 * DAY),
+      at(manyMatches("old2", 1), NOW - 31 * DAY),
+      at(manyMatches("old3", 1), NOW - 32 * DAY),
+      at(buildThread("new", ["pineapple", "filler ".repeat(400)]), NOW),
+    ];
+
+    it("finds the one chat inside a date range that is outranked by chats outside it", async () => {
+      await index(...crowd());
+
+      const { results, wasLimited } = await limited({
+        maxChats: 2,
+        filters: { after: NOW - DAY },
+      });
+
+      expect(chatsOf(results)).toEqual(["new"]);
+      expect(wasLimited).toBe(false);
+    });
+
+    it("keeps the chats before a date with before", async () => {
+      await index(...crowd());
+
+      const { results } = await limited({ filters: { before: NOW - 30.5 * DAY } });
+
+      expect(chatsOf(results)).toEqual(["old2", "old3"]);
+    });
+
+    it("limits the chats that pass the filter, and says so", async () => {
+      await index(...crowd());
+
+      const { results, wasLimited } = await limited({
+        maxChats: 1,
+        filters: { before: NOW - 29 * DAY },
+      });
+
+      expect(chatsOf(results)).toHaveLength(1);
+      expect(chatsOf(results)[0]).toMatch(/^old/);
+      expect(wasLimited).toBe(true);
+    });
+
+    describe("by category", () => {
+      const meta = (chatId: string, categories: string[], source: "manual" | "unset" = "manual") =>
+        getDB().chatMetadata.put({
+          chatId,
+          title: "",
+          description: "",
+          synopsis: "",
+          categories,
+          keywords: [],
+          source,
+          updatedAt: 1,
+        });
+
+      it("finds the chat in a category that the other matching chats are not in", async () => {
+        await index(...crowd());
+        await meta("old1", ["travel"]);
+        await meta("old2", ["travel"]);
+        await meta("new", ["code"]);
+
+        const { results, wasLimited } = await limited({
+          maxChats: 2,
+          filters: { category: "code" },
+        });
+
+        expect(chatsOf(results)).toEqual(["new"]);
+        expect(wasLimited).toBe(false);
+      });
+
+      it("finds the chats that have no metadata for _unset", async () => {
+        await index(...crowd());
+        await meta("old1", ["travel"]);
+        await meta("old2", [], "unset");
+
+        const { results } = await limited({ filters: { category: "_unset" } });
+
+        expect(chatsOf(results)).toEqual(["new", "old2", "old3"]);
+      });
+    });
   });
 });

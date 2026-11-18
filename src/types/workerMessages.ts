@@ -17,6 +17,16 @@ export interface SearchIndexIncompleteStatus {
   error: string;
 }
 
+/** What a chat must satisfy to be a result; checked before the chat counts toward the limit. */
+export interface SearchFilters {
+  /** Earliest chat timestamp, in milliseconds. */
+  after?: number;
+  /** Latest chat timestamp, in milliseconds. */
+  before?: number;
+  /** A category of the chat's metadata, or "_unset" for a chat with none. */
+  category?: string;
+}
+
 export type SearchWorkerMessage =
   | { type: "init" }
   /** The worker reads the chat from the database and makes the indexed text itself (HVN-76). */
@@ -26,10 +36,14 @@ export type SearchWorkerMessage =
   | {
       type: "search";
       query: string;
-      maxResults?: number;
+      /** Hydrated search: the most chats to return. */
+      maxChats?: number;
+      /** Hydrated search: the most passages to return from one chat. */
+      passagesPerChat?: number;
       requestId: string;
       hydrate?: boolean;
       filterProvider?: string;
+      filters?: SearchFilters;
       contextChars?: number;
     }
   | { type: "rebuild" }
@@ -51,6 +65,10 @@ export type SearchWorkerResponse =
       requestId: string;
       results: string[] | import("../model/haevn_model").SearchResult[];
       done: boolean;
+      /**
+       * On the last chunk of a hydrated search: more chats matched than the limit let through.
+       */
+      wasLimited?: boolean;
       /**
        * Set when the index is being rebuilt and the search was not run. An empty `results` then
        * means "not searched", never "no matches".
