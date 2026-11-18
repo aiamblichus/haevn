@@ -83,6 +83,7 @@ const App = () => {
   };
   const [isExportModalOpen, setExportModalOpen] = useState(false);
   const [exportModalIds, setExportModalIds] = useState<string[] | null>(null);
+  const [exportModalScopeNote, setExportModalScopeNote] = useState<string | null>(null);
   const [isImportModalOpen, setImportModalOpen] = useState(false);
   const [isGoToChatModalOpen, setGoToChatModalOpen] = useState(false);
   const [importProviderFilter, setImportProviderFilter] = useState<string | null>(null);
@@ -589,8 +590,9 @@ const App = () => {
     });
   }, []);
 
-  const openExportModal = useCallback(async (ids: string[]) => {
+  const openExportModal = useCallback(async (ids: string[], scopeNote: string | null = null) => {
     setExportModalIds(ids);
+    setExportModalScopeNote(scopeNote);
     setExportModalOpen(true);
   }, []);
 
@@ -742,11 +744,13 @@ const App = () => {
 
   const handleExportAll = useCallback(async () => {
     let ids: string[];
+    let scopeNote: string | null = null;
 
     // If search results are active, export all unique chat IDs from search results
     if (searchResults && searchResults.length > 0) {
       const uniqueChatIds = new Set(searchResults.map((r) => r.chatId));
       ids = Array.from(uniqueChatIds);
+      scopeNote = `Only the ${ids.length} chat(s) matching "${searchQuery}" are exported, not the whole archive.`;
     } else {
       // For paginated view, we need to fetch all matching chats
       // This is a special case - we'll fetch all chats matching the current filter
@@ -773,12 +777,13 @@ const App = () => {
     }
 
     if (ids.length === 0) return;
-    await openExportModal(ids);
+    await openExportModal(ids, scopeNote);
   }, [
     displayedChats,
     filterProvider,
     filterCategory,
     searchResults,
+    searchQuery,
     sortBy,
     sortDirection,
     openExportModal,
@@ -889,11 +894,13 @@ const App = () => {
         onOpenChange={setExportModalOpen}
         exportModalIds={exportModalIds}
         exportOptions={exportOptions}
+        scopeNote={exportModalScopeNote}
         onStatus={setStatus}
         onExportChatById={exportChatById}
         onClose={() => {
           setExportModalOpen(false);
           setExportModalIds(null);
+          setExportModalScopeNote(null);
         }}
       />
       <ImportModal

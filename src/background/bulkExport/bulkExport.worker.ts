@@ -23,7 +23,11 @@ import {
   buildExportZipPath,
   ensureExportStagingDirectories,
 } from "../../services/exportStaging";
-import type { BulkExportWorkerMessage, BulkExportWorkerResponse } from "../../types/workerMessages";
+import {
+  BULK_EXPORT_ZIP_STATUS,
+  type BulkExportWorkerMessage,
+  type BulkExportWorkerResponse,
+} from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import {
   createWritableStream,
@@ -673,7 +677,7 @@ async function processNextBatch(): Promise<void> {
         type: "progress",
         processed: state.processedChats,
         total: state.totalChats,
-        status: "Building ZIP archive...",
+        status: BULK_EXPORT_ZIP_STATUS,
         processedMedia: state.processedMedia,
         bytesWritten: state.totalSizeBytes,
         currentBatch: batchNumber,
