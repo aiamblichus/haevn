@@ -28,6 +28,7 @@ import type {
 } from "../model/haevn_model";
 import type { BackgroundRequest } from "../types/messaging";
 import { escapeHtml } from "../utils/html";
+import { logNoResponse } from "../utils/noResponse";
 
 type Params = {
   chatId: string;
@@ -1344,6 +1345,7 @@ const App = () => {
         };
         const resp = await chrome.runtime.sendMessage(request);
         if (!resp?.success) {
+          if (resp == null) await logNoResponse("viewer load");
           throw new Error(
             resp && "error" in resp
               ? resp.error

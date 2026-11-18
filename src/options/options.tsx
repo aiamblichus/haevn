@@ -24,6 +24,7 @@ import type {
   SearchIndexRebuildStatus,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { logNoResponse } from "../utils/noResponse";
 import "./debug";
 import { ExportModal } from "../components/ExportModal";
 import { ArchiveView } from "./components/ArchiveView/ArchiveView";
@@ -162,6 +163,7 @@ const App = () => {
       };
       const resp = await chrome.runtime.sendMessage(request);
       if (!resp?.success) {
+        if (resp == null) await logNoResponse("options loadChats");
         throw new Error(
           resp && "error" in resp
             ? resp.error
