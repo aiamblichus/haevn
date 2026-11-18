@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SearchResult } from "../types/chat";
-import { formatSearchResultsText, readSearchResponse, searchJson } from "./search";
+import { formatSearchResultsText, searchJson } from "./search";
 
 function hit(overrides: Partial<SearchResult>): SearchResult {
   return {
@@ -74,12 +74,5 @@ describe("haevn search and the chats the limit cut off (HVN-77)", () => {
     expect(cut).toContain("More chats match than were returned. Raise --limit");
     expect(whole).not.toContain("More chats match");
     expect(formatSearchResultsText([hit({})])).not.toContain("More chats match");
-  });
-
-  it("reads the answer of an extension that sends the results as a list", () => {
-    const results = [hit({})];
-
-    expect(readSearchResponse(results)).toEqual({ results, hasMore: false });
-    expect(readSearchResponse({ results, hasMore: true })).toEqual({ results, hasMore: true });
   });
 });

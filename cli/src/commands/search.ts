@@ -3,7 +3,7 @@
  */
 
 import { defineCommand } from "citty";
-import { daemonRequest } from "../daemon/client.js";
+import { daemonRequestWithMeta } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { SearchResult } from "../types";
 import { parseWholeNumber } from "../utils/args";
@@ -90,18 +90,21 @@ export default defineCommand({
     }
     const hint = getQueryHint(query);
 
-    let response: SearchResponse | SearchResult[];
+    let results: SearchResult[];
+    let hasMore: boolean;
     try {
-      response = await daemonRequest<SearchResponse | SearchResult[]>({
+      // An extension from before `hasMore` leaves it off the envelope: not cut off, as far as it says.
+      const reply = await daemonRequestWithMeta<SearchResult[]>({
         action: "search",
         query,
         options: { platform, category, limit, after, before, contextChars, includeMetadata },
       });
+      results = reply.data;
+      hasMore = reply.hasMore === true;
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
-    const { results, hasMore } = readSearchResponse(response);
 
     if (format === "json") {
       consola.log(searchJson(results, { includeMetadata, hasMore, hint }));
@@ -118,20 +121,6 @@ export default defineCommand({
     consola.log(hint ? `${output}\n${pc.dim(hint)}` : output);
   },
 });
-
-/**
- * What the extension answers a search with. An extension older than the CLI answers the results
- * alone, as a list, and does not say whether the limit cut any chats.
- */
-interface SearchResponse {
-  results: SearchResult[];
-  /** True when more chats matched than `--limit` let through. */
-  hasMore: boolean;
-}
-
-export function readSearchResponse(response: SearchResponse | SearchResult[]): SearchResponse {
-  return Array.isArray(response) ? { results: response, hasMore: false } : response;
-}
 
 /** The `--format json` output of a search. */
 export function searchJson(

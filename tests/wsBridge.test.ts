@@ -396,15 +396,20 @@ describe("the bridge answering a search with a limit and filters (HVN-77)", () =
     };
   }
 
-  it("answers the results with hasMore, which is whether the limit cut off chats", async () => {
+  it("keeps `data` the list of results, as it always was, and puts hasMore beside it", async () => {
     const cut = await ask({}, { wasLimited: true });
     const whole = await ask({}, { wasLimited: false });
 
+    // A CLI from before hasMore reads `data` as a list and ignores the rest of the envelope.
+    expect(Array.isArray(cut.reply.data)).toBe(true);
     expect(cut.reply).toMatchObject({
+      id: "r1",
       success: true,
-      data: { results: [{ chatId: "c1" }], hasMore: true },
+      data: [{ chatId: "c1" }],
+      hasMore: true,
     });
-    expect(whole.reply).toMatchObject({ success: true, data: { hasMore: false } });
+    expect(whole.reply).toMatchObject({ success: true, hasMore: false });
+    expect(Array.isArray(whole.reply.data)).toBe(true);
   });
 
   it("passes the limit, the dates and the category down to the search", async () => {
@@ -435,7 +440,7 @@ describe("the bridge answering a search with a limit and filters (HVN-77)", () =
       { chatId: "c1", messageId: "m1", messageTimestamp: 1 },
     ]);
 
-    expect(reply).toMatchObject({ data: { results: [{ chatId: "c1" }] } });
+    expect(reply).toMatchObject({ data: [{ chatId: "c1" }] });
   });
 });
 

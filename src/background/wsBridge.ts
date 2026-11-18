@@ -170,7 +170,13 @@ interface WsImportResult {
 }
 
 type WsResponse<T = unknown> =
-  | { id: string; success: true; data: T }
+  | {
+      id: string;
+      success: true;
+      data: T;
+      /** A search only: more chats matched than the limit let through. */
+      hasMore?: boolean;
+    }
   | { id: string; success: false; error: string; code?: string };
 
 function toMessageDict<T extends { id: string }>(messages: T[]): Record<string, T> {
@@ -628,7 +634,7 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
 async function handleSearch(
   id: string,
   req: Extract<WsRequest, { action: "search" }>,
-): Promise<WsResponse<{ results: SearchResult[]; hasMore: boolean }>> {
+): Promise<WsResponse<SearchResult[]>> {
   const { query, options = {} } = req;
 
   if (!query?.trim()) {
@@ -732,7 +738,8 @@ async function handleSearch(
       })
     : results;
 
-  return { id, success: true, data: { results: enriched, hasMore: wasLimited } };
+  // `data` stays the list of results, so a CLI that does not know `hasMore` still reads it.
+  return { id, success: true, data: enriched, hasMore: wasLimited };
 }
 
 async function handleList(

@@ -149,7 +149,13 @@ export interface ImportResult {
  * The `id` matches the originating request so the daemon can route to the right caller.
  */
 export type CliResponse<T = unknown> =
-  | { id: string; success: true; data: T }
+  | {
+      id: string;
+      success: true;
+      data: T;
+      /** A search only: more chats matched than the limit let through. */
+      hasMore?: boolean;
+    }
   | { id: string; success: false; error: string; code?: string };
 
 /**

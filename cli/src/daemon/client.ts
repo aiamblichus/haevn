@@ -41,6 +41,25 @@ export async function daemonRequest<T>(
   request: CliRequestBody,
   timeout = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
+  return (await daemonRequestWithMeta<T>(request, timeout)).data;
+}
+
+/** A reply's data, and what the extension put beside it on the envelope. */
+export interface DaemonReply<T> {
+  data: T;
+  /** A search only: more chats matched than the limit let through. Absent from an older extension. */
+  hasMore?: boolean;
+}
+
+/**
+ * `daemonRequest` for a command that reads the envelope as well as the data (`search`, for
+ * `hasMore`). `data` is whatever the extension has always answered with, so a command that reads
+ * only that works against an extension of any age.
+ */
+export async function daemonRequestWithMeta<T>(
+  request: CliRequestBody,
+  timeout = DEFAULT_TIMEOUT_MS,
+): Promise<DaemonReply<T>> {
   const config = loadConfig();
   const port = config.port ?? DEFAULT_DAEMON_PORT;
   const apiKey = config.apiKey;
@@ -104,7 +123,7 @@ async function attemptRequest<T>(
   apiKey: string,
   body: CliRequestBody,
   timeoutMs: number,
-): Promise<T> {
+): Promise<DaemonReply<T>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -137,7 +156,8 @@ async function attemptRequest<T>(
     throw new Error((payload as Extract<typeof payload, { success: false }>).error);
   }
 
-  return (payload as Extract<typeof payload, { success: true }>).data;
+  const { data, hasMore } = payload as Extract<typeof payload, { success: true }>;
+  return { data, ...(hasMore === undefined ? {} : { hasMore }) };
 }
 
 function sleep(ms: number): Promise<void> {
