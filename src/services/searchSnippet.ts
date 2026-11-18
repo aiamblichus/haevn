@@ -23,17 +23,40 @@ const OPEN = "{{HIGHLIGHT}}";
 const CLOSE = "{{/HIGHLIGHT}}";
 const ELLIPSIS = "...";
 
+const NON_WORD_START = /^[^\p{L}\p{M}\p{N}_]+/u;
+const NON_WORD_END = /[^\p{L}\p{M}\p{N}_]+$/u;
+const PUNCTUATION_START = /^[\p{P}\p{Z}\p{Cc}]+/u;
+const PUNCTUATION_END = /[\p{P}\p{Z}\p{Cc}]+$/u;
+
 /**
- * `range` without the leading and trailing characters that are not letters, digits or "_".
+ * Where the word is inside a token: `[start, end)` in UTF-16 units, without the characters that
+ * are not letters, combining marks, digits or "_" (a mark ends many words in Hindi or Thai, and a
+ * decomposed "é"). A token with no such character ("😀,", "++") keeps its symbols and loses only
+ * punctuation and spaces; one that is all punctuation ("!!!") is left whole. The index trims its
+ * terms with this (`searchPipeline.ts`) and the snippet marks with it, so a mark lands on what
+ * the search matched.
+ */
+export function wordBounds(token: string): { start: number; end: number } {
+  const strip = (lead: RegExp, trail: RegExp) => {
+    const start = token.match(lead)?.[0].length ?? 0;
+    const end = token.length - (token.match(trail)?.[0].length ?? 0);
+    return start < end ? { start, end } : null;
+  };
+  return (
+    strip(NON_WORD_START, NON_WORD_END) ??
+    strip(PUNCTUATION_START, PUNCTUATION_END) ?? { start: 0, end: token.length }
+  );
+}
+
+/**
+ * `range` without the characters at either end that are not part of the word (`wordBounds`).
  * Lunr reports a match as the whole token it split off the text, so "pineapple," comes back with
- * its comma; the mark belongs on the word. A range that is all punctuation is left as it is.
+ * its comma; the mark belongs on the word.
  */
 export function trimToWord(text: string, range: TextRange): TextRange {
   const slice = text.slice(range.start, range.start + range.length);
-  const lead = slice.match(/^[^\p{L}\p{N}_]+/u)?.[0].length ?? 0;
-  const trail = slice.match(/[^\p{L}\p{N}_]+$/u)?.[0].length ?? 0;
-  if (lead + trail >= slice.length) return range;
-  return { start: range.start + lead, length: slice.length - lead - trail };
+  const { start, end } = wordBounds(slice);
+  return { start: range.start + start, length: end - start };
 }
 
 /** Spans that lie inside the text, sorted, with overlapping and touching ones merged. */

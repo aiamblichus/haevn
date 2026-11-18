@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import lunr from "lunr";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
@@ -951,5 +952,248 @@ describe("search worker: snippets hold and mark the match (HVN-20)", () => {
 
     expect(result.messageSnippet).toContain(MARK);
     expect(result.messageSnippet.length).toBeLessThan(100);
+  });
+});
+
+describe("search worker: punctuation and scripts in the index (HVN-65)", () => {
+  const MARK = (word: string) => `{{HIGHLIGHT}}${word}{{/HIGHLIGHT}}`;
+  const marksOf = (snippet: string, word: string) => snippet.split(MARK(word)).length - 1;
+
+  async function indexChats(...pairs: [string, string][]): Promise<void> {
+    await seedChats(pairs.map(([id, text]) => buildChat(id, text)));
+    await send({ type: "rebuild" });
+  }
+
+  async function hydrated(query: string): Promise<SearchResult[]> {
+    const chunks = await search(query, true);
+    return chunks.flatMap((c) => c.results as SearchResult[]);
+  }
+
+  async function ids(query: string): Promise<string[]> {
+    return [...new Set(hitIds(await search(query, false)))].sort();
+  }
+
+  it("finds and marks every occurrence, whatever punctuation is stuck to it", async () => {
+    const text =
+      "one wombatz two wombatz, three wombatz. four wombatz; five (wombatz) six wombatz!";
+    const occurrences = text.match(/wombatz/g)?.length;
+    await indexChats(["c1", text]);
+
+    for (const query of ["wombatz", "wombatz*"]) {
+      const results = await hydrated(query);
+
+      expect(results.length, query).toBeGreaterThan(0);
+      for (const result of results) {
+        expect(marksOf(result.messageSnippet, "wombatz"), query).toBe(occurrences);
+      }
+    }
+  });
+
+  it("finds a chat whose only occurrence has punctuation after it, by the exact word", async () => {
+    await indexChats(
+      ["comma", "I saw a wombat, then left"],
+      ["plain", "a wombat sat down"],
+      ["longer", "wombatic things happen"],
+    );
+
+    // The prefix fallback runs only when the exact search finds nothing, and `plain` is found
+    // exactly, so `comma` has to be found exactly too; `longer` is a different word.
+    expect(await ids("wombat")).toEqual(["comma", "plain"]);
+    expect([...new Set((await hydrated("wombat")).map((r) => r.chatId))].sort()).toEqual([
+      "comma",
+      "plain",
+    ]);
+  });
+
+  it("finds a word too short for the prefix fallback", async () => {
+    await indexChats(["short", "the ox, the cow"]);
+
+    expect(await ids("ox")).toEqual(["short"]);
+  });
+
+  it("finds the word when the search is typed with punctuation too", async () => {
+    await indexChats(["comma", "I saw a wombat, then left"], ["plain", "a wombat sat down"]);
+
+    expect(await ids("wombat,")).toEqual(["comma", "plain"]);
+  });
+
+  it("finds a quoted phrase that has punctuation after it", async () => {
+    await indexChats(["p", "say hello world, please"], ["q", "hello there world"]);
+
+    expect(await ids('"hello world"')).toEqual(["p"]);
+    const [result] = await hydrated('"hello world"');
+    expect(result.chatId).toBe("p");
+    expect(marksOf(result.messageSnippet, "hello")).toBe(1);
+    expect(marksOf(result.messageSnippet, "world")).toBe(1);
+  });
+
+  describe("in other scripts", () => {
+    // Each script has a chat that has the word bare and one that has it with punctuation stuck to
+    // it, so that finding both takes an exact match on the trimmed word, not a prefix fallback.
+    const scripts: Array<[string, string, string, string]> = [
+      ["Cyrillic", "привет", "привет мир", "сказал привет, мир!"],
+      ["Greek", "καλημέρα", "καλημέρα κόσμε", "είπε καλημέρα, κόσμε!"],
+      ["CJK", "你好世界", "你好世界 再见", "他说 你好世界。 再见"],
+    ];
+
+    for (const [script, word, bare, punctuated] of scripts) {
+      it(`finds and marks ${script} with or without punctuation after it`, async () => {
+        await indexChats(["bare", bare], ["punct", punctuated]);
+
+        expect(await ids(word)).toEqual(["bare", "punct"]);
+        const results = await hydrated(word);
+        expect(new Set(results.map((r) => r.chatId))).toEqual(new Set(["bare", "punct"]));
+        for (const result of results) {
+          expect(marksOf(result.messageSnippet, word), result.messageSnippet).toBeGreaterThan(0);
+        }
+      });
+    }
+
+    it("does not let one script's words stand in for another's", async () => {
+      await indexChats(
+        ["ru", "привет, мир!"],
+        ["el", "καλημέρα, κόσμε!"],
+        ["zh", "你好世界。"],
+        ["en", "hello, world!"],
+      );
+
+      expect(await ids("привет")).toEqual(["ru"]);
+      expect(await ids("καλημέρα")).toEqual(["el"]);
+      expect(await ids("你好世界")).toEqual(["zh"]);
+      expect(await ids("hello")).toEqual(["en"]);
+    });
+
+    it("finds an emoji that has a comma after it", async () => {
+      await indexChats(["e", "great 😀, thanks"], ["f", "great 😀 thanks"]);
+
+      expect(await ids("😀")).toEqual(["e", "f"]);
+    });
+  });
+});
+
+describe("search worker: the index format version (HVN-65)", () => {
+  /** What the index of the last release held: terms with their punctuation, no pipeline. */
+  async function storeOldIndex(chats: Chat[]): Promise<void> {
+    const builder = new lunr.Builder();
+    builder.ref("id");
+    builder.field("title", { boost: 10 });
+    builder.field("content");
+    builder.metadataWhitelist = ["position"];
+    for (const chat of chats) {
+      const message = chat.messages[`${chat.id}-m1`];
+      const text = (message.message[0].parts[0] as { content: string }).content;
+      builder.add({ id: chat.id as string, title: chat.title, content: text });
+    }
+    await getDB().lunrIndex.put({
+      id: "segment_0",
+      index: builder.build().toJSON(),
+      meta: { docIds: chats.map((c) => c.id as string), timestamp: Date.now() },
+    });
+  }
+
+  const rebuilds = () => posted.filter((m) => m.type === "indexRebuildComplete").length;
+
+  async function restart(): Promise<void> {
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+  }
+
+  async function seedOldArchive(): Promise<void> {
+    const chats = [buildChat("comma", "I saw a wombat, then left"), buildChat("plain", "a wombat")];
+    await seedChats(chats);
+    await storeOldIndex(chats);
+  }
+
+  async function lastIndexIncomplete(): Promise<unknown> {
+    const chunks = await search("wombat", false);
+    return chunks[chunks.length - 1].indexIncomplete;
+  }
+
+  it("rebuilds an index that has no version once, and not again at the starts after", async () => {
+    await seedOldArchive();
+
+    await restart();
+    expect(rebuilds()).toBe(1);
+    expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+
+    await restart();
+    expect(rebuilds()).toBe(0);
+    await restart();
+    expect(rebuilds()).toBe(0);
+    expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
+  });
+
+  it("tells a search that comes right after the start that the index is rebuilding", async () => {
+    await seedOldArchive();
+    await loadWorker();
+
+    await send({ type: "init" });
+    const [chunk] = await search("wombat", false);
+
+    expect(chunk.results).toEqual([]);
+    expect(chunk.indexRebuilding).toBeDefined();
+    await waitUntilIndexReady("wombat");
+  });
+
+  it("rebuilds an index of a version it does not know, as a downgrade would meet", async () => {
+    await seedOldArchive();
+    await getDB().lunrIndex.put({ id: "format", format: 99 });
+
+    await restart();
+
+    expect(rebuilds()).toBe(1);
+    expect((await getDB().lunrIndex.get("format"))?.format).toBeLessThan(99);
+  });
+
+  it("rebuilds nothing, and records the version, for an archive that has no index yet", async () => {
+    await loadWorker();
+    await send({ type: "init" });
+
+    expect(rebuilds()).toBe(0);
+    expect(await getDB().lunrIndex.get("format")).toMatchObject({ format: expect.any(Number) });
+
+    // The chats that arrive later are indexed into the current format, so the next start has
+    // nothing to rebuild.
+    await seedChats([buildChat("late", "a wombat")]);
+    await send({ type: "add", doc: { id: "late", title: "Chat late", content: "a wombat" } });
+    await send({ type: "endBulk" });
+    await restart();
+    expect(rebuilds()).toBe(0);
+  });
+
+  it("records the version when a rebuild ends well, and not when it fails", async () => {
+    await seedChats([buildChat("c1", "a wombat")]);
+    await send({ type: "rebuild" });
+    expect(await getDB().lunrIndex.get("format")).toBeDefined();
+
+    const bad = buildChat("zzz-bad", "a wombat");
+    (bad.messages["zzz-bad-m1"] as { message: unknown }).message = 42;
+    await seedChats([bad]);
+    await send({ type: "rebuild" });
+
+    expect(lastReply().success).toBe(false);
+    expect(await getDB().lunrIndex.get("format")).toBeUndefined();
+  });
+
+  it("does not rebuild in a loop when the rebuild of an old index fails", async () => {
+    await seedOldArchive();
+    await loadWorker();
+    const lunrIndex = workerDbs[workerDbs.length - 1].lunrIndex;
+    vi.spyOn(lunrIndex, "put").mockRejectedValue(new Error("QuotaExceededError"));
+    const passes = vi.spyOn(lunrIndex, "clear");
+
+    await send({ type: "init" }); // the first pass: the index is old
+    await waitUntilIndexReady("wombat");
+    expect(passes).toHaveBeenCalledTimes(1);
+    expect(await lastIndexIncomplete()).toBeDefined();
+
+    await send({ type: "init" }); // the one retry that HVN-50 allows
+    await waitUntilIndexReady("wombat");
+    expect(passes).toHaveBeenCalledTimes(2);
+
+    await send({ type: "init" });
+    await send({ type: "init" });
+    expect(passes).toHaveBeenCalledTimes(2);
   });
 });

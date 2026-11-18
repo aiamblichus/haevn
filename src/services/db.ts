@@ -131,6 +131,8 @@ export class HaevnDatabase extends Dexie {
       dirty?: boolean;
       // Written with every segment: the chat ids it holds (so a load need not scan the index)
       meta?: { docIds: string[]; timestamp: number };
+      // Only on the record with id "format": the version the segments were built with
+      format?: number;
     },
     string
   >;

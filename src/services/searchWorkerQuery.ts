@@ -1,4 +1,5 @@
 import lunr from "lunr";
+import { createQueryTermPipeline } from "./searchPipeline";
 import { normalizeSearchToken, splitQuotedSearchQuery } from "./searchQuery";
 
 export type PhraseConstraint = {
@@ -12,12 +13,6 @@ export type LunrQueryPlan = {
   hasPhrases: boolean;
   phraseConstraints: PhraseConstraint[];
 };
-
-function createStopWordPipeline(): lunr.Pipeline {
-  const pipeline = new lunr.Pipeline();
-  pipeline.add(lunr.trimmer, lunr.stopWordFilter);
-  return pipeline;
-}
 
 function keepIndexedTerm(term: string, stopWordPipeline: lunr.Pipeline): boolean {
   const normalized = normalizeSearchToken(term);
@@ -36,7 +31,7 @@ export function buildLunrQueryPlan(query: string): LunrQueryPlan {
   const { phrases, remainderParts } = splitQuotedSearchQuery(query);
   const phraseConstraints: PhraseConstraint[] = [];
   const parts: string[] = [];
-  const stopWordPipeline = createStopWordPipeline();
+  const stopWordPipeline = createQueryTermPipeline();
 
   for (const phrase of phrases) {
     const terms = phrase.split(/\s+/).map(normalizeSearchToken).filter(Boolean);
