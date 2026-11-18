@@ -9,6 +9,10 @@ if (typeof globalThis !== "undefined") {
   (globalThis as any).window = globalThis;
 }
 
+// The search index keeps its files in OPFS, which Node has not: the tests ask for the memory host
+// (HVN-87). The flag is read from `globalThis`, so a test that reloads the module keeps it.
+(globalThis as any)[Symbol.for("haevn.search.useMemoryHost")] = true;
+
 // Mock chrome API
 const chromeMock = {
   storage: {

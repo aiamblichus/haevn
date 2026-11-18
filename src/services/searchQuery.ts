@@ -16,8 +16,6 @@ export type QueryTerm = {
   prefix: boolean;
   /** Typed `word~2`: words this many edits away count too. */
   editDistance?: number;
-  /** Typed `word^3`: counts this many times as much. */
-  boost?: number;
 };
 
 export type ParsedQuery = {
@@ -38,8 +36,8 @@ export type ParsedQuery = {
 
 /**
  * Where a query cuts a word: at a hyphen, where the index splits (it indexes `local-first` as
- * `local` and `first`), and at a star inside the word, which the index does not hold and Lunr
- * would otherwise take for a wildcard.
+ * `local` and `first`), and at a star inside the word, which the index does not hold (only a
+ * trailing star means something).
  */
 const WORD_SEPARATOR = /[-*]+/;
 
@@ -76,8 +74,7 @@ export function splitQuotedSearchQuery(query: string): {
     const pre = query.slice(lastIndex, match.index).trim();
     if (pre) remainderParts.push(pre);
 
-    // A star is a word break here as it is in a word (see parseWord): Lunr would take it for a
-    // wildcard, and the text check for a character, and the two would disagree.
+    // A star is a word break here as it is in a word (see parseWord): the index holds no star.
     const phrase = normalizeSearchToken((match[1] || "").replace(/\*+/g, " ").replace(/\s+/g, " "));
     if (phrase) phrases.push(phrase);
 
@@ -104,9 +101,11 @@ type ParsedWord = { excluded: boolean; terms: QueryTerm[] };
 
 /**
  * One whitespace-separated word of the query. The operators are the ones the CLI documents: a
- * leading `-` leaves the word out, a trailing `*` makes it a prefix, `~N` allows N edits and `^N`
- * boosts. Nothing else is an operator: a colon, a plus or a bracket is a character like the
- * others, and the edges of the word are trimmed the way the index trims the words of the text.
+ * leading `-` leaves the word out, a trailing `*` makes it a prefix and `~N` allows N edits.
+ * `^N` is accepted and ignored: it boosted one word in Lunr, and the index that ranks the chats
+ * now scores a whole query, not a word of it. Nothing else is an operator: a colon, a plus or a
+ * bracket is a character like the others, and the edges of the word are trimmed the way the
+ * index trims the words of the text.
  */
 function parseWord(raw: string): ParsedWord | null {
   // A quote or a bracket on its own (a phrase still being typed) is not a word to look for.
@@ -120,17 +119,14 @@ function parseWord(raw: string): ParsedWord | null {
   }
 
   let editDistance: number | undefined;
-  let boost: number | undefined;
   for (let i = 0; i < 2; i++) {
     const modifier = MODIFIER.exec(word);
     if (!modifier) break;
     if (modifier[1] === "~") {
       if (!Number.isInteger(Number(modifier[2]))) break;
-      // Lunr's cost grows steeply with the distance (`~8` took 90 s of the worker's only thread
-      // on 200 chats), and by 3 a word matches almost any other.
+      // The cost of the expansion grows steeply with the distance, and by 3 a word matches
+      // almost any other.
       editDistance = Math.min(Number(modifier[2]), MAX_EDIT_DISTANCE);
-    } else {
-      boost = Number(modifier[2]);
     }
     word = word.slice(0, modifier.index);
   }
@@ -139,8 +135,7 @@ function parseWord(raw: string): ParsedWord | null {
   word = word.replace(/\*+$/, "");
 
   // Cut where the index cuts, so that `local-first` is `local` and `first`, in that order. A
-  // star inside the word cuts it too: only a trailing star is a prefix, and Lunr would take any
-  // other for a wildcard that the text check does not know.
+  // star inside the word cuts it too: only a trailing star is a prefix.
   const parts = normalizeSearchToken(word)
     .split(WORD_SEPARATOR)
     .map(trimSearchTerm)
@@ -153,15 +148,20 @@ function parseWord(raw: string): ParsedWord | null {
       text,
       prefix: prefix && i === parts.length - 1,
       ...(editDistance ? { editDistance } : {}),
-      ...(boost ? { boost } : {}),
     })),
   };
 }
 
 /**
+ * Most words and phrases a query may have. The index joins one lookup for each, and SQLite stops
+ * at 500 of them in one statement; a pasted paragraph is not a search anyone means.
+ */
+export const MAX_QUERY_CLAUSES = 100;
+
+/**
  * Parse a search query into the words and phrases it asks for. This is the only parser of query
- * text: the worker builds its Lunr query from the result and never hands the text to Lunr's own
- * (HVN-78), so `local-first` is the words `local` and `first`, `foo:bar` is a word with a colon
+ * text: the worker builds its index query from the result and never hands the typed text to the
+ * index (HVN-78), so `local-first` is the words `local` and `first`, `foo:bar` is a word with a colon
  * in it, and `c++ templates` is `c` and `templates`.
  *
  * A query with nothing to look for (only punctuation, or only words to leave out) comes back
@@ -198,6 +198,8 @@ export function parseSearchQuery(query: string): ParsedQuery {
       excluded.length > 0
         ? "A search needs a word to look for, not only words to leave out."
         : "Type a word to search for.";
+  } else if (required.length + phrases.length + excluded.length > MAX_QUERY_CLAUSES) {
+    parsed.problem = `That is more than ${MAX_QUERY_CLAUSES} words and phrases. Search for fewer of them.`;
   }
   return parsed;
 }

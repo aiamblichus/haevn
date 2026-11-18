@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSnippet,
-  lowerCaseRangeMapper,
   type TextRange,
-  trimToWord,
+  wordBounds,
 } from "../src/services/searchSnippet";
 
 /** Where each occurrence of `word` starts, as ranges. */
@@ -158,93 +157,32 @@ describe("buildSnippet", () => {
   });
 });
 
-describe("trimToWord", () => {
-  const trimmed = (text: string, start: number, length: number) => {
-    const r = trimToWord(text, { start, length });
-    return text.slice(r.start, r.start + r.length);
+describe("wordBounds", () => {
+  const word = (token: string) => {
+    const { start, end } = wordBounds(token);
+    return token.slice(start, end);
   };
 
-  it("takes the punctuation lunr counts into the token off both ends", () => {
-    expect(trimmed("say (pineapple), please", 4, 12)).toBe("pineapple");
-    expect(trimmed("pineapple.", 0, 10)).toBe("pineapple");
+  it("takes the punctuation off both ends", () => {
+    expect(word("(pineapple),")).toBe("pineapple");
+    expect(word("pineapple.")).toBe("pineapple");
   });
 
   it("keeps letters and digits of any script", () => {
-    expect(trimmed("«搜索»", 0, 4)).toBe("搜索");
-    expect(trimmed("v2_beta!", 0, 8)).toBe("v2_beta");
+    expect(word("«搜索»")).toBe("搜索");
+    expect(word("v2_beta!")).toBe("v2_beta");
   });
 
   it("keeps a combining mark that ends the word", () => {
-    expect(trimmed("हिन्दी, ठीक", 0, 7)).toBe("हिन्दी");
-    expect(trimmed("cafe\u0301;", 0, 6)).toBe("cafe\u0301");
+    expect(word("हिन्दी,")).toBe("हिन्दी");
+    expect(word("cafe\u0301;")).toBe("cafe\u0301");
   });
 
   it("keeps a symbol that is the word, and takes the punctuation off it", () => {
-    expect(trimmed("great 😀, thanks", 6, 4)).toBe("😀");
+    expect(word("😀,")).toBe("😀");
   });
 
-  it("marks every spelling of a word in a sentence", () => {
-    const text =
-      "one wombatz two wombatz, three wombatz. four wombatz; five (wombatz) six wombatz!";
-    const tokens = [...text.matchAll(/\S+/g)].filter((m) => m[0].includes("wombatz"));
-    const anchors = tokens.map((m) =>
-      trimToWord(text, { start: m.index ?? 0, length: m[0].length }),
-    );
-
-    const snippet = buildSnippet(text, anchors, { radius: 200 });
-
-    expect(snippet.split("{{HIGHLIGHT}}wombatz{{/HIGHLIGHT}}")).toHaveLength(7);
-  });
-
-  it("leaves a range of nothing but punctuation as it was", () => {
-    expect(trimToWord("a ++ b", { start: 2, length: 2 })).toEqual({ start: 2, length: 2 });
-  });
-});
-
-describe("lowerCaseRangeMapper (HVN-57)", () => {
-  // What lunr reports for a word: its place in the lower-cased text, where "İ" is two units.
-  const lowerRangeOf = (text: string, word: string): TextRange => ({
-    start: text.toLowerCase().indexOf(word),
-    length: word.length,
-  });
-
-  it("needs no mapping for text whose lower case is as long", () => {
-    expect(lowerCaseRangeMapper("Hello WORLD, ÄÖ 字 😀")).toBeNull();
-  });
-
-  it("moves a range back over every İ before it", () => {
-    const text = `${"İ".repeat(80)} pineapple`;
-    const map = lowerCaseRangeMapper(text);
-
-    expect(lowerRangeOf(text, "pineapple").start).toBe(161);
-    expect(map?.(lowerRangeOf(text, "pineapple"))).toEqual({ start: 81, length: 9 });
-  });
-
-  it("takes the whole of an İ that the range starts or ends inside", () => {
-    const map = lowerCaseRangeMapper("aİb");
-
-    // lower case: "a", "i", U+0307, "b"
-    expect(map?.({ start: 1, length: 1 })).toEqual({ start: 1, length: 1 });
-    expect(map?.({ start: 2, length: 1 })).toEqual({ start: 1, length: 1 });
-    expect(map?.({ start: 1, length: 3 })).toEqual({ start: 1, length: 2 });
-    expect(map?.({ start: 3, length: 1 })).toEqual({ start: 2, length: 1 });
-  });
-
-  it("counts a character outside the BMP as the two units it is", () => {
-    const text = "😀 İ 😀 pineapple";
-    const map = lowerCaseRangeMapper(text);
-
-    const mapped = map?.(lowerRangeOf(text, "pineapple")) ?? { start: -1, length: 0 };
-    expect(text.slice(mapped.start, mapped.start + mapped.length)).toBe("pineapple");
-  });
-
-  it("marks the word in a snippet of text with an İ before it", () => {
-    const text = `İstanbul İzmir ${filler(40)} pineapple ${filler(40)}`;
-    const map = lowerCaseRangeMapper(text);
-    const range = map?.(lowerRangeOf(text, "pineapple"));
-
-    expect(buildSnippet(text, range ? [range] : [], { radius: 10 })).toContain(
-      "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}",
-    );
+  it("leaves a token of nothing but punctuation whole", () => {
+    expect(word("++")).toBe("++");
   });
 });

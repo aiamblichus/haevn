@@ -8,7 +8,7 @@
  * - Text snippet generation with highlighting
  *
  * This module handles the search operations while SearchIndexManager
- * handles the underlying Lunr.js index coordination.
+ * handles the underlying index coordination.
  */
 
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
@@ -26,7 +26,6 @@ import { sendWorkerRequest } from "../utils/workerApi";
 import { getDB } from "./db";
 import { inCategory, inDateRange, needsCategory } from "./searchFilters";
 import { parseSearchQuery, SearchQueryError } from "./searchQuery";
-import { buildSearchResultsForChat } from "./searchTextMatch";
 
 // --- Worker Communication ---
 
@@ -141,7 +140,7 @@ function buildIdSearchResult(chat: Chat): SearchResult {
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace SearchService {
   /**
-   * Perform a Lunr search and return matching chat IDs.
+   * Search the index and return matching chat IDs.
    */
   export async function searchChats(query: string): Promise<string[]> {
     if (!query || !query.trim()) return [];
@@ -175,8 +174,9 @@ export namespace SearchService {
 
   /**
    * Get all matching messages for a specific chat and query.
-   * Used for lazy loading when user expands "Show more" in search results.
-   * TODO: Migrate this to worker as well in future pass
+   * Used for lazy loading when user expands "Show more" in search results. The index answers, as
+   * it did for the results the reader is expanding, so the messages and the marks are the same
+   * kind: what the index matched, whatever way it was typed (accents, case, a near spelling).
    */
   export async function getAllMatchesForChat(
     query: string,
@@ -198,8 +198,31 @@ export namespace SearchService {
         return [buildIdSearchResult(chat)];
       }
 
-      const parsed = parseSearchQuery(q);
-      return buildSearchResultsForChat(chat, parsed);
+      if (parseSearchQuery(q).problem) return [];
+
+      await _ensureWorkerReady();
+      const results: SearchResult[] = [];
+      await new Promise<void>((resolve, reject) => {
+        sendWorkerRequest(
+          "search",
+          {
+            type: "search",
+            query: q,
+            requestId: `matches_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            hydrate: true,
+            chatId,
+            maxChats: 1,
+          },
+          {
+            onProgress: (chunk) => {
+              results.push(...(chunk.results as SearchResult[]));
+              if (chunk.done) resolve();
+            },
+            timeout: 60000,
+          },
+        ).catch(reject);
+      });
+      return results;
     } catch (error) {
       log.error(`Failed to get all matches for chat ${chatId}`, error);
       return [];

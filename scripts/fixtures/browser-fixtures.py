@@ -35,7 +35,8 @@ gradient descent loss model training data sample batch epoch layer neuron weight
 """.split()
 
 FORBIDDEN = {"pineapple", "zanzibarite", "quokka", "marmalade", "xylophonist", "branchalpha",
-             "branchbravo", "branchcharlie", "forkdelta", "forkecho", "dodecahedron", "kumquatine"}
+             "branchbravo", "branchcharlie", "forkdelta", "forkecho", "dodecahedron", "kumquatine",
+             "cafe", "istanbul", "tbilisi", "yozhik"}
 assert not FORBIDDEN & set(VOCAB)
 
 
@@ -192,6 +193,20 @@ for i in range(N_FILLER):
 # HVN-59: a link whose text and URL both contain "https"
 b = ChatBuilder("fx-links", "Fixture links https", ts + 8000)
 last = b.linear([("user", "Show me the https link. " + words(10)), ("assistant", "Here: [https://example.test/docs](https://example.test/docs) and the plain https://example.test/plain address.")])
+chats.append(b.chat(last))
+
+# HVN-87: the index folds the accents of Latin letters and nothing else
+b = ChatBuilder("fx-cafe-accent", "Fixture accent cafe", ts + 3000)
+last = b.linear([("user", "We met at the Caf\u00e9 near the station. " + words(20)), ("assistant", words(20))])
+chats.append(b.chat(last))
+b = ChatBuilder("fx-cafe-plain", "Fixture plain cafe", ts + 3100)
+last = b.linear([("user", "We met at the cafe near the station. " + words(20)), ("assistant", words(20))])
+chats.append(b.chat(last))
+b = ChatBuilder("fx-istanbul", "Fixture istanbul", ts + 3200)
+last = b.linear([("user", "The ferry to \u0130stanbul leaves at noon. " + words(20)), ("assistant", words(20))])
+chats.append(b.chat(last))
+b = ChatBuilder("fx-yozhik", "Fixture yozhik", ts + 3300)
+last = b.linear([("user", "\u0401\u0436 \u0438 \u0435\u0436\u0438 \u044e\u0436\u043d\u044b\u0439 yozhik. \u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8 " + words(20)), ("assistant", words(20))])
 chats.append(b.chat(last))
 
 manifest = {

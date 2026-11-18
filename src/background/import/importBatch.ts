@@ -19,10 +19,9 @@ import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "
 
 /**
  * Up to this many chats are indexed one by one as they are saved, so search keeps answering.
- * A bigger batch switches the index to bulk mode and rebuilds it once at the end, which blanks
- * search (`INDEX_REBUILDING`) for as long as the rebuild takes. One incremental add rebuilds the
- * active 200-chat segment, about 0.1 to 0.2 s each (measured with lunr, 2k to 10k words a chat),
- * so 20 chats cost a few seconds against a rebuild of the whole archive.
+ * A bigger batch switches the index to bulk mode: the chats are indexed once, in one pass at the
+ * end, and search keeps answering from the index as it was. One incremental add is one small
+ * transaction, so the limit now only bounds how much work a save does before it returns.
  */
 export const INCREMENTAL_INDEX_MAX_CHATS = 20;
 

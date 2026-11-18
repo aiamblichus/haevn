@@ -68,7 +68,7 @@ haevn search '"you may not recognize me"'
 
 When you run an unquoted multi-word query, CLI text output shows a tip, and JSON output includes a top-level `hint` field.
 
-HAEVN reads these operators itself (it does not pass the query to Lunr.js as typed). Nothing else is syntax: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
+HAEVN reads these operators itself (it does not pass the query to the search index as typed). Nothing else is syntax: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
 
 | Operator | Example | Description |
 |----------|---------|-------------|
@@ -77,7 +77,7 @@ HAEVN reads these operators itself (it does not pass the query to Lunr.js as typ
 | `-` | `-exclude` | Word must NOT be present. A phrase cannot be left out: `-"a phrase"` exits 1 with the reason |
 | `*` | `react*` | Prefix at the end of a word: matches `react`, `reactive`, etc. A star inside a word splits it, like a hyphen |
 | `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 (a larger number counts as 2) |
-| `^` | `api^10` | Boost term relevance |
+| `^` | `api^10` | Accepted and ignored: a term has no weight of its own. The word is searched as if `^10` were not there |
 
 **Examples:**
 
@@ -96,9 +96,6 @@ haevn search "kubernates~2"
 
 # Prefix/wildcard
 haevn search "async* await*"
-
-# Boost important terms
-haevn search "api^5 design documentation"
 ```
 
 If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics) on the words that say something: stop words such as `how` or `should` are left out of the retry.
