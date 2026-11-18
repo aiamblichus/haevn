@@ -40,8 +40,9 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
     case "postProcess": {
       // Worker requests post-processing (indexing, cache updates, broadcasting)
       try {
-        // Update search index
-        await SyncService.addOrUpdateChatInIndex(message.chat);
+        // Update search index. The bulk sync worker saved the chat before it posted this, so the
+        // search worker reads the saved row, not the copy in the message (HVN-76).
+        await SyncService.addOrUpdateChatInIndex(message.chatId);
 
         // Update sync status cache
         if (message.chat.source && message.chat.sourceId) {

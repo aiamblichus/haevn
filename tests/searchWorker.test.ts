@@ -12,6 +12,21 @@ vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// SearchIndexManager reaches the worker through the offscreen document; these tests give it the
+// worker itself, so an add is the message the manager really sends (HVN-76).
+const toWorker = vi.hoisted(() => ({
+  send: undefined as undefined | ((message: unknown) => Promise<void>),
+}));
+vi.mock("../src/utils/workerApi", () => ({
+  sendWorkerRequest: async (_worker: string, message: unknown) => {
+    await toWorker.send?.(message);
+    return undefined;
+  },
+}));
+vi.mock("../src/background/utils/offscreenUtils", () => ({
+  ensureOffscreenDocument: async () => undefined,
+}));
+
 // The worker opens its own database; keep each one so a test can make its writes fail.
 const workerDbs = vi.hoisted(
   () =>
@@ -48,6 +63,7 @@ async function loadWorker(): Promise<void> {
   workerSelf = { postMessage: (message) => posted.push(message) };
   vi.stubGlobal("self", workerSelf);
   await import("../src/services/search.worker");
+  toWorker.send = (message) => send(message as Record<string, unknown>);
 }
 
 function send(message: Record<string, unknown>): Promise<void> {
@@ -415,13 +431,18 @@ describe("search worker: init and the rebuild it starts (HVN-50)", () => {
 });
 
 describe("search worker: timers and a second request around a rebuild (HVN-50)", () => {
-  const doc = { id: "stale", title: "Stale", content: "pineapple" };
+  const staleId = "stale";
 
   it("drops the debounce timer of an earlier add when a rebuild starts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      await seedChats([buildChat("c1", "pineapple"), buildChat("c2", "pineapple")]);
-      await send({ type: "add", doc });
+      await seedChats([
+        buildChat("c1", "pineapple"),
+        buildChat("c2", "pineapple"),
+        buildChat(staleId, "pineapple"),
+      ]);
+      await send({ type: "add", chatId: staleId });
+      await getDB().chats.delete(staleId); // gone by the time the rebuild reads
       expect(vi.getTimerCount()).toBe(1);
 
       const rebuild = send({ type: "rebuild" });
@@ -446,7 +467,7 @@ describe("search worker: timers and a second request around a rebuild (HVN-50)",
       await seedChats([buildChat("c1", "pineapple")]);
 
       const rebuild = send({ type: "rebuild" });
-      await send({ type: "add", doc });
+      await send({ type: "add", chatId: staleId });
       expect(vi.getTimerCount()).toBe(0);
 
       await settle(rebuild);
@@ -458,7 +479,8 @@ describe("search worker: timers and a second request around a rebuild (HVN-50)",
   it("still debounces an add when no rebuild is running", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      await send({ type: "add", doc });
+      await seedChats([buildChat(staleId, "pineapple")]);
+      await send({ type: "add", chatId: staleId });
       expect(vi.getTimerCount()).toBe(1);
     } finally {
       vi.useRealTimers();
@@ -694,7 +716,7 @@ describe("search worker: an add or a remove during an index rebuild (HVN-54)", (
   /** What a save does: write the row, then send the add. */
   async function rewriteAndAdd(id: string, text: string): Promise<void> {
     await seedChats([buildChat(id, text)]);
-    await send({ type: "add", doc: { id, title: `Chat ${id}`, content: text } });
+    await send({ type: "add", chatId: id });
   }
 
   it("indexes a chat written after the rebuild counted the chats", async () => {
@@ -1243,7 +1265,7 @@ describe("search worker: the index format version (HVN-65)", () => {
     // The chats that arrive later are indexed into the current format, so the next start has
     // nothing to rebuild.
     await seedChats([buildChat("late", "a wombat")]);
-    await send({ type: "add", doc: { id: "late", title: "Chat late", content: "a wombat" } });
+    await send({ type: "add", chatId: "late" });
     await send({ type: "endBulk" });
     await restart();
     expect(rebuilds()).toBe(0);
@@ -1282,5 +1304,117 @@ describe("search worker: the index format version (HVN-65)", () => {
     await send({ type: "init" });
     await send({ type: "init" });
     expect(passes).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("search worker: one indexing path (HVN-76)", () => {
+  const MARK = "{{HIGHLIGHT}}pineapple{{/HIGHLIGHT}}";
+
+  /** A chat of messages, each with one prompt; the reply says nothing that is searched for. */
+  function buildThread(id: string, prompts: string[]): Chat {
+    const chat = buildChat(id, "unused");
+    const messages: Record<string, ChatMessage> = {};
+    prompts.forEach((prompt, i) => {
+      const msgId = `${id}-m${i + 1}`;
+      messages[msgId] = {
+        ...chat.messages[`${id}-m1`],
+        id: msgId,
+        message: [
+          {
+            kind: "request",
+            parts: [{ part_kind: "user-prompt", content: prompt, timestamp: "t" }],
+          },
+          { kind: "response", parts: [{ part_kind: "text", content: "noted" }], timestamp: "t" },
+        ] as ChatMessage["message"],
+      };
+    });
+    chat.messages = messages;
+    chat.currentId = `${id}-m${prompts.length}`;
+    return chat;
+  }
+
+  /** What a save does: write the row, then tell the index through the manager. */
+  async function saveAndIndex(chat: Chat): Promise<void> {
+    await seedChats([chat]);
+    const { SearchIndexManager } = await import("../src/services/searchIndexManager");
+    await SearchIndexManager.addOrUpdateChatInIndex(chat.id as string);
+  }
+
+  async function hydrated(query: string): Promise<SearchResult[]> {
+    return (await search(query, true)).flatMap((c) => c.results as SearchResult[]);
+  }
+
+  // Blank lines in a message are collapsed in the text a snippet is cut from; the add used to
+  // index the text as it was, so every position after a newline was off by that much.
+  const SPACED = ["first line\n\n\nsecond line\n\n\nthird line\n\n\n".repeat(4), "the pineapple"];
+
+  it("finds a chat saved on its own in the message that holds the word, marked on the word", async () => {
+    await saveAndIndex(buildThread("one", SPACED));
+
+    const results = await hydrated("pineapple");
+
+    expect(results.map((r) => r.messageId)).toEqual(["one-m2"]);
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
+  it("finds the chat in the same message after a rebuild as after a save", async () => {
+    await saveAndIndex(buildThread("one", SPACED));
+    const saved = (await hydrated("pineapple")).map((r) => [r.messageId, r.messageSnippet]);
+
+    await send({ type: "rebuild" });
+    const rebuilt = (await hydrated("pineapple")).map((r) => [r.messageId, r.messageSnippet]);
+
+    expect(saved).toHaveLength(1);
+    expect(saved).toEqual(rebuilt);
+  });
+
+  it("finds the word of a chat that has a system prompt and a title before its messages", async () => {
+    const chat = buildThread("sys", ["a\n\nb\n\nc", "the pineapple"]);
+    chat.system = "You are\n\nhelpful.\n\nVery.";
+    await saveAndIndex(chat);
+
+    const results = await hydrated("pineapple");
+
+    expect(results.map((r) => r.messageId)).toEqual(["sys-m2"]);
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
+  it("indexes the text the database holds when the add arrives, not what the sender had", async () => {
+    await seedChats([buildThread("one", ["a first draft", "pineapple"])]);
+    await seedChats([buildThread("one", ["the final text", "a wombat"])]);
+    const { SearchIndexManager } = await import("../src/services/searchIndexManager");
+    await SearchIndexManager.addOrUpdateChatInIndex("one");
+
+    expect(await hydrated("wombat")).toHaveLength(1);
+    expect(await hydrated("pineapple")).toHaveLength(0);
+  });
+
+  it("indexes nothing for a chat the database does not have", async () => {
+    await send({ type: "add", chatId: "ghost" });
+
+    expect(hitIds(await search("ghost", false))).toEqual([]);
+  });
+
+  describe("text past 100,000 characters", () => {
+    const FILLER = "filler words here ".repeat(7000); // 126,000 characters
+
+    it("is found after a rebuild, in its own message", async () => {
+      await seedChats([buildThread("long", [FILLER, "the pineapple"])]);
+      await send({ type: "rebuild" });
+
+      const results = await hydrated("pineapple");
+
+      expect(results.map((r) => r.messageId)).toEqual(["long-m2"]);
+      expect(results[0].messageSnippet).toContain(MARK);
+    });
+
+    it("is found after a save, in the message that holds it", async () => {
+      await saveAndIndex(buildThread("long", [`${FILLER} pineapple`]));
+
+      const results = await hydrated("pineapple");
+
+      expect(results.map((r) => r.messageId)).toEqual(["long-m1"]);
+      expect(results[0].messageSnippet).toContain(MARK);
+    });
   });
 });

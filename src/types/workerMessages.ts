@@ -19,7 +19,8 @@ export interface SearchIndexIncompleteStatus {
 
 export type SearchWorkerMessage =
   | { type: "init" }
-  | { type: "add"; doc: { id: string; title: string; content: string } }
+  /** The worker reads the chat from the database and makes the indexed text itself (HVN-76). */
+  | { type: "add"; chatId: string }
   | { type: "remove"; chatId: string }
   | { type: "removeMany"; chatIds: string[] }
   | {

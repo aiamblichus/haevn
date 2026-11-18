@@ -34,7 +34,6 @@ import {
 // --- Configuration ---
 const SEGMENT_SIZE = 200; // Chats per segment
 const REBUILD_DEBOUNCE_MS = 2000;
-const MAX_CONTENT_LENGTH = 100000; // Increased limit since we segment
 const SNIPPET_RADIUS = 60; // Context characters around match
 // The record in `lunrIndex` that says which format the segments are in (HVN-65). A rebuild
 // removes it with the segments and writes it back as its last step, so only a pass that ended
@@ -175,6 +174,12 @@ interface RebuildOutcome {
 
 // --- Helper: Text Extraction & Mapping ---
 
+/**
+ * The one place that decides what text of a chat is searchable: the index is built from `doc`,
+ * and a snippet is cut from the same `doc` by the positions the index kept, so every site that
+ * indexes a chat, and the one that shows a hit, goes through here (HVN-76). Nothing is cut off:
+ * the text of a long chat is searchable to its end.
+ */
 function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | null {
   if (!chat.id) return null;
 
@@ -187,15 +192,10 @@ function extractTextAndMap(chat: Chat): { doc: SearchDoc; map: SourceMap } | nul
     const clean = text.replace(/\s+/g, " ");
     if (!clean) return;
 
-    if (currentOffset >= MAX_CONTENT_LENGTH) return;
+    combined.push(clean);
+    map.push([currentOffset, clean.length, msgId, role]);
 
-    const remaining = MAX_CONTENT_LENGTH - currentOffset;
-    const finalTxt = clean.length > remaining ? clean.slice(0, remaining) : clean;
-
-    combined.push(finalTxt);
-    map.push([currentOffset, finalTxt.length, msgId, role]);
-
-    currentOffset += finalTxt.length + 1;
+    currentOffset += clean.length + 1;
   };
 
   if (chat.title) append(chat.title, "title", "user");
@@ -469,16 +469,27 @@ async function hydrateSegmentBuilder(segment: Segment): Promise<void> {
 }
 
 /**
- * Index one chat document. During a rebuild the pass owns the segments (it replaces them and
- * keeps its own handle on the one it fills), so an add only records the chat; the pass indexes
- * it before it ends, reading the row as it is then (HVN-54).
+ * Index one chat, read from the database as it is now. The caller has written the row before it
+ * asks (a save, a bulk sync's post-processing), and the worker makes the text itself, so a chat
+ * added on its own is indexed exactly as a rebuild would index it (HVN-76). During a rebuild the
+ * pass owns the segments (it replaces them and keeps its own handle on the one it fills), so an
+ * add only records the chat; the pass indexes it before it ends, reading the row as it is then
+ * (HVN-54).
  */
-function addToIndex(doc: SearchDoc): void {
+async function addToIndex(chatId: string): Promise<void> {
   if (rebuildRun) {
-    addedDuringRebuild.add(doc.id);
+    addedDuringRebuild.add(chatId);
     return;
   }
-  indexDocument(doc);
+  const chat = await loadChatWithMessages(chatId);
+  const data = chat && extractTextAndMap(chat);
+  // A rebuild that began while the chat was read has taken the segments; it reads this chat
+  // from the database itself.
+  if (rebuildRun) {
+    addedDuringRebuild.add(chatId);
+    return;
+  }
+  if (data) indexDocument(data.doc);
 }
 
 function indexDocument(doc: SearchDoc): void {
@@ -1119,7 +1130,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "add") {
-      if (msg.doc) addToIndex(msg.doc);
+      await addToIndex(msg.chatId);
       self.postMessage({ type: "addComplete", success: true });
       return;
     }

@@ -166,7 +166,7 @@ export namespace ChatRepository {
       // Update search index (side effect) - skip if requested (e.g., during bulk imports)
       if (!options?.skipIndexing) {
         try {
-          await SearchIndexManager.addOrUpdateChatInIndex(haevnChat);
+          await SearchIndexManager.addOrUpdateChatInIndex(result.chatId);
         } catch (e) {
           log.warn("Failed to update Lunr index for chat save", e);
         }
