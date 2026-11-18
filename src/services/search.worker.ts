@@ -757,7 +757,8 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "startBulk") {
-      bulkSince = Date.now() - CATCH_UP_MARGIN_MS;
+      // A resumed operation keeps the window it began with (bulk sync calls this again on resume).
+      bulkSince ??= Date.now() - CATCH_UP_MARGIN_MS;
       self.postMessage({ type: "bulkComplete", success: true });
       return;
     }

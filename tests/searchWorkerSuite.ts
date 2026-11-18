@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { getDB } from "../src/services/db";
 import { parseSearchQuery } from "../src/services/searchQuery";
@@ -1942,5 +1942,95 @@ describe("search worker: an index file that cannot be opened (HVN-87)", () => {
     expect(new Set(hitIds(chunks))).toEqual(new Set(["a", "b"]));
     expect(lastChunk(chunks).indexIncomplete).toBeUndefined();
     expect(opens.count).toBe(2);
+  });
+});
+
+describe("search worker: the chats a bulk operation saves (HVN-87)", () => {
+  /** A chat as a bulk save leaves it: in the database, saved at `savedAt`, not in the index. */
+  function saved(id: string, text: string, savedAt: number): Chat {
+    return { ...buildChat(id, text), lastSyncedTimestamp: savedAt };
+  }
+
+  async function startWithAnIndex(): Promise<void> {
+    await seedChats([buildChat("old", "a wombat")]);
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+  }
+
+  /** The catch-up runs in the background after `endBulk`: wait until `query` finds `ids`. */
+  async function foundAfterCatchUp(query: string, ids: string[]): Promise<string[]> {
+    let found: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      found = [...new Set(hitIds(await search(query, false)))].sort();
+      if (found.length >= ids.length) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return found;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("finds the chats that were saved between startBulk and endBulk", async () => {
+    await startWithAnIndex();
+
+    await send({ type: "startBulk" });
+    await seedChats([saved("a", "a quokka", Date.now()), saved("b", "a quokka", Date.now())]);
+    await send({ type: "endBulk" });
+
+    expect(await foundAfterCatchUp("quokka", ["a", "b"])).toEqual(["a", "b"]);
+  });
+
+  it("takes a chat saved just before startBulk, inside the margin, and not one saved long before", async () => {
+    await startWithAnIndex();
+    const now = Date.now();
+
+    await send({ type: "startBulk" });
+    await seedChats([
+      saved("inside", "a quokka", now - 500),
+      saved("outside", "a quokka", now - 5000),
+    ]);
+    await send({ type: "endBulk" });
+
+    expect(await foundAfterCatchUp("quokka", ["inside"])).toEqual(["inside"]);
+    // Given time to be wrongly caught too.
+    await new Promise((r) => setTimeout(r, 50));
+    expect([...new Set(hitIds(await search("quokka", false)))]).toEqual(["inside"]);
+  });
+
+  it("keeps the window of a bulk operation that is resumed, as bulk sync does after a restart", async () => {
+    await startWithAnIndex();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
+
+    await send({ type: "startBulk" });
+    await seedChats([saved("early", "a quokka", Date.now())]);
+    vi.setSystemTime(new Date("2026-11-18T10:00:30Z")); // the operation is paused, then resumed
+    await send({ type: "startBulk" });
+    await seedChats([saved("late", "a quokka", Date.now())]);
+    await send({ type: "endBulk" });
+
+    expect(await foundAfterCatchUp("quokka", ["early", "late"])).toEqual(["early", "late"]);
+  });
+
+  it("starts a new window for the next bulk operation", async () => {
+    await startWithAnIndex();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
+    await send({ type: "startBulk" });
+    await send({ type: "endBulk" });
+
+    vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
+    await send({ type: "startBulk" });
+    await seedChats([
+      saved("stale", "a quokka", new Date("2026-11-18T10:30:00Z").getTime()),
+      saved("fresh", "a quokka", Date.now()),
+    ]);
+    await send({ type: "endBulk" });
+
+    expect(await foundAfterCatchUp("quokka", ["fresh"])).toEqual(["fresh"]);
+    await new Promise((r) => setTimeout(r, 50));
+    expect([...new Set(hitIds(await search("quokka", false)))]).toEqual(["fresh"]);
   });
 });
