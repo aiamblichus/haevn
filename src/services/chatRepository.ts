@@ -604,12 +604,11 @@ export namespace ChatRepository {
       });
 
       // Index the chats again through the normal path. The search reads the deleted flag, so
-      // the flag alone brings a chat back; the index call covers one that is missing from it.
+      // the flag alone brings a chat back; the index call covers one that is missing from it (a
+      // rebuild during the grace period skips deleted chats). The search worker reads the row.
       for (const id of restoredIds) {
-        const chat = await getChatWithMessages(id);
-        if (!chat) continue;
         try {
-          await SearchIndexManager.addOrUpdateChatInIndex(chat);
+          await SearchIndexManager.addOrUpdateChatInIndex(id);
         } catch (e) {
           log.warn(`Failed to re-index restored chat '${id}'`, e);
         }
