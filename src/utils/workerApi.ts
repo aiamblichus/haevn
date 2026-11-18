@@ -92,7 +92,11 @@ export type WorkerProgressMap = {
 export interface WorkerRequestOptions<TProgress = unknown> {
   /** If false, fire-and-forget (no response expected). Default: true */
   expectResponse?: boolean;
-  /** Timeout in milliseconds. Default: 30000 */
+  /**
+   * Timeout in milliseconds. Default: 30000. With onProgress, 0 means none: the listener lives
+   * until the worker's completion message, for a job that runs, pauses and resumes for as long
+   * as it takes.
+   */
   timeout?: number;
   /** Callback for progress updates from long-running operations */
   onProgress?: (data: TProgress) => void;
@@ -308,12 +312,14 @@ export async function sendWorkerRequest<T extends WorkerType>(
       });
 
       // Set timeout
-      timeoutId = setTimeout(() => {
-        if (!completed) {
-          cleanup();
-          reject(new Error(`Worker request timeout: ${workerType} (${timeout}ms)`));
-        }
-      }, timeout);
+      if (timeout > 0) {
+        timeoutId = setTimeout(() => {
+          if (!completed) {
+            cleanup();
+            reject(new Error(`Worker request timeout: ${workerType} (${timeout}ms)`));
+          }
+        }, timeout);
+      }
 
       // Send message
       chrome.runtime.sendMessage({

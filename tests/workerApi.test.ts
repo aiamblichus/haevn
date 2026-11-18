@@ -42,10 +42,11 @@ function fromWorker(message: Message): void {
 async function startJob(
   workerType: WorkerType,
   timeout?: number,
-): Promise<{ seen: string[]; id: string; settled: () => boolean }> {
+): Promise<{ seen: string[]; id: string; settled: () => boolean; rejected: () => boolean }> {
   const { sendWorkerRequest } = await import("../src/utils/workerApi");
   const seen: string[] = [];
   let done = false;
+  let failed = false;
   const request = sendWorkerRequest(
     workerType,
     { type: "start" } as never,
@@ -57,10 +58,14 @@ async function startJob(
     },
     () => {
       done = true;
+      failed = true;
     },
   );
-  await vi.waitFor(() => expect(sentRequestIds).toHaveLength(1));
-  return { seen, id: sentRequestIds[0] as string, settled: () => done };
+  // The request registers its listener after awaiting the offscreen document. (Not waitFor:
+  // under fake timers that would advance them.)
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(sentRequestIds).toHaveLength(1);
+  return { seen, id: sentRequestIds[0] as string, settled: () => done, rejected: () => failed };
 }
 
 beforeEach(() => {
@@ -96,5 +101,36 @@ describe("the listener of a long job (HVN-61)", () => {
       await vi.waitFor(() => expect(job.settled()).toBe(true));
       expect(job.seen).toEqual([end]);
     }
+  });
+});
+
+describe("the timeout of a long job's listener (HVN-61)", () => {
+  const A_DAY = 24 * 60 * 60 * 1000;
+
+  it("does not run out when it is 0: a job paused for a day still ends on its listener", async () => {
+    vi.useFakeTimers();
+    await loadWorkerApi();
+    const job = await startJob("bulkExport", 0);
+
+    fromWorker({ type: "paused", requestId: job.id });
+    await vi.advanceTimersByTimeAsync(A_DAY);
+    expect(job.settled()).toBe(false);
+    fromWorker({ type: "complete", requestId: job.id });
+
+    expect(job.seen).toEqual(["paused", "complete"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(job.settled()).toBe(true);
+    expect(job.rejected()).toBe(false);
+  });
+
+  it("still runs out when it is set: the request rejects and the listener is gone", async () => {
+    vi.useFakeTimers();
+    await loadWorkerApi();
+    const job = await startJob("bulkExport", 1000);
+
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(job.rejected()).toBe(true);
+    fromWorker({ type: "complete", requestId: job.id });
+    expect(job.seen).toEqual([]);
   });
 });

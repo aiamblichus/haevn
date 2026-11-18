@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExportOptions } from "../src/formatters";
-import { log } from "../src/utils/logger";
 import type {
   BulkExportWorkerMessage,
   BulkExportWorkerResponse,
 } from "../src/types/workerMessages";
+import { log } from "../src/utils/logger";
 
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -24,16 +24,18 @@ const worker = vi.hoisted(() => ({
   sent: [] as string[],
   listener: undefined as Listener | undefined,
   onCancel: undefined as (() => Promise<void>) | undefined,
+  startOptions: undefined as { timeout?: number } | undefined,
 }));
 vi.mock("../src/utils/workerApi", () => ({
   sendWorkerRequest: async (
     _workerType: string,
     message: BulkExportWorkerMessage,
-    options?: { onProgress?: Listener },
+    options?: { onProgress?: Listener; timeout?: number },
   ) => {
     worker.sent.push(message.type);
     if (message.type === "start" && options?.onProgress) {
       worker.listener = options.onProgress;
+      worker.startOptions = options as { timeout?: number };
     }
     if (message.type === "cancel") await worker.onCancel?.();
     return undefined;
@@ -77,6 +79,14 @@ async function pauseExport(): Promise<void> {
 }
 
 const canceledEvents = () => sentEvents.filter((event) => event.action === "bulkExportCanceled");
+
+describe("the start's listener (HVN-61)", () => {
+  it("has no timeout, so a long or paused export still reports its end", async () => {
+    await startExport();
+
+    expect(worker.startOptions?.timeout).toBe(0);
+  });
+});
 
 describe("cancelling a bulk export (HVN-61)", () => {
   it("releases the lock and clears the state when the worker never answers, paused", async () => {

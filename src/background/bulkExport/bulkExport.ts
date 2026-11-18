@@ -489,7 +489,9 @@ export async function startBulkExport(chatIds: string[], options: ExportOptions)
         },
         {
           onProgress: handleWorkerMessage,
-          timeout: 600000, // 10 minutes for large exports
+          // No timeout: the listener of this start carries the job's end (complete, cancelled,
+          // error), however long it runs and however long it is paused.
+          timeout: 0,
         },
       ),
       "Bulk export progress monitoring",
