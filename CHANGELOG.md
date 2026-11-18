@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- An idle archive tab no longer uses about 14% CPU: the logo's glow animated a filter on the main thread and now pulses on the compositor (and stops under reduced motion). The five-minute embedding refresh no longer loads every vector into memory to compare fingerprints.
 - **Media on disk**: re-syncing a Poe, Gemini or AI Studio chat stored all its images again under new names, and nothing removed the old copies (2.3 GB of 3.6 GB on one archive). Message ids are now stable, so a re-sync overwrites. The Janitor sweeps media files that no message refers to once a day; the first sweep waits a day after the update, and `haevnDebug.mediaSweep()` shows what it would delete. It never touches a file younger than a day, a chat saved in the last day, or a chat whose media is only a link (a failed download, where the local file may be the only copy).
 - A chat synced on its own is found and marked correctly by search right away, not only after a rebuild; a rebuild leaves deleted chats out of its count and says when it fails.
 - The archive's "search index incomplete" notice and the metadata failure box fit the dark theme.
