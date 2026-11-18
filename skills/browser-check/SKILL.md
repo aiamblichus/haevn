@@ -67,6 +67,11 @@ Delete `transcripts/browser-check/` when the check is done. The dev profile can 
 - **The popup opened as a tab answers every runtime message with `null`** while it is open (HVN-67), so checks of the archive go wrong with `popup.html` open. Close it before checking anything else.
 - **Expected noise:** `WebSocket connection to 'ws://localhost:5517/ws' failed` every 30 s when the CLI bridge is on and no daemon runs (leave the bridge off unless the check is about the CLI). CSP "inline event handler" errors in the viewer when a chat contains inline handlers (HVN-69): nothing runs.
 - **Not checkable in the dev profile:** the starmap needs AI metadata and embeddings (a configured provider); a bulk sync needs a platform login in that profile.
+- **A worktree build:** `install_extension` with `<worktree>/dist` adds it beside the primary build (its own ID, from its path). Uninstall it with `uninstall_extension` when done, so one HAEVN runs in the profile.
+- **Fast jobs beat clicks.** A 300-chat export finishes in about 4 s, so to catch Pause, run an `evaluate_script` loop that clicks it as soon as it appears. Read state from `chrome.storage.local` (`activeOperation`) rather than waiting on status text; `wait_for` on text timed out where a storage read answered at once.
+- **Native confirms:** `press_key` accepts a `window.confirm` silently. To test the dismiss branch, trigger it inside `evaluate_script` with `dialogAction: "dismiss"`.
+- **The Import dialog swaps its file input** when the provider changes. Choose the provider, take a fresh snapshot, then `upload_file` to the new "Choose File" uid.
+- **The search worker's logs do not reach the page's `haevnDebug.getLogs()`.** To prove that no index rebuild ran, put a sentinel row in IndexedDB `lunrIndex` (`haevnDebug.db.table('lunrIndex').put({id:'zz-sentinel'})`). A rebuild clears the table at its start, so if the row survives a reload, no rebuild happened. Delete the row afterwards. The `format` record (`{id:"format", format:N}`) is written only at the end of a successful pass.
 
 ## CLI checks
 
