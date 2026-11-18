@@ -88,6 +88,9 @@ export function splitQuotedSearchQuery(query: string): {
   return { phrases, remainderParts };
 }
 
+/** A minus that starts a word and is followed by a quote: `-"a phrase"`. */
+const LEFT_OUT_PHRASE = /(?:^|\s)-"/;
+
 /** `foo~2^3` or `foo^3~2`: the modifiers at the end of a word, whichever order they come in. */
 const MODIFIER = /([~^])(\d+(?:\.\d+)?)$/;
 
@@ -177,7 +180,10 @@ export function parseSearchQuery(query: string): ParsedQuery {
   ];
   const parsed: ParsedQuery = { phrases, terms, required, excluded };
 
-  if (required.length === 0 && phrases.length === 0) {
+  if (LEFT_OUT_PHRASE.test(query)) {
+    // The minus would be dropped and the phrase required: the opposite of what was typed.
+    parsed.problem = "Leaving out a phrase is not supported; use -word.";
+  } else if (required.length === 0 && phrases.length === 0) {
     parsed.problem =
       excluded.length > 0
         ? "A search needs a word to look for, not only words to leave out."

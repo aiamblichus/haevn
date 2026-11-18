@@ -102,6 +102,18 @@ describe("parsing the words of a query (HVN-78)", () => {
     expect(parseSearchQuery("wombat").problem).toBeUndefined();
     expect(parseSearchQuery('"to be"').problem).toBeUndefined();
   });
+
+  it("does not read a minus before a quote as a phrase that is required", () => {
+    // Leaving out a phrase is not supported; reading it as the phrase itself would turn the
+    // search upside down without a word about it.
+    for (const query of ['react -"class component"', '-"class component"', '"a b" -"c d"']) {
+      expect(parseSearchQuery(query).problem).toBe(
+        "Leaving out a phrase is not supported; use -word.",
+      );
+    }
+    expect(parseSearchQuery('react "class component"').problem).toBeUndefined();
+    expect(parseSearchQuery('well-"known"').problem).toBeUndefined();
+  });
 });
 
 describe("planning the clauses (HVN-78)", () => {

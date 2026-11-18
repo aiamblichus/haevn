@@ -1818,6 +1818,13 @@ describe("search worker: the query is parsed by us, not by Lunr (HVN-78)", () =>
       expect(await problemOf("alignment")).toBeUndefined();
     });
 
+    it("does not return the chats that have a phrase typed to be left out", async () => {
+      await indexChats(["a", "install wombat now"], ["b", "install a numbat"]);
+
+      expect(await problemOf('install -"install wombat"')).toMatch(/Leaving out a phrase/);
+      expect(await found('install -"install wombat"')).toEqual([]);
+    });
+
     it("posts the problem as the last chunk, with no results", async () => {
       const [chunk] = await search("-alignment", true);
 
