@@ -59,6 +59,43 @@ export function trimToWord(text: string, range: TextRange): TextRange {
   return { start: range.start + start, length: end - start };
 }
 
+/**
+ * Lunr lower-cases the text before it splits it, so the positions it reports are in the
+ * lower-cased text, and `"İ".toLowerCase()` is two code units ("i" and a combining dot): every İ
+ * before a match moves the match one unit to the right of where the original text has it.
+ * (U+0130 is the only character whose lower case has another length, and it is always longer.)
+ *
+ * Returns null when `text` has none, so its lower case is the same length and the positions are
+ * the original's already. Otherwise returns a function that takes a range in the lower-cased text
+ * to the range of the same characters in `text`. The table is built once, so call this once per
+ * text and use the function for every match.
+ */
+export function lowerCaseRangeMapper(text: string): ((range: TextRange) => TextRange) | null {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) return null;
+
+  // For each unit of the lower-cased text: where its character starts and ends in the original.
+  const starts = new Uint32Array(lower.length);
+  const ends = new Uint32Array(lower.length);
+  let at = 0;
+  for (let i = 0; i < text.length; ) {
+    const size = (text.codePointAt(i) ?? 0) > 0xffff ? 2 : 1;
+    const width = text.slice(i, i + size).toLowerCase().length;
+    for (let k = 0; k < width; k++) {
+      starts[at + k] = i;
+      ends[at + k] = i + size;
+    }
+    at += width;
+    i += size;
+  }
+
+  return ({ start, length }) => {
+    if (length <= 0 || start < 0 || start + length > lower.length) return { start, length };
+    const from = starts[start];
+    return { start: from, length: ends[start + length - 1] - from };
+  };
+}
+
 /** Spans that lie inside the text, sorted, with overlapping and touching ones merged. */
 function normalise(ranges: TextRange[], textLength: number): [number, number][] {
   const spans: [number, number][] = [];

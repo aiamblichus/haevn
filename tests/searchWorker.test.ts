@@ -945,6 +945,53 @@ describe("search worker: snippets hold and mark the match (HVN-20)", () => {
     expect(result.messageSnippet).toContain("{{HIGHLIGHT}}running{{/HIGHLIGHT}}, late");
   });
 
+  // Lunr reports positions in the lower-cased text, where "İ" is two units (HVN-57).
+  it("holds a match that follows text whose lower case is longer", async () => {
+    await indexTurn("dotted", "question", `${"İ".repeat(80)} pineapple`);
+
+    const [result] = await snippetsFor("pineapple");
+
+    expect(result.messageRole).toBe("assistant");
+    expect(result.messageSnippet).toContain(MARK);
+  });
+
+  it("marks the word, not its neighbours, when İ comes before it in the same message", async () => {
+    await indexTurn(
+      "dotted2",
+      "question",
+      `${"İ".repeat(30)} ${filler(40)} pineapple ${filler(80)}`,
+    );
+
+    const [result] = await snippetsFor("pineapple", 15);
+
+    expect(result.messageSnippet).toContain(`${MARK} lorem`);
+    expect(result.messageSnippet.split(MARK)).toHaveLength(2);
+  });
+
+  it("finds the right message when an earlier one has İ", async () => {
+    const chat = buildTurn("dotted3", "question", "answer");
+    const message = chat.messages["dotted3-m1"];
+    message.message = [
+      {
+        kind: "request",
+        parts: [{ part_kind: "user-prompt", content: "İ".repeat(60), timestamp: "t" }],
+      },
+      {
+        kind: "response",
+        parts: [{ part_kind: "text", content: "a pineapple here" }],
+        timestamp: "t",
+      },
+    ] as ChatMessage["message"];
+    await seedChats([chat]);
+    await send({ type: "rebuild" });
+
+    const results = await snippetsFor("pineapple");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].messageRole).toBe("assistant");
+    expect(results[0].messageSnippet).toContain(MARK);
+  });
+
   it("holds and marks a match in multi-byte text", async () => {
     await indexTurn("cjk", "question", `${"字".repeat(300)} pineapple ${"字".repeat(300)}`);
 
