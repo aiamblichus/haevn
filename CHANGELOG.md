@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Pausing a bulk export no longer drops the rest of the batch (up to 99 chats) or a chat's media from the ZIP; a paused and resumed export now finishes and downloads; cancelling, also while paused, releases the operation lock; an export or import that runs longer than 10 minutes no longer loses its completion.
 - `haevn` no longer passes terminal control characters from a conversation to the terminal: text output shows them as U+FFFD, and JSON output escapes them.
 - Search results in the archive no longer render a conversation's markup: snippets are escaped before their matches are marked.
 - A search hit only in an assistant's reply now returns the result.
