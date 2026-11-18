@@ -127,6 +127,21 @@ describe("parsing the words of a query (HVN-78)", () => {
     expect(parseSearchQuery('"to be"').problem).toBeUndefined();
   });
 
+  it("says so when a query has more words and phrases than the index can be asked for", () => {
+    const words = (n: number) => Array.from({ length: n }, (_, i) => `word${i}`).join(" ");
+
+    expect(parseSearchQuery(words(100)).problem).toBeUndefined();
+    expect(parseSearchQuery(words(101)).problem).toBe(
+      "That is more than 100 words and phrases. Search for fewer of them.",
+    );
+    // Words to leave out and phrases count too.
+    expect(parseSearchQuery(`${words(60)} ${words(60).replace(/word/g, "-out")}`).problem).toMatch(
+      /more than 100/,
+    );
+    const phrases = Array.from({ length: 101 }, (_, i) => `"w${i} x"`).join(" ");
+    expect(parseSearchQuery(phrases).problem).toMatch(/more than 100/);
+  });
+
   it("does not read a minus before a quote as a phrase that is required", () => {
     // Leaving out a phrase is not supported; reading it as the phrase itself would turn the
     // search upside down without a word about it.

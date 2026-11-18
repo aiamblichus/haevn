@@ -153,6 +153,12 @@ function parseWord(raw: string): ParsedWord | null {
 }
 
 /**
+ * Most words and phrases a query may have. The index joins one lookup for each, and SQLite stops
+ * at 500 of them in one statement; a pasted paragraph is not a search anyone means.
+ */
+export const MAX_QUERY_CLAUSES = 100;
+
+/**
  * Parse a search query into the words and phrases it asks for. This is the only parser of query
  * text: the worker builds its index query from the result and never hands the typed text to the
  * index (HVN-78), so `local-first` is the words `local` and `first`, `foo:bar` is a word with a colon
@@ -192,6 +198,8 @@ export function parseSearchQuery(query: string): ParsedQuery {
       excluded.length > 0
         ? "A search needs a word to look for, not only words to leave out."
         : "Type a word to search for.";
+  } else if (required.length + phrases.length + excluded.length > MAX_QUERY_CLAUSES) {
+    parsed.problem = `That is more than ${MAX_QUERY_CLAUSES} words and phrases. Search for fewer of them.`;
   }
   return parsed;
 }

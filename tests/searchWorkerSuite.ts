@@ -1884,6 +1884,15 @@ describe("search worker: the query is parsed by us, not by the index (HVN-78)", 
       expect(await problemOf("alignment")).toBeUndefined();
     });
 
+    it("says so for a pasted paragraph, instead of failing the search", async () => {
+      await indexChats(["a", "alignment"]);
+      const paragraph = Array.from({ length: 600 }, (_, i) => `word${i}`).join(" ");
+
+      expect(await problemOf(paragraph)).toMatch(/more than 100 words and phrases/);
+      const chunks = await search(paragraph, true);
+      expect(chunks.some((c) => c.type === "error")).toBe(false);
+    });
+
     it("does not return the chats that have a phrase typed to be left out", async () => {
       await indexChats(["a", "install wombat now"], ["b", "install a numbat"]);
 

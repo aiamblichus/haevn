@@ -59,6 +59,15 @@ describe.each(kits)("the search index, on $name (HVN-87)", (kit: IndexKit) => {
   });
 
   describe("what a chat is when it matches", () => {
+    it("answers a query of as many words as the parser lets through", async () => {
+      await openWith(chat("a", ["word0 word1"]));
+      const words = Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ");
+
+      expect(parseSearchQuery(words).problem).toBeUndefined();
+      expect(ids(words)).toEqual([]);
+      expect(ids("word0 word1")).toEqual(["a"]);
+    });
+
     it("has every word, in any of its messages, and not only where one message has them all", async () => {
       await openWith(
         chat("apart", ["we talked about wombats", "and later about kubernetes"]),
