@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripEventHandlers } from "../src/viewer/messageHtml";
+import { highlightTerms, stripEventHandlers } from "../src/viewer/messageHtml";
 
 describe("stripEventHandlers (HVN-69)", () => {
   it("removes the event-handler attributes from a tag", () => {
@@ -44,5 +44,48 @@ describe("stripEventHandlers (HVN-69)", () => {
   it("returns a message with no handlers unchanged", () => {
     const html = '<p>See <a href="https://a.test/?q=1">the link</a>.</p>';
     expect(stripEventHandlers(html)).toBe(html);
+  });
+});
+
+describe("highlightTerms (HVN-59)", () => {
+  it("leaves a link intact when the query matches its URL text", () => {
+    expect(highlightTerms('<a href="https://a.test/x">https://a.test/x</a>', "https")).toBe(
+      '<a href="https://a.test/x"><span class="highlight">https</span>://a.test/x</a>',
+    );
+  });
+
+  it("does not match a tag or attribute name", () => {
+    expect(highlightTerms('<a href="/a" class="x">href</a>', "href")).toBe(
+      '<a href="/a" class="x"><span class="highlight">href</span></a>',
+    );
+    expect(highlightTerms('<span class="highlight">x</span>', "span")).toBe(
+      '<span class="highlight">x</span>',
+    );
+  });
+
+  it("does not match inside an entity", () => {
+    expect(highlightTerms("Tom &amp; Jerry &lt;3", "amp lt")).toBe("Tom &amp; Jerry &lt;3");
+    expect(highlightTerms("Tom &amp; Jerry", "tom amp")).toBe(
+      '<span class="highlight">Tom</span> &amp; Jerry',
+    );
+  });
+
+  it("matches a quoted phrase, ignoring case, and drops the Lunr operators", () => {
+    expect(highlightTerms("say Pineapple juice", '"pineapple juice"')).toBe(
+      'say <span class="highlight">Pineapple juice</span>',
+    );
+    expect(highlightTerms("pine apple", "+pine -mango")).toBe(
+      '<span class="highlight">pine</span> apple',
+    );
+  });
+
+  it("returns the HTML unchanged for a blank query", () => {
+    expect(highlightTerms("<p>x</p>", "  ")).toBe("<p>x</p>");
+  });
+
+  it("leaves a comment alone", () => {
+    expect(highlightTerms("<!-- https --> https", "https")).toBe(
+      '<!-- https --> <span class="highlight">https</span>',
+    );
   });
 });
