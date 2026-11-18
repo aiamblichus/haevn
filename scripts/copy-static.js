@@ -6,6 +6,10 @@ mkdirSync("dist", { recursive: true });
 // manifest
 copyFileSync("src/manifest.json", "dist/manifest.json");
 
+// SQLite's WebAssembly module, which the search worker loads from beside its own script
+// (`locateFile` in `searchIndex.ts`). The manifest's content security policy lets pages compile it.
+copyFileSync("node_modules/@sqlite.org/sqlite-wasm/dist/sqlite3.wasm", "dist/sqlite3.wasm");
+
 // fonts: the latin subset of the weights the popup, options and viewer CSS declare,
 // from @fontsource (OFL). The CSS loads them from dist/fonts/, so no page fetches a font.
 const fontFiles = [

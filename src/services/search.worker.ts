@@ -18,6 +18,7 @@ import type {
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
 import { inCategory, inDateRange, needsCategory } from "./searchFilters";
+import { probeSqlite } from "./searchIndex";
 import {
   createIndexBuilder,
   createQueryTermPipeline,
@@ -1155,6 +1156,20 @@ async function performSearch(
   return sortedResults;
 }
 
+// --- SQLite (HVN-87, M0): opened at init and logged, not yet used for search ---
+
+/** Open SQLite as the index will and log what it is, or why it cannot be opened. */
+async function logSqliteProbe(): Promise<void> {
+  try {
+    const { kind, version, fts5 } = await probeSqlite();
+    log.info(
+      `[SearchWorker] SQLite ${version} opened (${kind}), FTS5 ${fts5 ? "present" : "MISSING"}`,
+    );
+  } catch (e) {
+    log.error("[SearchWorker] SQLite could not be opened", e);
+  }
+}
+
 // --- Message Handling ---
 
 self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
@@ -1162,6 +1177,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
   try {
     if (msg.type === "init") {
+      await logSqliteProbe();
       // Mid-rebuild the segments are the rebuild's own: loading the stored ones would replace
       // them, and the check would see an empty index and ask for another pass.
       if (!rebuildRun) await loadSegments();
