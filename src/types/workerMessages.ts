@@ -377,7 +377,6 @@ import type {
   ConstellationBounds,
   ConstellationLayoutParams,
   ConstellationPoint,
-  ConstellationVector,
 } from "../constellation/core/types";
 
 export type StarmapWorkerMessage =
@@ -385,7 +384,7 @@ export type StarmapWorkerMessage =
   | {
       type: "computeLayout";
       requestId: string;
-      vectors: ConstellationVector[];
+      // No vectors: the worker reads them from IndexedDB itself (HVN-93)
       params: ConstellationLayoutParams;
     };
 

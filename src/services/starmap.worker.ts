@@ -1,8 +1,10 @@
 import { computeConstellationLayout } from "../constellation/compute/projectAndCluster";
+import { readEmbeddingVectors } from "../constellation/persistence/embeddingReader";
 import type { StarmapWorkerMessage, StarmapWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { getDB } from "./db";
 
-self.onmessage = (event: MessageEvent<StarmapWorkerMessage>) => {
+self.onmessage = async (event: MessageEvent<StarmapWorkerMessage>) => {
   const msg = event.data;
 
   try {
@@ -16,7 +18,13 @@ self.onmessage = (event: MessageEvent<StarmapWorkerMessage>) => {
       }
 
       case "computeLayout": {
-        const result = computeConstellationLayout(msg.vectors, msg.params);
+        // The vectors never cross a message: they are read here, in batches (HVN-93)
+        const readStartedAt = Date.now();
+        const vectors = await readEmbeddingVectors(getDB().chatEmbeddings);
+        log.debug(
+          `[StarmapWorker] read ${vectors.length} embeddings in ${Date.now() - readStartedAt} ms`,
+        );
+        const result = computeConstellationLayout(vectors, msg.params);
         self.postMessage({
           type: "layoutResult",
           requestId: msg.requestId,

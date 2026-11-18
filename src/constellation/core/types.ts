@@ -1,6 +1,7 @@
 export interface ConstellationVector {
   chatId: string;
-  vector: number[];
+  /** A plain array, or a view into the Float32Array the worker read the archive into. */
+  vector: ArrayLike<number>;
 }
 
 export interface ConstellationPoint {

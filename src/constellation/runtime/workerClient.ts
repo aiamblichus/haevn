@@ -1,12 +1,11 @@
 import { sendWorkerRequest } from "../../utils/workerApi";
-import type {
-  ConstellationLayoutParams,
-  ConstellationLayoutResult,
-  ConstellationVector,
-} from "../core/types";
+import type { ConstellationLayoutParams, ConstellationLayoutResult } from "../core/types";
 
+/**
+ * Ask the starmap worker for a layout. Only the parameters go out: the worker reads the
+ * embeddings from IndexedDB itself, and only the points come back (HVN-93).
+ */
 export async function computeLayoutInWorker(args: {
-  vectors: ConstellationVector[];
   params: ConstellationLayoutParams;
 }): Promise<ConstellationLayoutResult> {
   const requestId = `starmap_${Date.now()}_${Math.random()}`;
@@ -15,7 +14,6 @@ export async function computeLayoutInWorker(args: {
     {
       type: "computeLayout",
       requestId,
-      vectors: args.vectors,
       params: args.params,
     },
     { expectResponse: true, timeout: 60000 },

@@ -55,7 +55,7 @@ function projectTo3D(
     random: seededRandom(params.umapSeed),
   });
 
-  const embedding = umap.fit(vectors.map((v) => v.vector));
+  const embedding = umap.fit(vectors.map((v) => v.vector as number[]));
   if (!Array.isArray(embedding) || embedding.length !== vectors.length) {
     throw new Error("UMAP failed to produce a valid embedding");
   }
