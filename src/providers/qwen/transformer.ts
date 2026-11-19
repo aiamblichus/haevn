@@ -13,6 +13,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { QwenChatData, QwenContentListItem, QwenFile, QwenMessage } from "./model";
 
@@ -259,6 +260,7 @@ function convertQwenMessage(
 export async function transformQwenToHaevn(
   chatData: QwenChatData,
   tabId?: number,
+  options?: TransformOptions,
 ): Promise<HAEVN.Chat> {
   const conversationId = chatData.id;
 
@@ -297,6 +299,7 @@ export async function transformQwenToHaevn(
         overallTimeoutMs: 30000,
         credentials: "omit",
         tabId,
+        media: options?.media,
       });
 
       messageAssetsMap.set(qwenMsg.id, downloadedContent);

@@ -38,8 +38,8 @@ const extractor: Extractor<GeminiConversationData> = {
 
 // Transformer implementation
 const transformer: Transformer<GeminiConversationData> = {
-  transform: async (raw: GeminiConversationData, tabId?: number) => {
-    const chat = await transformGeminiToHaevn(raw, tabId);
+  transform: async (raw: GeminiConversationData, tabId, options) => {
+    const chat = await transformGeminiToHaevn(raw, tabId, options);
     return [chat as Chat];
   },
 

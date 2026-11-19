@@ -42,6 +42,7 @@ haevn list -l 5
 - `haevn info <chatId>` — view or edit metadata for a single chat.
 - `haevn export <chatId> -o file --format <haevn_json|haevn_markdown|pi_session_jsonl>` — export one chat.
 - `haevn import --format <claude_code|codex|pi|openrouter> <file...>` — import local JSONL session files or an OpenRouter chatroom export.
+- `haevn health` — check that each web provider you are signed in to still syncs (read-only).
 
 ## Short message refs
 
@@ -234,6 +235,43 @@ haevn import --format openrouter ./open-router-chats.json
 Flags:
 - `--no-overwrite` — skip chats that already exist (default is overwrite).
 - `--skip-index` — skip index rebuild after import (default is rebuild at end).
+
+## Check that your providers still work
+
+A site can change under HAEVN without any HAEVN release. `haevn health` asks the extension, in your own Chrome, to try each web provider you are signed in to: it opens a tab on the provider's site, lists your chats, fetches the first two, converts them the way a sync does, and checks the result (messages present, turns in order, no empty text, sane dates, a tree that leads to the current message).
+
+```bash
+haevn health                       # every web provider
+haevn health -p claude,chatgpt     # only these
+haevn health -n 3                  # three chats each (default 2, at most 5)
+haevn health -f json               # the report as JSON
+```
+
+```text
+  provider   status         signed in  listed  checked  time
+  claude     ok             yes        120     2        1.4 s
+  gemini     fail           yes        86      2        19.2 s
+  grok       not signed in  no         -       -        0.5 s
+
+  gemini     fail  text.empty x3 in 2 of 2 chats: a text, thinking or prompt part is an empty string
+```
+
+- **Your archive is never changed.** No chat is saved, no media is stored, nothing is indexed, and a chat already in your archive is never overwritten by what the check fetched. Two things still happen, as when you browse the site: for ChatGPT, the check loads the images of the chats it fetches into memory and discards them; and loading a provider's tab can refresh the sign-in details HAEVN already keeps for that site.
+- **The report holds no chat text, titles or ids**, only counts, the names of the rules that failed and short reasons, so you can paste it into a bug report. (The extension's own log, `haevnDebug.getLogs()`, can mention a chat as it does in a sync.)
+- **Not signed in** and **unreachable** are rows, not failures, and the provider was *not checked*; the last line says how many were. A provider you know you are signed in to that shows `not signed in` is a failure of the check or of the sign-in details HAEVN keeps for it, not a pass: read its note.
+- It opens real tabs (Gemini and AI Studio in the foreground, as a bulk sync does) and takes from a few seconds to a few minutes. It will not start while a sync, import or export is running.
+- **Time.** Each provider gets 40 s and the whole run 4 minutes. Claude, ChatGPT and Gemini are checked first, then the rest, so a slow run skips the others and never these. A large account can spend the 40 s listing its chats (the row says `TIMEOUT` and `listing the chats`): run that provider alone with a longer limit, `haevn health -p chatgpt --timeout 120`.
+- Open WebUI is checked only when its address is set in the settings.
+- **Exit code:** 1 when a provider failed or timed out, or when Claude, ChatGPT or Gemini was skipped because the run ran out of time; 0 otherwise. The same check is `haevnDebug.providerHealth()` in the browser console of the Options page.
+
+### What a finding means
+
+A `fail` is a rule that makes a chat unusable (no messages, a current message that is not in the tree, an empty text, a date outside 2015 to tomorrow). A `warn` is odd but possible and never changes the exit code. Some are expected on a healthy account:
+
+- `title.fallback` on the newest chat: the head of the list is where untitled chats are.
+- `tree.multiple-roots` on Poe: a chat break starts a new root by design.
+- `text.empty` on ChatGPT is most likely a finding about HAEVN's converter (it may read the text of a reasoning node from the wrong place), not about the site. Report it; do not treat it as the site being down.
+- `roles.not-alternating` counts only two of your own messages in a row (a reply that was dropped). A model that answers in several steps, as ChatGPT does, is not one.
 
 ## Tips
 

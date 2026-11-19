@@ -41,8 +41,8 @@ const extractor: Extractor<QwenChatData> = {
 
 // Transformer implementation
 const transformer: Transformer<QwenChatData> = {
-  transform: async (raw: QwenChatData, tabId?: number) => {
-    const chat = await transformQwenToHaevn(raw, tabId);
+  transform: async (raw: QwenChatData, tabId, options) => {
+    const chat = await transformQwenToHaevn(raw, tabId, options);
     return [chat as Chat];
   },
 

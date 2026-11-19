@@ -9,6 +9,7 @@
  *   haevn list                           # List recent chats
  *   haevn branches chat_abc123           # Show tree structure
  *   haevn export chat_abc123 -o out.json --format haevn_json
+ *   haevn health                         # does each provider you are signed in to still sync?
  *   haevn install -e <extension-id>      # Install native messaging host
  */
 
@@ -18,6 +19,7 @@ import branchesCommand from "./commands/branches";
 import daemonCommand from "./commands/daemon";
 import exportCommand from "./commands/export";
 import getCommand from "./commands/get";
+import healthCommand from "./commands/health";
 import importCommand from "./commands/import";
 import infoCommand from "./commands/info";
 import listCommand from "./commands/list";
@@ -48,6 +50,7 @@ const mainCommand = defineCommand({
     export: exportCommand,
     import: importCommand,
     info: infoCommand,
+    health: healthCommand,
     daemon: daemonCommand,
   },
   async setup(ctx) {

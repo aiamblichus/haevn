@@ -19,6 +19,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { Message, PoeConversationData } from "./model";
@@ -27,13 +28,16 @@ import type { Message, PoeConversationData } from "./model";
 // Main Transform Function
 // ============================================================================
 
-export async function transformPoeToHaevn(poeData: PoeConversationData): Promise<HAEVN.Chat[]> {
+export async function transformPoeToHaevn(
+  poeData: PoeConversationData,
+  options?: TransformOptions,
+): Promise<HAEVN.Chat[]> {
   log.info("[Poe Transformer] Starting transformation", {
     chatCode: poeData.chatCode,
     messageCount: poeData.messages.length,
   });
 
-  const chat = await createChat(poeData);
+  const chat = await createChat(poeData, options);
   return [chat];
 }
 
@@ -41,7 +45,7 @@ export async function transformPoeToHaevn(poeData: PoeConversationData): Promise
 // Chat Creation
 // ============================================================================
 
-async function createChat(poeData: PoeConversationData): Promise<Chat> {
+async function createChat(poeData: PoeConversationData, options?: TransformOptions): Promise<Chat> {
   // Identify which message indices should be new roots (after chat breaks)
   // and filter out the chat_break messages themselves
   const newRootIndices = new Set<number>();
@@ -153,6 +157,7 @@ async function createChat(poeData: PoeConversationData): Promise<Chat> {
       supportAllMediaTypes: true,
       chatId,
       messageId,
+      media: options?.media,
     });
 
     messageAttachments.set(i, { content: downloadedContent, inlineUrls: dedupedInlineUrls });

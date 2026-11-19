@@ -53,8 +53,8 @@ const extractor: Extractor<ChatTranscript> = {
 
 // Transformer implementation
 const transformer: Transformer<ChatTranscript> = {
-  transform: async (raw: ChatTranscript) => {
-    const chat = await convertClaudeTranscriptToHaevn(raw);
+  transform: async (raw: ChatTranscript, _tabId, options) => {
+    const chat = await convertClaudeTranscriptToHaevn(raw, { media: options?.media });
     return [chat as Chat];
   },
 

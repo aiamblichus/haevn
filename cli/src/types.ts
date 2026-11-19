@@ -48,7 +48,62 @@ export type CliRequest =
     }
   | { id: string; action: "getMetadata"; chatId: string }
   | { id: string; action: "setMetadata"; chatId: string; metadata: MetadataUpdate }
-  | { id: string; action: "generateMetadata"; chatId: string };
+  | { id: string; action: "generateMetadata"; chatId: string }
+  | { id: string; action: "health"; options?: HealthOptions };
+
+/** What `haevn health` asks the extension for. */
+export interface HealthOptions {
+  /** Provider names; omitted means every web provider. */
+  providers?: string[];
+  /** Chats to fetch from the head of each list (1 to 5, default 2). */
+  chats?: number;
+  /** The limit for one provider, in ms. */
+  timeoutMs?: number;
+  /** The limit for the whole run, in ms. */
+  totalMs?: number;
+}
+
+export type HealthStatus =
+  | "ok"
+  | "warn"
+  | "fail"
+  | "not-signed-in"
+  | "unreachable"
+  | "timeout"
+  | "skipped";
+
+export interface HealthFinding {
+  code: string;
+  level: "fail" | "warn";
+  message: string;
+  count: number;
+  chats: number;
+}
+
+export interface HealthRow {
+  provider: string;
+  signedIn: boolean | null;
+  listed: number | null;
+  checked: number;
+  status: HealthStatus;
+  findings: HealthFinding[];
+  shapes: {
+    messages: number;
+    userTurns: number;
+    modelTurns: number;
+    parts: Record<string, number>;
+  }[];
+  note?: string;
+  ms: number;
+}
+
+/** The reply to `health`: counts, kinds and rule names; never chat text, a title or an id. */
+export interface HealthReport {
+  extensionVersion: string;
+  startedAt: string;
+  ms: number;
+  rows: HealthRow[];
+}
 
 export interface SearchOptions {
   platform?: string;

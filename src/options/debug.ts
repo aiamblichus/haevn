@@ -144,6 +144,54 @@ export const haevnDebug = {
   },
 
   /**
+   * The provider health check (HVN-107): for each web provider you are signed in to, list the
+   * chats, fetch the first two, transform them without saving or media, and check them. Strictly
+   * read-only; the report holds no chat text, title or id. It opens tabs on the providers' sites
+   * and takes up to a few minutes. The same operation as `haevn health` in the CLI.
+   * Usage: haevnDebug.providerHealth()  or  haevnDebug.providerHealth({ providers: ["claude"] })
+   */
+  async providerHealth(
+    options: { providers?: string[]; chats?: number; timeoutMs?: number; totalMs?: number } = {},
+  ) {
+    const response = (await chrome.runtime.sendMessage({
+      action: "providerHealth",
+      ...options,
+    } as BackgroundRequest)) as BackgroundResponse;
+    if (!response?.success || !("data" in response)) {
+      console.error("Debug: providerHealth failed", response);
+      return response;
+    }
+    const report = response.data as {
+      extensionVersion: string;
+      startedAt: string;
+      rows: {
+        provider: string;
+        status: string;
+        signedIn: boolean | null;
+        listed: number | null;
+        checked: number;
+        ms: number;
+        findings: { code: string; level: string; count: number }[];
+        note?: string;
+      }[];
+    };
+    console.log(`Provider health, extension ${report.extensionVersion}, ${report.startedAt}`);
+    console.table(
+      report.rows.map((row) => ({
+        provider: row.provider,
+        status: row.status,
+        signedIn: row.signedIn,
+        listed: row.listed,
+        checked: row.checked,
+        ms: row.ms,
+        findings: row.findings.map((f) => `${f.level}:${f.code}x${f.count}`).join(" "),
+        note: row.note ?? "",
+      })),
+    );
+    return report;
+  },
+
+  /**
    * The v17 move (HVN-31), run by hand. The service worker runs the same pass at each start until
    * its flag is set. Usage: haevnDebug.migrateMessagesToTable(batchSize?)
    */
@@ -402,6 +450,9 @@ export const haevnDebug = {
     console.log("  haevnDebug.rebuildIndex()    - Rebuilds search index from scratch");
     console.log("  haevnDebug.regenerateThumbnails() - Clears and regenerates all thumbnails");
     console.log("  haevnDebug.mediaSweep(opts)  - Media sweep; dry run unless { dryRun: false }");
+    console.log(
+      "  haevnDebug.providerHealth()  - Read-only check of the providers you are signed in to",
+    );
     console.log("  haevnDebug.getStorage()      - Dumps chrome.storage.local");
     console.log("  haevnDebug.opfs.ls(path)     - List OPFS directory");
     console.log("  haevnDebug.opfs.tree(path)   - Recursive tree view");

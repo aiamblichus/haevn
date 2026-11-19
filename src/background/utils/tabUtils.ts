@@ -257,7 +257,7 @@ export async function navigateTabToUrl(tabId: number, url: string): Promise<void
  */
 export async function createExtractionTab(
   url: string,
-  options?: { active?: boolean },
+  options?: { active?: boolean; onCreated?: (tabId: number) => void },
 ): Promise<number> {
   // Create new tab
   const tab = await chrome.tabs.create({
@@ -270,6 +270,9 @@ export async function createExtractionTab(
   }
 
   const tabId = tab.id;
+  // The caller learns the tab as soon as it exists, so it can close it when a later step (the
+  // load, the content script) fails or runs out of time and this function never returns the id.
+  options?.onCreated?.(tabId);
 
   // Wait for tab to load
   await waitForTabLoad(tabId);

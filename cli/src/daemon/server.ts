@@ -42,6 +42,17 @@ interface PendingRequest {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * `health` opens a tab on each provider's site and takes minutes, not seconds: the extension ends
+ * the run within 240 s, and this leaves it room to answer.
+ */
+export const HEALTH_REQUEST_TIMEOUT_MS = 270_000;
+
+export function timeoutFor(body: CliRequestBody | null | undefined): number {
+  // `JSON.parse("null")` is valid JSON: a body that is not an object gets the default
+  return body?.action === "health" ? HEALTH_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+}
+
 // ─── Counter for request IDs ──────────────────────────────────────────────────
 
 let _reqCounter = 0;
@@ -213,7 +224,7 @@ export async function startDaemon(config: DaemonConfig): Promise<DaemonServer> {
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error("Request timed out. The extension may be busy."));
-        }, REQUEST_TIMEOUT_MS);
+        }, timeoutFor(body));
 
         pending.set(id, { resolve, reject, timer });
         extensionSocket!.send(JSON.stringify(request));

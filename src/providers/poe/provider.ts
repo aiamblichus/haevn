@@ -93,8 +93,8 @@ const extractor: Extractor<PoeConversationData> = {
 
 // Transformer implementation
 const transformer: Transformer<PoeConversationData> = {
-  transform: async (raw: PoeConversationData) => {
-    return await transformPoeToHaevn(raw);
+  transform: async (raw: PoeConversationData, _tabId, options) => {
+    return await transformPoeToHaevn(raw, options);
   },
 
   validate: (raw: PoeConversationData) => {
