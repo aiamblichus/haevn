@@ -2,6 +2,7 @@ import { parseEntities } from "parse-entities";
 import type React from "react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
+import { isImportOnlyProvider } from "../../../providers/provider";
 import type { ChatMeta } from "../../types";
 import { escapeHtml, formatTime, getPlatformIcon, ICONS, Icon } from "../../utils";
 import { ChatPreviewPopover } from "./ChatPreviewPopover";
@@ -25,6 +26,9 @@ export const ChatTableRow = ({
     e.stopPropagation();
     onAction(action, chat.id);
   };
+
+  // An import-only chat has no web source to sync from, so it offers no Sync Now (HVN-102).
+  const canSync = !isImportOnlyProvider(chat.source);
 
   return (
     <div className="flex items-center border-b border-border hover:bg-muted/50 transition-colors">
@@ -66,14 +70,16 @@ export const ChatTableRow = ({
       {/* Actions column */}
       <div className="w-56 flex-shrink-0 py-1 px-2 flex items-center">
         <div className="flex items-center gap-1 text-muted-foreground">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="Sync Now"
-            onClick={(e) => handleAction(e, "sync")}
-          >
-            <Icon icon={ICONS.sync} />
-          </Button>
+          {canSync && (
+            <Button
+              variant="ghost"
+              size="icon"
+              title="Sync Now"
+              onClick={(e) => handleAction(e, "sync")}
+            >
+              <Icon icon={ICONS.sync} />
+            </Button>
+          )}
           {canOpenProvider && (
             <Button
               variant="ghost"
