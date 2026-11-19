@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
-import { type DaemonServer, startDaemon } from "./server.js";
+import { type DaemonServer, HEALTH_REQUEST_TIMEOUT_MS, startDaemon, timeoutFor } from "./server.js";
 
 const API_KEY = "test-key";
 
@@ -56,6 +56,16 @@ function askCli(port: number, body: Record<string, unknown>): Promise<Response> 
     body: JSON.stringify(body),
   });
 }
+
+describe("how long the daemon waits for the extension", () => {
+  it("gives `health` minutes, which opens a tab on each site, and the rest 30 s", () => {
+    expect(timeoutFor({ action: "list" })).toBe(30_000);
+    expect(timeoutFor({ action: "import", format: "pi", files: [] })).toBe(30_000);
+    expect(timeoutFor({ action: "health" })).toBe(HEALTH_REQUEST_TIMEOUT_MS);
+    // longer than the extension's own 240 s limit on a run, so a slow run is answered, not cut
+    expect(HEALTH_REQUEST_TIMEOUT_MS).toBeGreaterThan(240_000);
+  });
+});
 
 describe("daemon WebSocket connections", () => {
   it("keeps the extension's pending request when an unauthenticated socket opens and closes", async () => {
