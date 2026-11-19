@@ -60,6 +60,13 @@ import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
+import { chromeHealthDeps } from "./health/chromeProbe";
+import {
+  HealthBusyError,
+  HealthRequestError,
+  type ProviderHealthReport,
+  runProviderHealth,
+} from "./health/providerHealth";
 import { type ImportBatchItem, ImportBusyError, importChatBatch } from "./import/importBatch";
 import {
   isKeyRejected,
@@ -88,7 +95,16 @@ type WsRequest =
     }
   | { id: string; action: "getMetadata"; chatId: string }
   | { id: string; action: "setMetadata"; chatId: string; metadata: WsMetadataUpdate }
-  | { id: string; action: "generateMetadata"; chatId: string };
+  | { id: string; action: "generateMetadata"; chatId: string }
+  | { id: string; action: "health"; options?: WsHealthOptions };
+
+/** What `haevn health` may ask for; the same fields as the extension's providerHealth message. */
+interface WsHealthOptions {
+  providers?: string[];
+  chats?: number;
+  timeoutMs?: number;
+  totalMs?: number;
+}
 
 interface WsSearchOptions {
   platform?: string;
@@ -616,6 +632,8 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleSetMetadata(id, req);
       case "generateMetadata":
         return await handleGenerateMetadata(id, req);
+      case "health":
+        return await handleHealth(id, req);
       default: {
         const _exhaustive: never = req;
         void _exhaustive;
@@ -974,6 +992,28 @@ async function handleGenerateMetadata(
 ): Promise<WsResponse> {
   const record = await generateOnRequest(req.chatId);
   return { id, success: true, data: record };
+}
+
+/**
+ * The same operation as the extension's own `providerHealth` message (haevnDebug.providerHealth):
+ * read-only, no chat text, title or id in the reply.
+ */
+async function handleHealth(
+  id: string,
+  req: Extract<WsRequest, { action: "health" }>,
+): Promise<WsResponse<ProviderHealthReport>> {
+  try {
+    const report = await runProviderHealth(req.options, chromeHealthDeps());
+    return { id, success: true, data: report };
+  } catch (err) {
+    if (err instanceof HealthBusyError) {
+      return { id, success: false, error: err.message, code: "BUSY" };
+    }
+    if (err instanceof HealthRequestError) {
+      return { id, success: false, error: err.message, code: "BAD_REQUEST" };
+    }
+    throw err;
+  }
 }
 
 async function handleImport(

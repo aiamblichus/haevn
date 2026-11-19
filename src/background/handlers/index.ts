@@ -7,6 +7,7 @@ import { log } from "../../utils/logger";
 import * as chatHandlers from "./chatHandlers";
 import * as exportHandlers from "./exportHandlers";
 import * as galleryHandlers from "./galleryHandlers";
+import * as healthHandlers from "./healthHandlers";
 import * as importHandlers from "./importHandlers";
 import * as loggerHandlers from "./loggerHandlers";
 import * as mediaHandlers from "./mediaHandlers";
@@ -64,6 +65,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   getGalleryMedia: galleryHandlers.handleGetGalleryMedia as HandlerFunction,
   getGalleryContent: galleryHandlers.handleGetGalleryContent as HandlerFunction,
   checkMissingThumbnails: galleryHandlers.handleCheckMissingThumbnails as HandlerFunction,
+  providerHealth: healthHandlers.handleProviderHealth as HandlerFunction,
   getOpenWebUIBaseUrl: settingsHandlers.handleGetOpenWebUIBaseUrl as HandlerFunction,
   setOpenWebUIBaseUrl: settingsHandlers.handleSetOpenWebUIBaseUrl as HandlerFunction,
   clearOpenWebUIBaseUrl: settingsHandlers.handleClearOpenWebUIBaseUrl as HandlerFunction,

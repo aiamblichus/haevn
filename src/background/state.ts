@@ -139,7 +139,7 @@ export async function setBulkExportState(state: BulkExportState | null): Promise
 // This ensures only one operation (bulkSync, import, or bulkExport) runs at a time
 const ACTIVE_OPERATION_KEY = "activeOperation";
 
-export type ActiveOperation = "idle" | "bulkSync" | "import" | "bulkExport";
+export type ActiveOperation = "idle" | "bulkSync" | "import" | "bulkExport" | "providerHealth";
 
 export async function getActiveOperation(): Promise<ActiveOperation> {
   const storage = getStorageAdapter();

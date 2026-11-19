@@ -286,6 +286,15 @@ export type BackgroundRequest =
     }
   | { action: "getGalleryContent"; chatId: string; messageId: string }
   | { action: "checkMissingThumbnails" }
+  // Provider health: a read-only check of every web provider the user is signed in to. The
+  // reply's data is a ProviderHealthReport; no chat text, title or id is in it.
+  | {
+      action: "providerHealth";
+      providers?: string[];
+      chats?: number;
+      timeoutMs?: number;
+      totalMs?: number;
+    }
   // Settings operations
   | { action: "getOpenWebUIBaseUrl" }
   | { action: "setOpenWebUIBaseUrl"; baseUrl: string }
