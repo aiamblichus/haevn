@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { saveChatToDb } from "../src/services/chatPersistence";
 import { getDB } from "../src/services/db";
-import { BULK_WINDOW_KEY, type BulkWindow, endBulkWindow } from "../src/services/searchBulkWindow";
+import {
+  BULK_WINDOW_KEY,
+  type BulkWindow,
+  endBulkWindow,
+  openBulkWindow,
+} from "../src/services/searchBulkWindow";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
 import { faults, opens, resetFaults, withFaults } from "./helpers/faultyIndex";
@@ -51,6 +56,7 @@ const workerDbs = vi.hoisted(
     [] as Array<{
       chats: { offset: (n: number) => unknown; get: (...a: unknown[]) => unknown };
       chatMessages: { where: (...a: unknown[]) => unknown };
+      cache: { put: (...a: unknown[]) => Promise<unknown> };
     }>,
 );
 vi.mock("../src/services/db", async (importOriginal) => {
@@ -2154,8 +2160,13 @@ describe("search worker: a bulk window survives a restart of the worker (HVN-88)
     await until(async () => (await found("quokka")).length > 0);
     await until(async () => ((await windowOf()) as BulkWindow).since > began.since);
 
-    // The operation is still running: it saves another chat and ends.
-    expect(await windowOf()).toMatchObject({ ended: false });
+    // The operation is still running. The window starts where the catch-up began, less the margin
+    // (a chat stamped just before it may be committed just after the read).
+    expect(await windowOf()).toMatchObject({
+      ended: false,
+      since: new Date("2026-11-18T10:05:00Z").getTime() - 1000,
+    });
+    // It saves another chat and ends.
     await seedChats([saved("late", "a quokka", Date.now())]);
     await send({ type: "endBulk" });
     await until(async () => (await found("quokka")).length === 2);
@@ -2196,6 +2207,72 @@ describe("search worker: a bulk window survives a restart of the worker (HVN-88)
     await restartWithInit();
     await until(async () => (await found("quokka")).length > 0);
     await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("keeps the window when the rebuild that the catch-up joined failed", async () => {
+    await seedChats(
+      Array.from({ length: 120 }, (_, i) =>
+        buildChat(`c${String(i).padStart(3, "0")}`, "a wombat"),
+      ),
+    );
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+    await openBulkWindow(getDB(), Date.now() - 1000);
+    await endBulkWindow(getDB());
+
+    // A new worker, with a rebuild running (held after its first page) when it starts.
+    await loadWorker();
+    const hold = holdRebuildAfter(50);
+    faults.put = new Error("QuotaExceededError");
+    faults.putAfter = 60;
+    const rebuild = send({ type: "rebuild" });
+    await hold.paused;
+    await send({ type: "init" }); // finds the window, and joins the rebuild
+    hold.resume();
+    await rebuild;
+    await settle();
+
+    expect(posted.some((m) => m.type === "indexRebuildFailed")).toBe(true);
+    expect(await windowRow()).toBeDefined();
+  });
+
+  it("clears the window once the rebuild that the catch-up joined has succeeded", async () => {
+    await seedChats(
+      Array.from({ length: 120 }, (_, i) =>
+        buildChat(`c${String(i).padStart(3, "0")}`, "a wombat"),
+      ),
+    );
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+    await openBulkWindow(getDB(), Date.now() - 1000);
+    await endBulkWindow(getDB());
+
+    await loadWorker();
+    const hold = holdRebuildAfter(50);
+    const rebuild = send({ type: "rebuild" });
+    await hold.paused;
+    await send({ type: "init" });
+    hold.resume();
+    await rebuild;
+
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("carries on when the window cannot be written, and still catches up at endBulk", async () => {
+    await startWithAnIndex();
+    const put = vi
+      .spyOn(workerDbs[workerDbs.length - 1].cache, "put")
+      .mockRejectedValue(new Error("QuotaExceededError"));
+    await send({ type: "startBulk" });
+    expect(posted.filter((m) => m.type === "bulkComplete").pop()).toMatchObject({ success: true });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+
+    await send({ type: "endBulk" });
+    put.mockRestore();
+
+    expect(posted.some((m) => m.type === "error")).toBe(false);
+    await until(async () => (await found("quokka")).length > 0);
+    expect(await found("quokka")).toEqual(["old"]);
   });
 
   it("keeps the window when the index could not be opened for the catch-up", async () => {

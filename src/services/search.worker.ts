@@ -100,6 +100,8 @@ let openFailure: string | null = null;
  * and an unfinished rebuild have none, and a search says the index is being rebuilt.
  */
 let hasLiveIndex = false;
+/** The start of a bulk operation whose window could not be written; this worker's memory only. */
+let unrecordedSince: number | null = null;
 let rebuildState: IndexRebuildState | null = null;
 // The run that is rebuilding now (every pass of it), so a second request can join it.
 let rebuildRun: Promise<RebuildOutcome> | null = null;
@@ -781,8 +783,18 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
     if (msg.type === "startBulk") {
       // A resumed operation keeps the window it began with (bulk sync calls this again on resume).
-      // The window is on record before the reply, so a restart after it cannot lose it.
-      await openBulkWindow(db, Date.now() - CATCH_UP_MARGIN_MS);
+      // The window is on record before the reply, so a restart after it cannot lose it. A write
+      // that fails costs only that protection (the old behaviour); the operation carries on.
+      const since = Date.now() - CATCH_UP_MARGIN_MS;
+      try {
+        await openBulkWindow(db, since);
+      } catch (e) {
+        log.error(
+          "[SearchWorker] Could not record the bulk window; a restart now would lose it",
+          e,
+        );
+        unrecordedSince ??= since;
+      }
       self.postMessage({ type: "bulkComplete", success: true });
       return;
     }
@@ -791,7 +803,16 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       // The window on record, not one in memory: this worker may not be the one that saw the
       // operation begin. Marked ended before the reply, so a restart during the catch-up leaves
       // the catch-up owed.
-      const window = await endBulkWindow(db);
+      let window: BulkWindow | null = null;
+      try {
+        window = await endBulkWindow(db);
+      } catch (e) {
+        log.error("[SearchWorker] Could not end the bulk window on record", e);
+      }
+      // Nothing on record (the writes failed): the time this worker kept, as it did before.
+      if (!window && unrecordedSince !== null)
+        window = { since: unrecordedSince, ended: true, n: 0 };
+      unrecordedSince = null;
       // The chats the operation saved are indexed in the background; search answers meanwhile.
       if (window) void catchUpWindow(window);
       self.postMessage({ type: "bulkComplete", success: true });

@@ -23,6 +23,12 @@ export interface BulkWindow {
   since: number;
   /** `endBulk` has come: only the catch-up is still owed. A window that has not ended may be live. */
   ended: boolean;
+  /**
+   * Counts every write of the record. Two operations that keep the same `since` still have
+   * records that differ, so a catch-up settles only the record it was started for, never the one
+   * a later operation wrote (see `settleBulkWindow`).
+   */
+  n: number;
 }
 
 function isBulkWindow(value: unknown): value is BulkWindow {
@@ -31,12 +37,13 @@ function isBulkWindow(value: unknown): value is BulkWindow {
     typeof candidate === "object" &&
     candidate !== null &&
     typeof candidate.since === "number" &&
-    typeof candidate.ended === "boolean"
+    typeof candidate.ended === "boolean" &&
+    typeof candidate.n === "number"
   );
 }
 
 function sameWindow(a: BulkWindow | null, b: BulkWindow): boolean {
-  return a !== null && a.since === b.since && a.ended === b.ended;
+  return a !== null && a.since === b.since && a.ended === b.ended && a.n === b.n;
 }
 
 async function readIn(db: HaevnDatabase): Promise<BulkWindow | null> {
@@ -44,8 +51,15 @@ async function readIn(db: HaevnDatabase): Promise<BulkWindow | null> {
   return isBulkWindow(entry?.value) ? entry.value : null;
 }
 
-async function writeIn(db: HaevnDatabase, window: BulkWindow): Promise<void> {
-  await db.cache.put({ id: BULK_WINDOW_KEY, value: window, lastUpdated: Date.now() });
+/** Write the window as the record's next state (`n` one more than what it replaces). */
+async function writeIn(
+  db: HaevnDatabase,
+  window: Omit<BulkWindow, "n">,
+  after: BulkWindow | null,
+): Promise<BulkWindow> {
+  const next: BulkWindow = { ...window, n: (after?.n ?? 0) + 1 };
+  await db.cache.put({ id: BULK_WINDOW_KEY, value: next, lastUpdated: Date.now() });
+  return next;
 }
 
 /** The window on record, or null when no bulk operation owes a catch-up. */
@@ -60,9 +74,8 @@ export function readBulkWindow(db: HaevnDatabase): Promise<BulkWindow | null> {
  */
 export function openBulkWindow(db: HaevnDatabase, since: number): Promise<BulkWindow> {
   return db.transaction("rw", db.cache, async () => {
-    const window: BulkWindow = { since: (await readIn(db))?.since ?? since, ended: false };
-    await writeIn(db, window);
-    return window;
+    const current = await readIn(db);
+    return writeIn(db, { since: current?.since ?? since, ended: false }, current);
   });
 }
 
@@ -71,17 +84,17 @@ export function endBulkWindow(db: HaevnDatabase): Promise<BulkWindow | null> {
   return db.transaction("rw", db.cache, async () => {
     const current = await readIn(db);
     if (!current) return null;
-    const window: BulkWindow = { since: current.since, ended: true };
-    await writeIn(db, window);
-    return window;
+    return writeIn(db, { since: current.since, ended: true }, current);
   });
 }
 
 /**
  * A catch-up from `window` has succeeded. An ended window is done and goes. One that has not
  * ended may be live, so it stays and starts from `caughtUpTo`. Either way only if the record is
- * still `window`: an operation that began again meanwhile has reopened it, and its chats are not
- * caught up yet.
+ * still `window`, write for write (`n`): an operation that began again meanwhile has reopened it,
+ * and its chats are not caught up yet. Comparing `since` and `ended` alone would not do: an
+ * operation that begins and ends while an earlier catch-up runs keeps the same `since`, so its
+ * record would look like the one that catch-up was started for.
  */
 export function settleBulkWindow(
   db: HaevnDatabase,
@@ -89,8 +102,9 @@ export function settleBulkWindow(
   caughtUpTo: number,
 ): Promise<void> {
   return db.transaction("rw", db.cache, async () => {
-    if (!sameWindow(await readIn(db), window)) return;
+    const current = await readIn(db);
+    if (!sameWindow(current, window)) return;
     if (window.ended) await db.cache.delete(BULK_WINDOW_KEY);
-    else await writeIn(db, { since: Math.max(window.since, caughtUpTo), ended: false });
+    else await writeIn(db, { since: Math.max(window.since, caughtUpTo), ended: false }, current);
   });
 }

@@ -504,7 +504,8 @@ export namespace CacheService {
   }
 
   /**
-   * Clear all cache entries.
+   * Clear all cache entries. This also deletes the search worker's bulk window
+   * (`search:bulk-window`, see searchBulkWindow.ts): a catch-up the worker still owes is lost.
    */
   export async function clear(): Promise<void> {
     try {

@@ -23,9 +23,9 @@ describe("the bulk window record", () => {
   });
 
   it("starts at the time it is given, and an operation that begins again keeps the first", async () => {
-    expect(await openBulkWindow(db(), 1000)).toEqual({ since: 1000, ended: false });
-    expect(await openBulkWindow(db(), 5000)).toEqual({ since: 1000, ended: false });
-    expect(await readBulkWindow(db())).toEqual({ since: 1000, ended: false });
+    expect(await openBulkWindow(db(), 1000)).toMatchObject({ since: 1000, ended: false });
+    expect(await openBulkWindow(db(), 5000)).toMatchObject({ since: 1000, ended: false });
+    expect(await readBulkWindow(db())).toMatchObject({ since: 1000, ended: false });
   });
 
   it("ends only a window that is on record", async () => {
@@ -33,8 +33,8 @@ describe("the bulk window record", () => {
     expect(await db().cache.get(BULK_WINDOW_KEY)).toBeUndefined();
 
     await openBulkWindow(db(), 1000);
-    expect(await endBulkWindow(db())).toEqual({ since: 1000, ended: true });
-    expect(await readBulkWindow(db())).toEqual({ since: 1000, ended: true });
+    expect(await endBulkWindow(db())).toMatchObject({ since: 1000, ended: true });
+    expect(await readBulkWindow(db())).toMatchObject({ since: 1000, ended: true });
   });
 
   it("clears an ended window once it is settled", async () => {
@@ -52,10 +52,11 @@ describe("the bulk window record", () => {
     const open = await openBulkWindow(db(), 1000);
 
     await settleBulkWindow(db(), open, 9000);
-    expect(await readBulkWindow(db())).toEqual({ since: 9000, ended: false });
+    const moved = await readBulkWindow(db());
+    expect(moved).toMatchObject({ since: 9000, ended: false });
 
-    await settleBulkWindow(db(), { since: 9000, ended: false }, 2000);
-    expect(await readBulkWindow(db())).toEqual({ since: 9000, ended: false });
+    await settleBulkWindow(db(), moved as NonNullable<typeof moved>, 2000);
+    expect(await readBulkWindow(db())).toMatchObject({ since: 9000, ended: false });
   });
 
   it("leaves alone a window that an operation reopened while the catch-up ran", async () => {
@@ -66,10 +67,33 @@ describe("the bulk window record", () => {
 
     // The next operation begins before the catch-up of the last one is done: its chats are not
     // caught up yet, and it keeps the older time, which covers the chats the first still owes.
-    expect(await openBulkWindow(db(), 7000)).toEqual({ since: 1000, ended: false });
+    expect(await openBulkWindow(db(), 7000)).toMatchObject({ since: 1000, ended: false });
     await settleBulkWindow(db(), ended, 9000);
 
-    expect(await readBulkWindow(db())).toEqual({ since: 1000, ended: false });
+    expect(await readBulkWindow(db())).toMatchObject({ since: 1000, ended: false });
+  });
+
+  it("settles only the record its own catch-up was started for, when two operations keep the same time", async () => {
+    // Operation 1 ends and its catch-up (C1) starts with this record.
+    await openBulkWindow(db(), 1000);
+    const first = (await endBulkWindow(db())) as NonNullable<
+      Awaited<ReturnType<typeof endBulkWindow>>
+    >;
+    // Operation 2 begins and ends before C1 is done; it keeps `since`, so its ended record has
+    // the same time and the same `ended` as the first. Its catch-up (C2) starts with it.
+    await openBulkWindow(db(), 7000);
+    const second = (await endBulkWindow(db())) as NonNullable<
+      Awaited<ReturnType<typeof endBulkWindow>>
+    >;
+    expect(second).toMatchObject({ since: first.since, ended: first.ended });
+
+    // C1 finishes first. Operation 2's chats are still owed (C2 may yet fail or be lost).
+    await settleBulkWindow(db(), first, 9000);
+    expect(await readBulkWindow(db())).toEqual(second);
+
+    // C2 finishes: now it is paid.
+    await settleBulkWindow(db(), second, 9500);
+    expect(await readBulkWindow(db())).toBeNull();
   });
 
   it("reads a row it does not understand as no window", async () => {
