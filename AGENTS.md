@@ -47,17 +47,14 @@ A task is done when these pass on the final tree:
 ```bash
 pnpm test                    # tests, single run (`pnpm run test:watch` watches)
 pnpm run lint                # biome, src/ only
+pnpm run typecheck           # tsc --noEmit over src/
 pnpm run build               # the extension, into dist/
 pnpm -C cli run typecheck    # when cli/ changed
 pnpm -C cli run lint         # when cli/ changed
 pnpm -C cli test             # when cli/ changed
 ```
 
-Known gaps, each with a ticket rather than a workaround:
-
-- The root has no typecheck in the gate yet. `npx tsc --noEmit --jsx react-jsx` is clean; plain `npx tsc --noEmit` still reports errors in the TSX files, because `tsconfig.json` says `"jsx": "react"` while esbuild builds with the automatic runtime (HVN-8, then HVN-46 puts `pnpm run typecheck` in CI). Until then, run the `--jsx react-jsx` form by hand.
-
-CI (`.github/workflows/ci.yml`) runs `lint`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the extension build and the docs build. A change the user sees in the UI is also checked in the running extension, in the dev profile (`skills/browser-check/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
+CI (`.github/workflows/ci.yml`) runs `lint`, `typecheck`, `test`, the CLI's lint, typecheck and tests, and `build` on every push to `main`. The pre-push hook runs the typecheck, the extension build and the docs build. A change the user sees in the UI is also checked in the running extension, in the dev profile (`skills/browser-check/SKILL.md`): rebuild, reload, drive it, read `haevnDebug.getLogs()`.
 
 ## Commits and releases
 

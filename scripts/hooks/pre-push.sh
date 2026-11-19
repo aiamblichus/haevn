@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "pre-push: running typecheck"
+pnpm run typecheck
+
 echo "pre-push: running extension build"
 pnpm run build
 
