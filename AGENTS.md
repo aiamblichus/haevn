@@ -17,6 +17,7 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | Product: who it is for, what is in and out | `gnomon read /project/haevn/product/index` |
 | Run, drive and debug the extension | `skills/dev-guide/SKILL.md` (Chrome MCP + `haevnDebug`) |
 | See a change run in a real browser: the dev and prod Chrome profiles, their MCP servers, fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
+| Check every provider still works before a release (the runbook: import formats in the dev profile, web providers in αιamblichus's Chrome) | `skills/provider-runbook/SKILL.md` (KB: `/project/haevn/skills/provider-runbook`) |
 | The CLI | `skills/haevn-cli/SKILL.md`, `cli/README.md` |
 | Current work | `gnomon ticket view working --namespace HVN`, `gnomon ticket view active --namespace HVN` |
 | Blocked on a human | `gnomon ticket view needs_human --namespace HVN` |
