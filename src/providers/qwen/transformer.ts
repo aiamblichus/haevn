@@ -56,6 +56,29 @@ function convertQwenFiles(files: QwenFile[] | undefined): UrlAsset[] {
 }
 
 /**
+ * The URL of a generated image in a content_list item, or undefined when the item is not one.
+ */
+function generatedImageUrl(item: QwenContentListItem): string | undefined {
+  return item.phase === "image_gen" &&
+    typeof item.content === "string" &&
+    item.content.startsWith("http")
+    ? item.content
+    : undefined;
+}
+
+/**
+ * The assets an assistant message keeps: its generated images, in content_list order. The n-th
+ * downloaded asset is the n-th generated image, which convertContentListItems relies on (HVN-97).
+ */
+function generatedImageAssets(contentList: QwenContentListItem[] | null | undefined): UrlAsset[] {
+  return (contentList ?? []).flatMap((item) => {
+    const url = generatedImageUrl(item);
+    // Qwen typically generates PNGs
+    return url ? [{ url, type: "image/png" }] : [];
+  });
+}
+
+/**
  * Convert Qwen content_list items to HAEVN response parts
  */
 function convertContentListItems(
@@ -92,8 +115,8 @@ function convertContentListItems(
 
       case "image_gen":
         // Image generation - extract image URL
-        if (item.content && typeof item.content === "string" && item.content.startsWith("http")) {
-          // Find the corresponding downloaded content if available
+        if (generatedImageUrl(item)) {
+          // The n-th generated image has the n-th downloaded asset (generatedImageAssets)
           const content = downloadedContent[assetIndex++];
           if (content) {
             parts.push({
@@ -247,29 +270,13 @@ export async function transformQwenToHaevn(
 
   for (let i = 0; i < historyMessages.length; i++) {
     const qwenMsg = historyMessages[i];
-    const assets: UrlAsset[] = [];
-
-    // Collect files
-    if (qwenMsg.files && qwenMsg.files.length > 0) {
-      assets.push(...convertQwenFiles(qwenMsg.files));
-    }
-
-    // Collect generated images from content_list
-    if (qwenMsg.content_list && qwenMsg.content_list.length > 0) {
-      for (const item of qwenMsg.content_list) {
-        if (
-          item.phase === "image_gen" &&
-          item.content &&
-          typeof item.content === "string" &&
-          item.content.startsWith("http")
-        ) {
-          assets.push({
-            url: item.content,
-            type: "image/png", // Qwen typically generates PNGs
-          });
-        }
-      }
-    }
+    // Download only what convertQwenMessage keeps from the message: a user message's files, an
+    // assistant message's generated images (HVN-97). Anything else is stored and referenced by
+    // nothing.
+    const assets: UrlAsset[] =
+      qwenMsg.role === "user"
+        ? convertQwenFiles(qwenMsg.files)
+        : generatedImageAssets(qwenMsg.content_list);
 
     if (assets.length > 0) {
       log.info(

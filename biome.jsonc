@@ -68,6 +68,41 @@
       }
     },
     {
+      // Handlers and pages reach the archive through a service or repository, never Dexie
+      // (HVN-21). Type-only imports stay allowed; the options page's debug tool is the exception.
+      // This override replaces the top-level rule for these files, so it repeats the SQLite path.
+      "includes": [
+        "src/background/handlers/**",
+        "src/background/wsBridge.ts",
+        "src/options/**",
+        "src/popup/**",
+        "src/viewer/**",
+        "src/components/**",
+        "!src/options/debug.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@sqlite.org/sqlite-wasm": "Only src/services/searchIndex.ts imports SQLite; go through its SearchIndex."
+                },
+                "patterns": [
+                  {
+                    "group": ["**/services/db"],
+                    "importNamePattern": "getDB|HaevnDatabase|\\*",
+                    "message": "Handlers and pages do not open the Dexie database (HVN-21). Go through a service or repository; type-only imports are fine."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["*.ts", "*.tsx"],
       "linter": {
         "rules": {

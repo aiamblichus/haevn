@@ -128,7 +128,7 @@ The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /
 
 ### Architecture rules
 
-- **Persistence goes through the services** (`syncService`, `chatRepository`, `metadataRepository`, …), never Dexie directly from a handler. (`metadataHandlers.ts` imports `db` today; that is a finding, not a precedent.)
+- **Persistence goes through the services** (`syncService`, `chatRepository`, `metadataRepository`, …), never Dexie directly from a handler or a page. Biome enforces it for `src/background/handlers/`, `src/background/wsBridge.ts`, `src/options/`, `src/popup/`, `src/viewer/` and `src/components/` (`biome.jsonc`, HVN-21): a value import of `services/db` fails `pnpm run lint`. A type-only import (`import type`) is fine. `src/options/debug.ts` is the one exception.
 - **All indexing via the search worker**; the services proxy to it.
 - **Heavy operations in workers**: ZIP generation, indexing, stats, layout.
 - **Browser APIs via the service worker**; workers use the bridge pattern.

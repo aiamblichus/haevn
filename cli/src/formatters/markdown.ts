@@ -4,7 +4,7 @@
 
 import type { Chat, ChatMessage } from "../types/chat";
 import { formatTimestamp } from "../utils/output";
-import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
+import { getMessageRole, getMessagesOnBranch, getMessageText, windowMessages } from "../utils/tree";
 
 export interface MarkdownOptions {
   includeMetadata?: boolean;
@@ -32,22 +32,15 @@ export function formatBranchAsMarkdown(
     tail = 0,
     head = 0,
   } = options;
-  let messages = getMessagesOnBranch(chat, branchPath);
+  const allMessages = getMessagesOnBranch(chat, branchPath);
+  const totalMessages = allMessages.length;
 
   // Apply head/tail window before filtering so the count is accurate.
   // head takes precedence over tail when both are specified.
-  const totalMessages = messages.length;
-  const headTruncated = head > 0 && head < totalMessages;
-  const tailTruncated = !headTruncated && tail > 0 && tail < totalMessages;
-
-  if (headTruncated) {
-    messages = messages.slice(0, head);
-  } else if (tailTruncated) {
-    messages = messages.slice(-tail);
-  }
+  const cut = windowMessages(allMessages, { head, tail });
 
   // Filter out messages with no text (tool calls, image-only uploads)
-  const rendered = messages.filter((m) => {
+  const rendered = cut.messages.filter((m) => {
     const role = getMessageRole(m);
     if (skipSystem && role === "system") return false;
     return getMessageText(m, { includeThinking, skipSystem }).trim();
@@ -67,10 +60,8 @@ export function formatBranchAsMarkdown(
     lines.push("");
   }
 
-  if (tailTruncated) {
-    lines.push(
-      `_…${totalMessages - tail} earlier messages omitted (use without --tail to see all)_`,
-    );
+  if (cut.tailOmitted > 0) {
+    lines.push(`_…${cut.tailOmitted} earlier messages omitted (use without --tail to see all)_`);
     lines.push("");
   }
 
@@ -93,8 +84,8 @@ export function formatBranchAsMarkdown(
     lines.push("");
   }
 
-  if (headTruncated) {
-    lines.push(`_…${totalMessages - head} later messages omitted (use without --head to see all)_`);
+  if (cut.headOmitted > 0) {
+    lines.push(`_…${cut.headOmitted} later messages omitted (use without --head to see all)_`);
     lines.push("");
   }
 

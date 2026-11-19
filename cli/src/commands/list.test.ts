@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequest } from "../daemon/client.js";
+import { runAsTyped } from "../testing/runAsTyped";
 import type { Chat } from "../types/chat";
 import { consola } from "../utils/output";
 import listCommand, { formatChatListText, parseMetadataKeys, parseOffset } from "./list";
@@ -19,6 +20,44 @@ describe("haevn list --offset (HVN-14)", () => {
 
   it.each(["-1", "1.5", "abc", "10x"])("refuses %s, which is not a whole number", (input) => {
     expect(() => parseOffset(input)).toThrow("--offset must be a whole number, 0 or more");
+  });
+});
+
+describe("haevn list refuses a negative --offset or --limit, either way (HVN-84)", () => {
+  beforeEach(() => {
+    vi.mocked(daemonRequest).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [["--offset", "-1"], '--offset must be a whole number, 0 or more (got "-1").'],
+    [["--offset=-1"], '--offset must be a whole number, 0 or more (got "-1").'],
+    [["--limit", "-1"], '--limit must be a whole number, 1 or more (got "-1").'],
+    [["-l", "-1"], '--limit must be a whole number, 1 or more (got "-1").'],
+  ])("%j exits 1 with the message, before it asks the daemon", async (rawArgs, message) => {
+    const error = vi.spyOn(consola, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(runAsTyped(listCommand, rawArgs)).rejects.toThrow("exit 1");
+
+    expect(error).toHaveBeenCalledWith(message);
+    expect(daemonRequest).not.toHaveBeenCalled();
+  });
+
+  it("still asks the daemon for the page after a valid --offset typed with a space", async () => {
+    vi.mocked(daemonRequest).mockResolvedValue({ chats: [], total: 0, hasMore: false });
+    vi.spyOn(consola, "log").mockImplementation(() => undefined);
+
+    await runAsTyped(listCommand, ["--offset", "40"]);
+
+    expect(daemonRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ options: expect.objectContaining({ offset: 40 }) }),
+    );
   });
 });
 

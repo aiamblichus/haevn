@@ -18,6 +18,11 @@ export async function getMany(chatIds: string[]): Promise<Map<string, ChatMetada
   return map;
 }
 
+/** How many chats have an embedding: the Starmap's count of the points it can place. */
+export async function countEmbeddings(): Promise<number> {
+  return getDB().chatEmbeddings.count();
+}
+
 export async function set(
   chatId: string,
   partial: Partial<Omit<ChatMetadataRecord, "chatId">>,
