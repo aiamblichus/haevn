@@ -15,6 +15,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type {
   ChatAttachment,
@@ -186,7 +187,7 @@ export function hasTextContent(chat: HAEVN.Chat): boolean {
  */
 export async function convertClaudeTranscriptToHaevn(
   transcript: ChatTranscript,
-  opts?: { projects?: Project[] },
+  opts?: { projects?: Project[]; media?: TransformOptions["media"] },
 ): Promise<HAEVN.Chat> {
   const chatId = transcript.uuid;
 
@@ -239,6 +240,7 @@ export async function convertClaudeTranscriptToHaevn(
       chatId,
       messageId,
       credentials: "include",
+      media: opts?.media,
     });
 
     messageMedia.set(messageId, downloadedContent);

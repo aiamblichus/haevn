@@ -36,8 +36,8 @@ const extractor: Extractor<GrokRawExtraction> = {
 
 // Transformer implementation
 const transformer: Transformer<GrokRawExtraction> = {
-  transform: async (raw: GrokRawExtraction) => {
-    const chat = await convertGrokToHaevn(raw);
+  transform: async (raw: GrokRawExtraction, _tabId, options) => {
+    const chat = await convertGrokToHaevn(raw, options);
     return [chat as Chat];
   },
 

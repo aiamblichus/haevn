@@ -17,12 +17,14 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { AIStudioConversationData } from "./model";
 
 export async function transformAIStudioToHaevn(
   aistudioData: AIStudioConversationData,
+  options?: TransformOptions,
 ): Promise<HAEVN.Chat> {
   const chatId = aistudioData.conversationId;
   // AI Studio's page carries no message ids, and its timestamps are invented when the page shows
@@ -66,6 +68,7 @@ export async function transformAIStudioToHaevn(
       supportAllMediaTypes: true, // AI Studio supports all media types
       chatId,
       messageId,
+      media: options?.media,
     });
 
     messageFiles.set(i, downloadedContent);

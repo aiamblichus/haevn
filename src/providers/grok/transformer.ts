@@ -9,6 +9,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { GrokFileAttachment, GrokRawExtraction, GrokResponse } from "./model";
 
@@ -51,7 +52,10 @@ function calculateThinkingDuration(startTime?: string, endTime?: string): number
 /**
  * Convert a Grok raw extraction to HAEVN format
  */
-export async function convertGrokToHaevn(extraction: GrokRawExtraction): Promise<HAEVN.Chat> {
+export async function convertGrokToHaevn(
+  extraction: GrokRawExtraction,
+  options?: TransformOptions,
+): Promise<HAEVN.Chat> {
   const { conversation, responseNodes, responses } = extraction;
   const chatId = conversation.conversationId;
 
@@ -86,6 +90,7 @@ export async function convertGrokToHaevn(extraction: GrokRawExtraction): Promise
       chatId,
       messageId,
       credentials: "include",
+      media: options?.media,
     });
 
     messageMedia.set(messageId, downloadedContent);

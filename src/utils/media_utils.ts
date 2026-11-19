@@ -209,6 +209,11 @@ export interface ProcessExternalAssetsOptions {
    * Useful for providers where image URLs are navigation-allowed but fetch-blocked.
    */
   helperTabOnly?: boolean;
+  /**
+   * "skip" returns the URL fallback for every asset and touches nothing else: no download, no
+   * lookup, no write to OPFS, no helper tab. Omitted or "store" is a sync's behaviour.
+   */
+  media?: "store" | "skip";
 }
 
 /**
@@ -345,6 +350,18 @@ export async function processExternalAssets(
     credentials,
     helperTabOnly = false,
   } = options;
+
+  // A read-only caller gets the URL fallbacks and nothing else: the storage service is not even
+  // asked for.
+  if (options.media === "skip") {
+    return assets.map((asset) =>
+      createFallbackUrl(
+        normalizeAssetUrl(asset.url),
+        asset.type || "image/jpeg",
+        supportAllMediaTypes,
+      ),
+    );
+  }
 
   // OPFS is mandatory - chatId and messageId are required parameters
   const mediaStorage = getMediaStorageService();

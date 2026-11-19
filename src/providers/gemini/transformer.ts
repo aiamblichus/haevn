@@ -12,6 +12,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { GeminiConversationData } from "./model";
@@ -19,6 +20,7 @@ import type { GeminiConversationData } from "./model";
 export async function transformGeminiToHaevn(
   geminiData: GeminiConversationData,
   tabId?: number,
+  options?: TransformOptions,
 ): Promise<HAEVN.Chat> {
   // IDs are already normalized (no 'c_' prefix) when extracted from URL
   const conversationId = geminiData.conversationId;
@@ -63,6 +65,7 @@ export async function transformGeminiToHaevn(
       messageId,
       tabId,
       helperTabOnly: true,
+      media: options?.media,
     });
 
     messageFiles.set(i, downloadedContent);

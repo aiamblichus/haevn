@@ -64,6 +64,17 @@ export interface Extractor<TRaw> {
 }
 
 /**
+ * What a transform may touch beyond its input.
+ *
+ * `media: "skip"` is for a read-only caller (the provider health check): a transformer that would
+ * download an asset and write it to OPFS takes its URL-fallback branch instead, so it fetches
+ * nothing and writes nothing. Omitted or `"store"` is the behaviour of a sync.
+ */
+export interface TransformOptions {
+  media?: "store" | "skip";
+}
+
+/**
  * Transformer Interface
  * Responsible for transforming provider-specific raw data to HAEVN.Chat format
  * @template TRaw - Provider-specific raw data type
@@ -73,9 +84,10 @@ export interface Transformer<TRaw> {
    * Transform provider-specific raw data to HAEVN.Chat format
    * @param raw - Raw platform-specific data
    * @param tabId - Optional tab ID where the chat was extracted from (for media fetching)
+   * @param options - What the transform may touch (see TransformOptions); omitted, it stores media
    * @returns Array of HAEVN.Chat objects (some providers can return multiple chats)
    */
-  transform(raw: TRaw, tabId?: number): Promise<Chat[]>;
+  transform(raw: TRaw, tabId?: number, options?: TransformOptions): Promise<Chat[]>;
 
   /**
    * Validate raw data structure (optional)

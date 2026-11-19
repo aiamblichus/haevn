@@ -172,8 +172,8 @@ const extractor: Extractor<AIStudioConversationData> = {
 
 // Transformer implementation
 const transformer: Transformer<AIStudioConversationData> = {
-  transform: async (raw: AIStudioConversationData) => {
-    const chat = await transformAIStudioToHaevn(raw);
+  transform: async (raw: AIStudioConversationData, _tabId, options) => {
+    const chat = await transformAIStudioToHaevn(raw, options);
     return [chat as Chat];
   },
 
