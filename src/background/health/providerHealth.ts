@@ -8,7 +8,10 @@
 //
 // STRICTLY READ-ONLY (decision 3 of /project/haevn/decisions/2026-11-19-provider-health-decisions):
 // nothing here imports a save, a queue, an index or the media store, and the transform is called
-// with `media: "skip"`. The only write is the operation lock, a flag in the storage adapter.
+// with `media: "skip"`. The only write of ours is the operation lock, a flag in the storage
+// adapter. Not covered by "read-only": loading a provider's tab fires the credential-capture
+// listeners that browsing the site fires (the same writes to chrome.storage.local), and ChatGPT's
+// extractor loads a chat's images into memory (nothing is stored). Neither touches the archive.
 //
 // NO CHAT TEXT, TITLE OR ID reaches the report. A row holds counts, the names of rules, and
 // errors scrubbed of ids, URLs and quoted text. The sampled chats' ids are held in memory for
@@ -298,6 +301,28 @@ function needsForegroundTab(provider: Provider): boolean {
   return provider.name === "gemini" || !!provider.bulkSyncConfig?.requiresActiveTab;
 }
 
+/**
+ * The providers whose failure blocks a release (decision 5 of the provider health decisions).
+ * They are checked first, in this order, so a run that runs out of time skips the others and never
+ * these. The CLI keeps the same list for its exit code (`cli/src/commands/health.ts`).
+ */
+export const RELEASE_BLOCKING_PROVIDERS: readonly string[] = ["claude", "chatgpt", "gemini"];
+
+/**
+ * The order a run takes: the release-blocking providers first; then the rest, the ones that fetch
+ * through the API first (background tabs, quick) and the ones that scroll a list in a foreground
+ * tab last, so a run out of time loses those and not the rest.
+ */
+export function runOrder(providers: readonly Provider[]): Provider[] {
+  const rank = (p: Provider): number => {
+    const blocking = RELEASE_BLOCKING_PROVIDERS.indexOf(p.name);
+    return blocking >= 0
+      ? blocking
+      : RELEASE_BLOCKING_PROVIDERS.length + Number(needsForegroundTab(p));
+  };
+  return [...providers].sort((a, b) => rank(a) - rank(b));
+}
+
 interface Target {
   provider: Provider;
   baseUrl?: string;
@@ -341,6 +366,13 @@ async function checkProvider(
         needsForegroundTab(provider),
         (id) => {
           holder.tabId = id;
+          // A tab that comes into being after the provider's time ran out (chrome.tabs.create
+          // answering late) is past the `finally` that closes the tab: close it here.
+          if (state.cancelled) {
+            deps.probe.close(id).catch((err) => {
+              log.warn(`[ProviderHealth] Could not close a late tab for ${provider.name}:`, err);
+            });
+          }
         },
       );
     } catch (err) {
@@ -590,11 +622,7 @@ export async function runProviderHealth(
   const started = deps.now();
   const startedAt = new Date(started).toISOString();
   try {
-    // Providers that fetch through the API first (background tabs, quick); the two that scroll a
-    // list in a foreground tab last, so a run that runs out of time loses those and not the rest.
-    const order = [...chosen].sort(
-      (a, b) => Number(needsForegroundTab(a)) - Number(needsForegroundTab(b)),
-    );
+    const order = runOrder(chosen);
     const rows = new Map<string, ProviderHealthRow>();
     const skipped = (provider: Provider, note: string): ProviderHealthRow => ({
       provider: provider.name,

@@ -131,11 +131,29 @@ describe("providerHealth: a healthy world", () => {
     expect(probe.maxOpen).toBe(1);
   });
 
-  it("runs the providers that need a foreground tab last", async () => {
+  it("checks the release-blocking providers first, then the rest with the foreground ones last", async () => {
     const probe = new FakeProbe();
     await runProviderHealth({}, deps(probe));
-    const last = probe.listed.slice(-2).sort();
-    expect(last).toEqual(["aistudio", "gemini"]);
+    expect(probe.listed.slice(0, 3)).toEqual(["claude", "chatgpt", "gemini"]);
+    expect(probe.listed.slice(-1)).toEqual(["aistudio"]);
+    expect(probe.listed).toHaveLength(9);
+  });
+
+  it("a run out of time skips the providers that do not block a release, never those that do", async () => {
+    let clock = 0;
+    const probe = new FakeProbe();
+    const slowOpen = probe.open.bind(probe);
+    probe.open = async (url, fg, onTab) => {
+      clock += 50_000; // each provider takes 50 s of a 240 s run
+      return slowOpen(url, fg, onTab);
+    };
+    const report = await runProviderHealth({}, deps(probe, { now: () => clock }));
+    for (const name of ["claude", "chatgpt", "gemini"]) {
+      expect(row(report, name).status, name).not.toBe("skipped");
+    }
+    const skipped = report.rows.filter((r) => r.status === "skipped").map((r) => r.provider);
+    expect(skipped.length).toBeGreaterThan(0);
+    expect(skipped).not.toContain("claude");
   });
 });
 
@@ -434,6 +452,32 @@ describe("providerHealth: a slow provider gets a time limit", () => {
     expect(probe.fetched).toEqual([]);
   });
 
+  it("closes a tab that comes into being after the provider's time ran out", async () => {
+    // chrome.tabs.create answers late: the limit has fired and the cleanup has run with no tab id
+    fakeClock();
+    const probe = new FakeProbe();
+    let lateTab: (() => void) | undefined;
+    probe.open = async (_url, _fg, onTab) => {
+      return new Promise<number>(() => {
+        lateTab = () => {
+          const id = probe.nextTab++;
+          probe.opened.push(id);
+          onTab(id);
+        };
+      });
+    };
+    const report = await untilSettled(
+      runProviderHealth({ providers: ["claude"], timeoutMs: 5_000 }, deps(probe)),
+    );
+    expect(row(report, "claude").status).toBe("timeout");
+    expect(probe.opened).toEqual([]);
+
+    lateTab?.();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(probe.opened).toHaveLength(1);
+    expect(probe.closed).toEqual(probe.opened);
+  });
+
   it("holds the last provider to what is left of the run's time, not to its own full limit", async () => {
     fakeClock();
     const probe = new FakeProbe();
@@ -549,6 +593,32 @@ describe("providerHealth: no chat text, title or id in the report", () => {
     expect(Object.keys(row(report, "claude")).sort()).toEqual(
       ["checked", "findings", "listed", "ms", "provider", "shapes", "signedIn", "status"].sort(),
     );
+  });
+});
+
+describe("a short chat id in an error", () => {
+  // Gemini ids are 16 hex characters, Poe's about 12: under the 20 characters the generic token
+  // scrub masks, so only the list of ids the run sampled keeps them out of a report.
+  const SHORT_ID = "9f8e7d6c5b4a";
+
+  it("is masked in the row, though no generic rule would catch it", async () => {
+    expect(scrubMessage(`chat ${SHORT_ID} not found`)).toContain(SHORT_ID); // the control
+
+    const probe = new FakeProbe();
+    probe.script("gemini", (s) => {
+      s.ids = [SHORT_ID, "1a2b3c4d5e6f"];
+      s.chats = {
+        [SHORT_ID]: { success: false, error: `chat ${SHORT_ID} not found` },
+        "1a2b3c4d5e6f": { success: false, error: "chat 1a2b3c4d5e6f not found" },
+      };
+    });
+    const report = await runProviderHealth({ providers: ["gemini"] }, deps(probe));
+    const gemini = row(report, "gemini");
+    expect(gemini.status).toBe("fail");
+    expect(gemini.note).toContain("not found");
+    expect(JSON.stringify(report)).not.toContain(SHORT_ID);
+    expect(JSON.stringify(report)).not.toContain("1a2b3c4d5e6f");
+    expect(gemini.note).toContain("<id>");
   });
 });
 
