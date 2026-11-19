@@ -364,6 +364,29 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     ]);
   });
 
+  it("answers total 0 for an OpenRouter file whose chatrooms are all empty, saving nothing", async () => {
+    const { makeExport } = await import("./helpers/openrouterExport");
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({
+      action: "import",
+      format: "openrouter",
+      files: [
+        {
+          name: "empty.json",
+          content: JSON.stringify(makeExport([{ title: "Empty", messages: {}, items: {} }])),
+        },
+      ],
+      options: { overwrite: true },
+    });
+
+    expect(reply).toMatchObject({
+      success: true,
+      data: { format: "openrouter", total: 0, processed: 0, saved: 0, errors: 0 },
+    });
+    expect(saveImportedChat).not.toHaveBeenCalled();
+  });
+
   it("skipIndex saves without indexing now", async () => {
     const bridge = await connectedBridge();
 

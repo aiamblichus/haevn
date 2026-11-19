@@ -268,7 +268,7 @@ Notes:
 - If the chats are saved but the extension cannot bring its search index up to date, `haevn import` prints `index=failed (reason)` and exits 1; the chats are in the archive and the next rebuild of the search index picks them up.
 - An import takes the extension's operation lock. While a bulk sync, another import or a bulk export runs, `haevn import` exits 1 with "Another operation is running"; run it again when that ends.
 - `claude_code`, `codex`, `pi`, and `openrouter` are import-only providers (no live sync).
-- An OpenRouter export file holds many chatrooms and gives one chat each, named after the chatroom's first message, so importing the same export again replaces the chats instead of duplicating them. `processed` and `total` count chats, not files.
+- An OpenRouter export file holds many chatrooms and gives one chat each, named after the chatroom's first message, so importing the same export again replaces the chats instead of duplicating them. `processed` and `total` count chats, not files. A file with no chat (every chatroom empty) prints "No chats found in the input" and exits 1.
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.
 
 ## Setup

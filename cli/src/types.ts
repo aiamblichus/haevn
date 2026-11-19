@@ -136,6 +136,7 @@ export interface ChatMetadataRecord {
 
 export interface ImportResult {
   format: ImportFormat;
+  /** The number of chats the files held, which `processed` counts up to (not the number of files). */
   total: number;
   processed: number;
   saved: number;

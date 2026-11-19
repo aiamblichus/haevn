@@ -1005,7 +1005,8 @@ async function handleImport(
     };
   }
 
-  // An OpenRouter export file holds many chats (one per room): each room is an item of the batch.
+  // An OpenRouter export file holds many chats (one per room): each room that has a message is an
+  // item of the batch, named "<file>#<n>" with n counting those rooms (not the room's place in the file).
   const openRouterItems = (file: WsImportFilePayload): ImportBatchItem[] => {
     let extraction: ReturnType<typeof parseOpenRouterExport>;
     try {
@@ -1030,37 +1031,36 @@ async function handleImport(
     }));
   };
 
-  const items: ImportBatchItem[] =
-    format === "openrouter" ? files.flatMap(openRouterItems) : files.map(fileItem);
-  function fileItem(file: WsImportFilePayload): ImportBatchItem {
-    return {
-      name: file.name,
-      load: async () => {
-        let chat: Chat;
-        let raw: AllProviderRawData | undefined;
-        if (format === "codex") {
-          const extraction = await parseCodexJsonl(file.content);
-          chat = transformCodexToHaevnChat(extraction);
-          raw = extraction;
-        } else if (format === "pi") {
-          const extraction = await parsePiJsonl(file.content);
-          chat = transformPiToHaevnChat(extraction);
-          raw = extraction;
-        } else if (format === "haevn_json") {
-          const contentHash = await sha256Hex(file.content);
-          chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
-        } else if (format === "markdown") {
-          chat = await parseMarkdownContent(file.content);
-        } else {
-          const extraction = await parseClaudeCodeJsonl(file.content);
-          chat = transformToHaevnChat(extraction);
-          raw = extraction;
-        }
+  const fileItems: ImportBatchItem[] = files.map((file) => ({
+    name: file.name,
+    load: async () => {
+      let chat: Chat;
+      let raw: AllProviderRawData | undefined;
+      if (format === "codex") {
+        const extraction = await parseCodexJsonl(file.content);
+        chat = transformCodexToHaevnChat(extraction);
+        raw = extraction;
+      } else if (format === "pi") {
+        const extraction = await parsePiJsonl(file.content);
+        chat = transformPiToHaevnChat(extraction);
+        raw = extraction;
+      } else if (format === "haevn_json") {
+        const contentHash = await sha256Hex(file.content);
+        chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
+      } else if (format === "markdown") {
+        chat = await parseMarkdownContent(file.content);
+      } else {
+        const extraction = await parseClaudeCodeJsonl(file.content);
+        chat = transformToHaevnChat(extraction);
+        raw = extraction;
+      }
 
-        return { chat, raw };
-      },
-    };
-  }
+      return { chat, raw };
+    },
+  }));
+
+  // An OpenRouter file is never loaded by the items above (they load lazily): its items are the rooms.
+  const items = format === "openrouter" ? files.flatMap(openRouterItems) : fileItems;
 
   try {
     const outcome = await importChatBatch(items, { overwrite, index: !skipIndex });

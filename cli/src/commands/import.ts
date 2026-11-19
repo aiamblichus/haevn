@@ -128,7 +128,7 @@ function buildMediaChat(
 export interface ImportSummary {
   /** The lines to print, in order. */
   lines: string[];
-  /** 1 when the chats were saved but the search index was not brought up to date, else 0. */
+  /** 1 when no chat was found, or the chats were saved but the search index was not brought up to date; else 0. */
   exitCode: 0 | 1;
 }
 
@@ -140,6 +140,16 @@ export function summarizeImport(
   options: { format: ImportFormat; skipIndex: boolean },
 ): ImportSummary {
   const { format, skipIndex } = options;
+  // A file can hold no chat at all (an OpenRouter export whose chatrooms are all empty).
+  if (result.total === 0) {
+    return {
+      lines: [
+        `${pc.yellow("!")} No chats found in the input; nothing was imported`,
+        `  format=${format}`,
+      ],
+      exitCode: 1,
+    };
+  }
   const indexState = skipIndex
     ? "skipped"
     : result.indexError
