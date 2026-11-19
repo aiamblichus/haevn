@@ -264,9 +264,12 @@ function artifactParams(room: OpenRouterRoom): Record<string, unknown> | undefin
 }
 
 export function transformOpenRouterRoomToHaevnChat(room: OpenRouterRoom, exportVersion = ""): Chat {
+  // A message is known by its key in the room's map, which is unique. Its own `id` field is the
+  // same in every export seen; were it not, two entries could share an id and the tree below
+  // would fold onto itself.
   const rawMessages = Object.entries(room.messages ?? {}).map(([key, message]) => ({
     ...message,
-    id: typeof message?.id === "string" && message.id ? message.id : key,
+    id: key,
   }));
   if (rawMessages.length === 0) {
     throw new Error("OpenRouter room has no messages");
@@ -284,7 +287,9 @@ export function transformOpenRouterRoomToHaevnChat(room: OpenRouterRoom, exportV
         (a.message.id < b.message.id ? -1 : a.message.id > b.message.id ? 1 : 0),
     );
 
-  // A message links to its parent only when the parent sorts before it (this also rules out cycles).
+  // A message links to its parent only when the parent sorts before it. With ids that are unique
+  // (the map keys) this rules out a message being its own parent and any cycle, so the links form
+  // a forest and the walk below ends.
   const indexOf = new Map(prepared.map((p, i) => [p.message.id, i]));
   const parentOf = new Map<string, string>();
   const childrenOf = new Map<string, string[]>(prepared.map((p) => [p.message.id, []]));
