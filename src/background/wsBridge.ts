@@ -40,6 +40,8 @@ import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
 import { transformToHaevnChat } from "../providers/claudecode/transformer";
 import { parseCodexJsonl } from "../providers/codex/importer";
 import { transformCodexToHaevnChat } from "../providers/codex/transformer";
+import { isImportableRoom, parseOpenRouterExport } from "../providers/openrouter/importer";
+import { transformOpenRouterRoomToHaevnChat } from "../providers/openrouter/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
 import type { ChatMetadataRecord } from "../services/db";
@@ -138,7 +140,7 @@ interface WsExportOptions {
     | "pi_session_jsonl";
 }
 
-type WsImportFormat = "claude_code" | "codex" | "pi" | "haevn_json" | "markdown";
+type WsImportFormat = "claude_code" | "codex" | "pi" | "openrouter" | "haevn_json" | "markdown";
 
 interface WsImportFilePayload {
   name: string;
@@ -990,6 +992,7 @@ async function handleImport(
     "claude_code",
     "codex",
     "pi",
+    "openrouter",
     "haevn_json",
     "markdown",
   ];
@@ -1002,37 +1005,66 @@ async function handleImport(
     };
   }
 
-  const items: ImportBatchItem[] = files.map((file) => ({
-    name: file.name,
-    load: async () => {
-      let chat: Chat;
-      let raw: AllProviderRawData | undefined;
-      if (format === "codex") {
-        const extraction = await parseCodexJsonl(file.content);
-        chat = transformCodexToHaevnChat(extraction);
-        raw = extraction;
-      } else if (format === "pi") {
-        const extraction = await parsePiJsonl(file.content);
-        chat = transformPiToHaevnChat(extraction);
-        raw = extraction;
-      } else if (format === "haevn_json") {
-        const contentHash = await sha256Hex(file.content);
-        chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
-      } else if (format === "markdown") {
-        chat = await parseMarkdownContent(file.content);
-      } else {
-        const extraction = await parseClaudeCodeJsonl(file.content);
-        chat = transformToHaevnChat(extraction);
-        raw = extraction;
-      }
+  // An OpenRouter export file holds many chats (one per room): each room is an item of the batch.
+  const openRouterItems = (file: WsImportFilePayload): ImportBatchItem[] => {
+    let extraction: ReturnType<typeof parseOpenRouterExport>;
+    try {
+      extraction = parseOpenRouterExport(file.content);
+    } catch (err) {
+      // The batch counts a throwing item as one error and goes on with the other files.
+      return [
+        {
+          name: file.name,
+          load: async () => {
+            throw err;
+          },
+        },
+      ];
+    }
+    return extraction.rooms.filter(isImportableRoom).map((room, index) => ({
+      name: `${file.name}#${index + 1}`,
+      load: async () => ({
+        chat: transformOpenRouterRoomToHaevnChat(room, extraction.version),
+        raw: extraction,
+      }),
+    }));
+  };
 
-      return { chat, raw };
-    },
-  }));
+  const items: ImportBatchItem[] =
+    format === "openrouter" ? files.flatMap(openRouterItems) : files.map(fileItem);
+  function fileItem(file: WsImportFilePayload): ImportBatchItem {
+    return {
+      name: file.name,
+      load: async () => {
+        let chat: Chat;
+        let raw: AllProviderRawData | undefined;
+        if (format === "codex") {
+          const extraction = await parseCodexJsonl(file.content);
+          chat = transformCodexToHaevnChat(extraction);
+          raw = extraction;
+        } else if (format === "pi") {
+          const extraction = await parsePiJsonl(file.content);
+          chat = transformPiToHaevnChat(extraction);
+          raw = extraction;
+        } else if (format === "haevn_json") {
+          const contentHash = await sha256Hex(file.content);
+          chat = validateAndNormalizeChat(JSON.parse(file.content), contentHash);
+        } else if (format === "markdown") {
+          chat = await parseMarkdownContent(file.content);
+        } else {
+          const extraction = await parseClaudeCodeJsonl(file.content);
+          chat = transformToHaevnChat(extraction);
+          raw = extraction;
+        }
+
+        return { chat, raw };
+      },
+    };
+  }
 
   try {
     const outcome = await importChatBatch(items, { overwrite, index: !skipIndex });
-    return { id, success: true, data: { format, total: files.length, ...outcome } };
+    return { id, success: true, data: { format, total: items.length, ...outcome } };
   } catch (err) {
     if (err instanceof ImportBusyError) {
       return { id, success: false, error: err.message, code: "BUSY" };

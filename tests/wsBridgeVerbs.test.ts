@@ -327,6 +327,43 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     });
   });
 
+  it("imports one chat per room of an OpenRouter file, and counts the chats", async () => {
+    const { makeExport, makeRoom } = await import("./helpers/openrouterExport");
+    const room = (title: string, start: number) =>
+      makeRoom({
+        title,
+        start,
+        characters: { "char-a": "vendor/model-a" },
+        turns: [{ user: "Hi", replies: [{ character: "char-a", text: "Hello" }] }],
+      });
+    const bridge = await connectedBridge();
+
+    const reply = await bridge.ask({
+      action: "import",
+      format: "openrouter",
+      files: [
+        {
+          name: "rooms.json",
+          content: JSON.stringify(
+            makeExport([room("One", 1_800_000_000), room("Two", 1_800_100_000)]),
+          ),
+        },
+        { name: "broken.json", content: "{nope" },
+      ],
+      options: { overwrite: true },
+    });
+
+    expect(reply).toEqual({
+      id: expect.any(String),
+      success: true,
+      data: { format: "openrouter", total: 3, processed: 3, saved: 2, skipped: 0, errors: 1 },
+    });
+    expect(saveImportedChat.mock.calls.map(([chat]) => [chat.title, chat.source])).toEqual([
+      ["One", "openrouter"],
+      ["Two", "openrouter"],
+    ]);
+  });
+
   it("skipIndex saves without indexing now", async () => {
     const bridge = await connectedBridge();
 

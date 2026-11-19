@@ -98,6 +98,7 @@ export type ImportFormat =
   | "claude_code"
   | "codex"
   | "pi"
+  | "openrouter"
   | "haevn_json"
   | "markdown"
   | "image"
