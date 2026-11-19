@@ -21,6 +21,7 @@ type ImportProviderType =
   | "claude_zip"
   | "codex_jsonl"
   | "pi_jsonl"
+  | "openrouter_json"
   | "openwebui_json"
   | "openwebui_zip"
   | "haevn_export_zip"
@@ -70,6 +71,7 @@ export const ImportModal = ({
           "claude_zip",
           "codex_jsonl",
           "pi_jsonl",
+          "openrouter_json",
           "openwebui_json",
           "openwebui_zip",
           "haevn_export_zip",
@@ -233,6 +235,7 @@ export const ImportModal = ({
         "claude_zip",
         "codex_jsonl",
         "pi_jsonl",
+        "openrouter_json",
         "openwebui_zip",
         "haevn_export_zip",
         "claudecode_jsonl",
@@ -324,8 +327,8 @@ export const ImportModal = ({
         <DialogHeader>
           <DialogTitle>Import Archive</DialogTitle>
           <DialogDescription>
-            Import provider backups (ChatGPT, Claude, Open WebUI) or generic HAEVN formats (JSON,
-            Markdown).
+            Import provider backups (ChatGPT, Claude, Open WebUI, OpenRouter) or generic HAEVN
+            formats (JSON, Markdown).
           </DialogDescription>
         </DialogHeader>
         <div className="mt-4 space-y-3">
@@ -352,6 +355,9 @@ export const ImportModal = ({
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("pi")) && (
                 <option value="pi_jsonl">PI Session (.jsonl)</option>
+              )}
+              {(!importProviderFilter || importProviderFilter.startsWith("openrouter")) && (
+                <option value="openrouter_json">OpenRouter Chats (.json)</option>
               )}
               {(!importProviderFilter || importProviderFilter.startsWith("openwebui")) && (
                 <>
@@ -527,6 +533,56 @@ export const ImportModal = ({
               )}
             </div>
           )}
+          {importProvider === "openrouter_json" && (
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium text-foreground">
+                OpenRouter chatroom export (.json):
+              </label>
+              <div
+                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
+                  isDragActive
+                    ? "border-indigo-500 bg-indigo-50"
+                    : "border-slate-300 text-slate-500"
+                }`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragActive(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setDragActive(false);
+                }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  setDragActive(false);
+                  try {
+                    const dt = e.dataTransfer;
+                    if (!dt) return;
+                    const files = dt.files?.length ? Array.from(dt.files) : [];
+                    if (files.length > 0 && files[0].name.toLowerCase().endsWith(".json")) {
+                      setImportFile(files[0]);
+                      setStatus("JSON file selected via drag-and-drop.", "ok");
+                    } else {
+                      setStatus("Unsupported drop. Please drop a .json file.", "warn");
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                Drag & drop the .json export here (every chatroom in it is imported), or choose a
+                file below.
+              </div>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
+              />
+              {importFile && (
+                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+              )}
+            </div>
+          )}
           {importProvider === "openwebui_json" && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-foreground">
@@ -647,6 +703,7 @@ export const ImportModal = ({
                 importProvider === "claude_zip" ||
                 importProvider === "codex_jsonl" ||
                 importProvider === "pi_jsonl" ||
+                importProvider === "openrouter_json" ||
                 importProvider === "haevn_export_zip" ||
                 importProvider === "haevn_markdown" ||
                 importProvider === "claudecode_jsonl") &&

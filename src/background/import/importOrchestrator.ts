@@ -144,6 +144,8 @@ async function handlePostProcess(
       platformName = "codex";
     } else if (source.includes("pi")) {
       platformName = "pi";
+    } else if (source.includes("openrouter")) {
+      platformName = "openrouter";
     } else if (source.includes("poe")) {
       platformName = "poe";
     } else if (source.includes("chatgpt")) {

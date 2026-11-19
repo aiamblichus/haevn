@@ -39,6 +39,12 @@ import { transformToHaevnChat } from "../../providers/claudecode/transformer";
 import { parseCodexJsonl } from "../../providers/codex/importer";
 import { transformCodexToHaevnChat } from "../../providers/codex/transformer";
 import {
+  countOpenRouterRooms,
+  isImportableRoom,
+  parseOpenRouterExport,
+} from "../../providers/openrouter/importer";
+import { transformOpenRouterRoomToHaevnChat } from "../../providers/openrouter/transformer";
+import {
   countOpenWebUIConversationsInZip,
   parseOpenWebUIBackupZip,
 } from "../../providers/openwebui/importer";
@@ -192,9 +198,19 @@ async function countConversations(
     case "pi_jsonl":
       // Single JSONL file = single conversation
       return 1;
+    case "openrouter_json":
+      // One export file holds many rooms; each room is a chat
+      return countOpenRouterRooms(await readImportText(input, "OpenRouter"));
     default:
       throw new Error(`Unsupported import type for counting: ${importType}`);
   }
+}
+
+/** The text of an import file that is a single text document (a File, or the bytes of one). */
+async function readImportText(input: ArrayBuffer | File, label: string): Promise<string> {
+  if (input instanceof File) return await input.text();
+  if (input instanceof ArrayBuffer) return new TextDecoder("utf-8").decode(input);
+  throw new Error(`Invalid file data type for ${label} import`);
 }
 
 /**
@@ -813,6 +829,61 @@ async function processImport(
             reason: error instanceof Error ? error.message : "Transform error",
             requestId,
           } as ImportWorkerResponse);
+        }
+        break;
+      }
+
+      case "openrouter_json": {
+        // One export file holds many rooms; each room is a chat
+        const extraction = parseOpenRouterExport(await readImportText(fileData, "OpenRouter"));
+
+        for (const room of extraction.rooms.filter(isImportableRoom)) {
+          if (workerState?.status === "cancelled") {
+            break;
+          }
+          while (workerState?.status === "paused") {
+            await yieldToEventLoop();
+          }
+
+          processed++;
+
+          try {
+            const chat = transformOpenRouterRoomToHaevnChat(room, extraction.version);
+            const result = await processChat(chat, extraction, overwriteExisting, requestId);
+
+            if (result.saved) {
+              saved++;
+            } else {
+              skipped++;
+              log.warn(
+                `[ImportWorker] OpenRouter chat skipped. Chat ID: ${chat.id}, Reason: ${result.reason || "Unknown"}`,
+              );
+              self.postMessage({
+                type: "skipped",
+                chatId: chat.id,
+                reason: result.reason || "Unknown",
+                requestId,
+              } as ImportWorkerResponse);
+            }
+          } catch (error) {
+            log.error("[ImportWorker] Error processing OpenRouter chat:", error);
+            errors++;
+            self.postMessage({
+              type: "failed",
+              reason: error instanceof Error ? error.message : "Transform error",
+              requestId,
+            } as ImportWorkerResponse);
+          }
+
+          sendProgress({
+            processed,
+            total,
+            status: `Processed ${processed}/${total} OpenRouter chats (${saved} saved, ${skipped} skipped)`,
+            phase: "chats",
+            requestId,
+          });
+
+          if (processed % 5 === 0) await yieldToEventLoop();
         }
         break;
       }

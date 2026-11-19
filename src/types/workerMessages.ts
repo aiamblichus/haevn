@@ -257,7 +257,8 @@ export type ImportSourceType =
   | "haevn_export_zip"
   | "claudecode_jsonl"
   | "codex_jsonl"
-  | "pi_jsonl";
+  | "pi_jsonl"
+  | "openrouter_json";
 
 export type ImportWorkerMessage = (
   | {

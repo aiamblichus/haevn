@@ -7,6 +7,7 @@ import { claudeCodeProvider } from "../providers/claudecode/provider";
 import { codexProvider } from "../providers/codex/provider";
 import { deepseekProvider } from "../providers/deepseek/provider";
 import { geminiProvider } from "../providers/gemini/provider";
+import { openrouterProvider } from "../providers/openrouter/provider";
 import { openwebuiProvider } from "../providers/openwebui/provider";
 import { piProvider } from "../providers/pi/provider";
 import { poeProvider } from "../providers/poe/provider";
@@ -62,6 +63,7 @@ registerProvider(deepseekProvider);
 registerProvider(claudeCodeProvider);
 registerProvider(codexProvider);
 registerProvider(piProvider);
+registerProvider(openrouterProvider);
 
 const App = () => {
   const [activeView, setActiveView] = useState("archive");
