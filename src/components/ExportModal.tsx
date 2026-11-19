@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import type { ExporterId, ExportOptions } from "../formatters";
 import type { BackgroundEvent } from "../types/messaging";
 import { log } from "../utils/logger";
+import { pluralNoun } from "../utils/plural";
 import {
+  completedExportProgress,
   dismissNeedsConfirm,
   type ExportProgress,
   exportFooter,
@@ -189,15 +191,14 @@ export const ExportModal = ({
           }
           break;
         case "bulkExportComplete":
+          // The worker's count of chats written, not the chats asked for (HVN-96).
           setProgress((prev) =>
             prev
-              ? {
-                  ...prev,
-                  processed: prev.total,
-                  status: "message" in msg ? msg.message || "Export complete!" : "Export complete!",
-                  isPaused: false,
-                  isComplete: true,
-                }
+              ? completedExportProgress(
+                  prev,
+                  msg.processed ?? prev.processed,
+                  msg.message || "Export complete!",
+                )
               : null,
           );
           // Keep modal open to show completion state
@@ -319,7 +320,7 @@ export const ExportModal = ({
                 <DialogDescription>{exportModalIds.length} chat(s) selected.</DialogDescription>
               </DialogHeader>
 
-              {scopeNote && <p className="text-sm text-yellow-600">{scopeNote}</p>}
+              {scopeNote && <p className="text-sm text-secondary">{scopeNote}</p>}
 
               <div className="space-y-3">
                 <div className="space-y-1">
@@ -345,7 +346,7 @@ export const ExportModal = ({
                   </select>
                   <p className="text-xs text-muted-foreground">{selectedExporterDef.description}</p>
                   {!canUseSelectedExporterForCurrentSelection && (
-                    <p className="text-xs text-yellow-600">
+                    <p className="text-xs text-secondary">
                       This exporter currently supports single-chat export only.
                     </p>
                   )}
@@ -374,7 +375,8 @@ export const ExportModal = ({
                   </div>
                   {progress && (
                     <div className="text-xs text-muted-foreground mb-2">
-                      {progress.processed} of {progress.total} chats processed
+                      {progress.processed} of {progress.total} {pluralNoun(progress.total, "chat")}{" "}
+                      processed
                       {progress.isPaused && " (Paused)"}
                     </div>
                   )}

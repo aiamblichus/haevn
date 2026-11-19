@@ -351,6 +351,19 @@ function manifestLines(exportId: string, name: "chats" | "media"): Record<string
     .map((line) => JSON.parse(line));
 }
 
+/** The text of one entry of the job's ZIP, or undefined when there is no ZIP or no such entry. */
+async function zipEntryText(exportId: string, name: string): Promise<string | undefined> {
+  const bytes = opfs.files.get(buildExportZipPath(exportId));
+  if (!bytes) return undefined;
+  const { ZipReader, BlobReader, TextWriter } = await import("@zip.js/zip.js");
+  const reader = new ZipReader(new BlobReader(new Blob([bytes])));
+  const entries = await reader.getEntries();
+  const entry = entries.find((candidate) => candidate.filename === name);
+  const text = entry ? await entry.getData(new TextWriter()) : undefined;
+  await reader.close();
+  return text;
+}
+
 async function zipEntryNames(exportId: string): Promise<string[]> {
   const bytes = opfs.files.get(buildExportZipPath(exportId));
   if (!bytes) return [];
@@ -688,6 +701,42 @@ describe("a cancel during the start's staging setup (HVN-63)", () => {
     stagingSetup.fail = undefined;
     await send(startMessage("r2", "e2", []));
     expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r2" }));
+  });
+});
+
+describe("the ZIP manifest counts the chats written (HVN-96)", () => {
+  it("says the chats written, not the chats asked for, when one is skipped", async () => {
+    await loadWorker();
+    const ids = seedChats(2);
+    chatRows.delete("c1"); // asked for, not in the database: skipped
+
+    await send(startMessage("r1", "e1", ids));
+
+    expect(posted).toContainEqual(
+      expect.objectContaining({ type: "complete", processed: 1, skipped: 1 }),
+    );
+    const manifest = JSON.parse((await zipEntryText("e1", "manifest.json")) ?? "{}");
+    expect(manifest.total_chats).toBe(1);
+    expect(manifest.chats).toHaveLength(1);
+    expect((await zipEntryNames("e1")).filter((name) => name.startsWith("chats/"))).toHaveLength(
+      1,
+    );
+    // The meta the manifest writer keeps beside it carries the same count.
+    const meta = JSON.parse(
+      new TextDecoder().decode(opfs.files.get("exports/e1/staging/manifest/meta.json")),
+    );
+    expect(meta.total_chats).toBe(1);
+  });
+
+  it("says every chat when none is skipped", async () => {
+    await loadWorker();
+    const ids = seedChats(2);
+
+    await send(startMessage("r1", "e1", ids));
+
+    const manifest = JSON.parse((await zipEntryText("e1", "manifest.json")) ?? "{}");
+    expect(manifest.total_chats).toBe(2);
+    expect(manifest.chats).toHaveLength(2);
   });
 });
 

@@ -605,9 +605,9 @@ export const ImportModal = ({
             </label>
           </div>
           {importError && (
-            <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <div className="text-sm text-red-800 font-medium">Error</div>
-              <div className="text-xs text-red-600 mt-1">{importError}</div>
+            <div className="mt-2 p-3 bg-destructive/10 border border-destructive/50 rounded-md">
+              <div className="text-sm text-destructive font-medium">Error</div>
+              <div className="text-xs text-foreground mt-1">{importError}</div>
             </div>
           )}
           {importRunning && (

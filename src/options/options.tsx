@@ -128,7 +128,7 @@ const App = () => {
       kind === "ok"
         ? "text-green-600"
         : kind === "warn"
-          ? "text-yellow-600"
+          ? "text-secondary"
           : kind === "error"
             ? "text-red-600"
             : "text-blue-600";

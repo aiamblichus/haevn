@@ -4,19 +4,16 @@ import type { StatsWorkerMessage } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { sendWorkerRequest } from "../utils/workerApi";
 import { type CacheEntry, getDB } from "./db";
+import { countLiveChatsForSource } from "./liveChatCount";
 
 // Stats Worker Management
 // Three-Tier Architecture: Service Worker → Offscreen Document → Web Worker
 // Service workers cannot create Workers, so we route through the offscreen document
 
-// Fallback: Direct database query (no worker)
+// Fallback: Direct database query (no worker). Counts live chats, as the worker does (HVN-85).
 async function _calculateProviderStatsDirect(providerName: string): Promise<number> {
   try {
-    const db = getDB();
-    // Use indexed source field for exact match (O(log n) instead of O(n))
-    const providerLower = providerName.toLowerCase();
-    const count = await db.chats.where("source").equals(providerLower).count();
-    return count;
+    return await countLiveChatsForSource(getDB(), providerName.toLowerCase());
   } catch (err) {
     log.error(`[CacheService] Failed to calculate stats for ${providerName}:`, err);
     return 0;
@@ -162,27 +159,30 @@ export namespace CacheService {
   // ============================================================================
 
   /**
-   * Get cached provider stats, or recalculate if cache is missing/stale.
-   * Returns count immediately from cache if available, otherwise triggers background recalculation.
-   * Never blocks - returns 0 if cache is missing and recalculates in background.
+   * Get the provider's count. A fresh cached count is returned at once. A missing or stale one
+   * starts a background recalculation, and this answers at once too, without blocking: the last
+   * count the cache held while the recalculation runs (HVN-85), or 0 when there never was one.
    */
   export async function getProviderStats(providerName: string): Promise<number> {
     const key = getProviderCountKey(providerName);
+    // getCacheEntry drops a stale entry, so the row is read here: a stale count is the last known
+    // one, and is answered while the recalculation runs.
+    let lastKnown: number | undefined;
     try {
-      const cached = await getCacheEntry(key, CACHE_STALE_MS);
-      if (cached && cached.value !== undefined && cached.value !== null) {
-        // Cache is fresh, return immediately
-        return cached.value as number;
+      const entry = await getDB().cache.get(key);
+      if (entry && entry.value !== undefined && entry.value !== null) {
+        if (!isExpired(entry, CACHE_STALE_MS)) {
+          // Cache is fresh, return immediately
+          return entry.value as number;
+        }
+        lastKnown = entry.value as number;
       }
     } catch (err) {
       log.error(`[CacheService] Failed to get cached stats for ${key}:`, err);
     }
 
-    // Cache missing or stale - return 0 immediately and recalculate in background (non-blocking)
-    // This prevents blocking the UI while stats are calculated
-    // Worker will be initialized lazily when recalculateProviderStats is called
-
-    // Recalculate in background - don't await
+    // Recalculate in background - don't await. This prevents blocking the UI while stats are
+    // calculated. Worker will be initialized lazily when recalculateProviderStats is called.
     (async () => {
       try {
         await recalculateProviderStats(providerName);
@@ -191,7 +191,7 @@ export namespace CacheService {
       }
     })();
 
-    return 0;
+    return lastKnown ?? 0;
   }
 
   /**

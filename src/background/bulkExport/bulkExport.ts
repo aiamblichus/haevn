@@ -14,6 +14,7 @@ import { buildExportStagingRoot, buildExportZipPath } from "../../services/expor
 import type { BulkExportWorkerResponse } from "../../types/workerMessages";
 import { fireAndForget } from "../../utils/error_utils";
 import { log } from "../../utils/logger";
+import { pluralNoun } from "../../utils/plural";
 import { sendWorkerRequest } from "../../utils/workerApi";
 import { getExportJobState, setExportJobState } from "../export/exportState";
 import {
@@ -669,12 +670,20 @@ async function cleanupBulkExport(action: string): Promise<void> {
   }
 
   if (action === "bulkExportComplete") {
-    const message = `Exported ${state.processedChats} chats in ${
-      state.currentBatchNumber
-    } batch(es)${describeSkipped(state)}.`;
+    // The counts are what was written; the modal's headline and its "N of M" use the same numbers
+    // (HVN-96), so the payload carries them and the message words them.
+    const chats = `${state.processedChats} ${pluralNoun(state.processedChats, "chat")}`;
+    const batches = `${state.currentBatchNumber} ${pluralNoun(
+      state.currentBatchNumber,
+      "batch",
+      "batches",
+    )}`;
+    const message = `Exported ${chats} in ${batches}${describeSkipped(state)}.`;
     safeSendMessage({
       action: "bulkExportComplete",
       message,
+      processed: state.processedChats,
+      skipped: state.skippedCount,
     });
   } else if (action === "bulkExportCanceled") {
     safeSendMessage({

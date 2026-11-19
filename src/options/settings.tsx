@@ -125,9 +125,13 @@ export const SettingsView = () => {
               URL.
             </p>
           </div>
-          {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
+          {error && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/50 p-2 rounded">
+              {error}
+            </div>
+          )}
           {saved && (
-            <div className="text-sm text-green-600 bg-green-50 p-2 rounded">
+            <div className="text-sm text-foreground bg-primary/10 border border-primary/50 p-2 rounded">
               Settings saved successfully
             </div>
           )}
@@ -652,8 +656,16 @@ const AIMetadataSettingsCard = () => {
             </>
           )}
 
-          {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
-          {saved && <div className="text-sm text-green-600 bg-green-50 p-2 rounded">Saved</div>}
+          {error && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/50 p-2 rounded">
+              {error}
+            </div>
+          )}
+          {saved && (
+            <div className="text-sm text-foreground bg-primary/10 border border-primary/50 p-2 rounded">
+              Saved
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -937,8 +949,16 @@ const StarmapSettingsCard = () => {
           </>
         )}
 
-        {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
-        {saved && <div className="text-sm text-green-600 bg-green-50 p-2 rounded">Saved</div>}
+        {error && (
+          <div className="text-sm text-destructive bg-destructive/10 border border-destructive/50 p-2 rounded">
+            {error}
+          </div>
+        )}
+        {saved && (
+          <div className="text-sm text-foreground bg-primary/10 border border-primary/50 p-2 rounded">
+            Saved
+          </div>
+        )}
       </CardContent>
     </Card>
   );
