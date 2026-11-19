@@ -16,7 +16,11 @@ import type {
   UserContent,
   VideoUrl,
 } from "../model/haevn_model";
-import { getExtensionFromMimeType, getMediaStorageService } from "../services/mediaStorage";
+import {
+  getExtensionFromMimeType,
+  getMediaStorageService,
+  type MediaStorageService,
+} from "../services/mediaStorage";
 import type { ContentScriptResponse } from "../types/messaging";
 import { log } from "./logger";
 import { fetchWithTimeout } from "./network_utils";
@@ -229,6 +233,48 @@ function createFallbackUrl(
   }
   // Default to document-url for unknown types or when supportAllMediaTypes is false
   return { kind: "document-url", url } as DocumentUrl;
+}
+
+/**
+ * The file an earlier sync stored for this message and index, as the content a fresh download
+ * would have produced; null when there is no such file (or it cannot be looked up).
+ *
+ * Every provider's download ends in `processExternalAssets`, so this one lookup covers them all.
+ */
+async function reuseStoredFile(
+  mediaStorage: MediaStorageService,
+  chatId: string,
+  messageId: string,
+  index: number,
+  asset: UrlAsset,
+  contentType: string,
+  logPrefix: string,
+): Promise<BinaryContent | null> {
+  try {
+    const stored = await mediaStorage.findStored(chatId, messageId, index);
+    if (!stored) return null;
+    if (logPrefix) {
+      log.warn(
+        `${logPrefix} Download failed for ${asset.url}; keeping the stored file ${stored.storagePath}`,
+      );
+    }
+    return {
+      kind: "binary",
+      data: stored.storagePath,
+      media_type: resolvePreferredMimeType(stored.mimeType, contentType),
+      identifier: asset.name,
+      vendor_metadata: {
+        storageType: "opfs",
+        size: stored.size,
+      },
+    } as BinaryContent;
+  } catch (error) {
+    // The lookup must never take the URL fallback away
+    if (logPrefix) {
+      log.error(`${logPrefix} Could not look for a stored file of ${asset.url}:`, error);
+    }
+    return null;
+  }
 }
 
 type BlobResponse = Extract<ContentScriptResponse, { base64: string }>;
@@ -522,7 +568,19 @@ export async function processExternalAssets(
         if (logPrefix) {
           log.error(`${logPrefix} Error downloading file from ${asset.url}:`, error);
         }
-        results[index] = createFallback(); // fallback
+        // A re-sync that cannot download an asset again must not lose the copy an earlier sync
+        // stored at the stable path: it may be the only one left. Only when there is none does the
+        // message fall back to the remote URL.
+        results[index] =
+          (await reuseStoredFile(
+            mediaStorage,
+            chatId,
+            messageId,
+            index,
+            asset,
+            contentType,
+            logPrefix,
+          )) ?? createFallback();
       }
     }
   }

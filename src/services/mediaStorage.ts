@@ -55,6 +55,19 @@ export interface MediaStorageService {
   ): Promise<StoredMediaReference>;
 
   /**
+   * Finds the file an earlier sync stored for this message and index, whatever extension it was
+   * saved under (`{messageId}_{index}.jpg`, `.png`, ...). Answers null when there is none.
+   *
+   * A file of zero bytes is not a file: a write that failed leaves one behind. When more than one
+   * file matches (the same asset came back under another type), the most recently written wins.
+   */
+  findStored(
+    chatId: string,
+    messageId: string,
+    index: number,
+  ): Promise<StoredMediaReference | null>;
+
+  /**
    * Retrieves a file handle
    * Lightweight - does not load content into memory
    */
@@ -179,6 +192,38 @@ class MediaStorageServiceImpl implements MediaStorageService {
         `Failed to save media: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+  }
+
+  /**
+   * Find the stored file of a message's media item, whatever its extension.
+   */
+  async findStored(
+    chatId: string,
+    messageId: string,
+    index: number,
+  ): Promise<StoredMediaReference | null> {
+    const dirPath = `${this.mediaRootPath}/${this.sanitizePathSegment(chatId)}`;
+    // The stem `generatePath` writes; the dot after the index keeps `m_1.` from matching `m_10.`
+    const stem = `${this.sanitizePathSegment(messageId)}_${index}.`;
+
+    const names = (await OPFS.listFiles(dirPath)).filter((name) => name.startsWith(stem));
+
+    let best: { reference: StoredMediaReference; lastModified: number } | null = null;
+    for (const name of names) {
+      const storagePath = `${dirPath}/${name}`;
+      const metadata = await OPFS.getFileMetadata(storagePath);
+      if (!metadata || metadata.size === 0) continue;
+      if (best && best.lastModified >= metadata.lastModified) continue;
+      best = {
+        lastModified: metadata.lastModified,
+        reference: {
+          storagePath,
+          mimeType: getMimeTypeFromExtension(name.slice(stem.length)) ?? "application/octet-stream",
+          size: metadata.size,
+        },
+      };
+    }
+    return best?.reference ?? null;
   }
 
   /**
@@ -335,6 +380,25 @@ export function getMediaStorageService(): MediaStorageService {
   return instance;
 }
 
+const MIME_TO_EXTENSION: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/svg+xml": "svg",
+  "video/mp4": "mp4",
+  "video/webm": "webm",
+  "video/ogg": "ogv",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/ogg": "oga",
+  "application/pdf": "pdf",
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "application/json": "json",
+};
+
 /**
  * Helper function to extract extension from MIME type
  *
@@ -342,26 +406,22 @@ export function getMediaStorageService(): MediaStorageService {
  * @returns File extension (e.g., "jpg")
  */
 export function getExtensionFromMimeType(mimeType: string): string {
-  const mimeToExt: Record<string, string> = {
-    "image/jpeg": "jpg",
-    "image/jpg": "jpg",
-    "image/png": "png",
-    "image/gif": "gif",
-    "image/webp": "webp",
-    "image/svg+xml": "svg",
-    "video/mp4": "mp4",
-    "video/webm": "webm",
-    "video/ogg": "ogv",
-    "audio/mpeg": "mp3",
-    "audio/wav": "wav",
-    "audio/ogg": "oga",
-    "application/pdf": "pdf",
-    "text/plain": "txt",
-    "text/markdown": "md",
-    "application/json": "json",
-  };
+  return MIME_TO_EXTENSION[mimeType.toLowerCase()] || "bin";
+}
 
-  return mimeToExt[mimeType.toLowerCase()] || "bin";
+/**
+ * The MIME type a stored file's extension stands for, read from the same table the extension came
+ * from (the first type listed for an extension wins: `jpg` is `image/jpeg`).
+ *
+ * @param extension - File extension, with or without the dot (e.g., "jpg")
+ * @returns The MIME type, or null for an extension the table does not know (`bin` among them)
+ */
+export function getMimeTypeFromExtension(extension: string): string | null {
+  const wanted = extension.replace(/^\./, "").toLowerCase();
+  for (const [mimeType, ext] of Object.entries(MIME_TO_EXTENSION)) {
+    if (ext === wanted) return mimeType;
+  }
+  return null;
 }
 
 /**
