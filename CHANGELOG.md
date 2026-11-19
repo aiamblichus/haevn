@@ -10,6 +10,7 @@
 - **Exporters**: single chats export as HAEVN JSON, HAEVN Markdown or Pi session JSONL (with thinking signatures); the CLI's exports go through the same exporters.
 - **Search**: `id:` scoped queries in the archive.
 - **Archive and viewer**: `g` opens a chat by id; the viewer header uses the metadata title; viewer widgets collapse; hover previews show the full metadata description.
+- **OpenRouter** (import only): import an OpenRouter chatroom export (`.json`, one chat per chatroom) from the archive's import dialog or with `haevn import --format openrouter`. Replies keep their model, cost and tokens, readable reasoning shows as thinking, and importing the same export again replaces the chats instead of duplicating them.
 - **CLI**: `haevn list --include-metadata` (`-m`) shows each chat's description, synopsis, categories or keywords; `haevn search` shows metadata (`--no-metadata` to hide it); formatted output includes the system prompt.
 
 ### Changed

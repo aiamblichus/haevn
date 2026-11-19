@@ -1,0 +1,37 @@
+---
+title: OpenRouter
+description: Import OpenRouter chatroom exports into HAEVN.
+---
+
+## Overview
+
+OpenRouter is currently supported as an **import-only** provider in HAEVN.
+
+- No live sync from browser tabs.
+- Import an OpenRouter chatroom export: one `.json` file holding every chatroom (`"version": "orpg.3.0"`).
+- Each chatroom becomes one chat. The chat keeps the models that answered, with the cost, token counts and host of each reply.
+- Readable reasoning becomes a thinking block. Encrypted reasoning, which cannot be read, is left out.
+- Web citations are kept with the reply they belong to.
+
+## How a chatroom becomes a chat
+
+- A chatroom's turns are linked in the order they were written. When two models answer the same message, their replies become branches of that message, and the next message follows the later reply.
+- The chatroom has no id of its own, so HAEVN names the chat after the id of the chatroom's first message. It does not change when the chatroom is renamed or grows.
+- Artifacts, attachments and images are kept as they came in the chat's parameters; they are not shown in the viewer yet.
+
+## Re-importing
+
+Importing the same export again, or a later export of the same chatrooms, replaces the earlier copy of each chat rather than adding a second one. Leave **Overwrite existing chats with the same ID** ticked (the default), or pass no `--no-overwrite` on the CLI.
+
+## Import
+
+You can import from the Options UI (**Import** → **OpenRouter Chats (.json)**) or the CLI.
+
+```bash
+haevn import --format openrouter ./open-router-chats.json
+```
+
+Useful flags:
+
+- `--no-overwrite` to keep existing chats with the same ID.
+- `--skip-index` to skip immediate index rebuild after import.

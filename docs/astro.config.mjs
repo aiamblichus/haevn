@@ -68,6 +68,7 @@ export default defineConfig({
             { label: "Google AI Studio", slug: "platforms/aistudio" },
             { label: "Grok", slug: "platforms/grok" },
             { label: "PI (Import Only)", slug: "platforms/pi" },
+            { label: "OpenRouter (Import Only)", slug: "platforms/openrouter" },
           ],
         },
         {
