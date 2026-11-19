@@ -123,19 +123,6 @@ export interface StarmapLayoutRecord {
 export class HaevnDatabase extends Dexie {
   chats!: Table<Chat, string>; // Primary key 'id' is of type string
   chatMessages!: Table<StoredChatMessage, [string, string]>; // PK: [chatId, id]
-  // Store for serialized Lunr index (single-record store)
-  lunrIndex!: Table<
-    {
-      id: string;
-      index?: object;
-      dirty?: boolean;
-      // Written with every segment: the chat ids it holds (so a load need not scan the index)
-      meta?: { docIds: string[]; timestamp: number };
-      // Only on the record with id "format": the version the segments were built with
-      format?: number;
-    },
-    string
-  >;
   openwebuiInstances!: Table<OpenWebUIInstance, string>;
   providerStats!: Table<ProviderStats, string>; // Deprecated, kept for migration
   cache!: Table<CacheEntry, string>;
@@ -581,6 +568,25 @@ export class HaevnDatabase extends Dexie {
         "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
       chatMessages: "[chatId+id], chatId, parentId, timestamp",
       lunrIndex: "id",
+      openwebuiInstances: "id, baseUrl",
+      cache: "id",
+      thumbnails:
+        "++id, chatId, messageId, [chatId+messageId], source, role, mediaType, generatedAt, [source+generatedAt], [role+generatedAt], [mediaType+generatedAt], [source+role+generatedAt]",
+      mediaContent: "id",
+      chatMetadata: "chatId",
+      metadataQueue: "chatId, status, addedAt",
+      chatEmbeddings: "chatId, updatedAt, [model+updatedAt]",
+      embeddingQueue: "chatId, status, addedAt",
+      starmapLayout: "layoutKey, updatedAt",
+    });
+    // Version 21: drop the lunrIndex table. The search index is an SQLite file in OPFS since
+    // HVN-87 and nothing reads or writes the table any more (HVN-89). Dexie deletes the table and
+    // its rows on upgrade; every other table is listed as before and left alone.
+    this.version(21).stores({
+      chats:
+        "id, source, title, lastSyncedTimestamp, providerLastModifiedTimestamp, syncStatus, [source+sourceId], [source+lastSyncedTimestamp], [source+providerLastModifiedTimestamp], [source+title], deletedAt, deleted, [deleted+lastSyncedTimestamp], [deleted+providerLastModifiedTimestamp], [deleted+title], [deleted+source+lastSyncedTimestamp], [deleted+source+providerLastModifiedTimestamp], [deleted+source+title]",
+      chatMessages: "[chatId+id], chatId, parentId, timestamp",
+      lunrIndex: null,
       openwebuiInstances: "id, baseUrl",
       cache: "id",
       thumbnails:

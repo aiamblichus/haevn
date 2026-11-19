@@ -51,7 +51,6 @@ const workerDbs = vi.hoisted(
     [] as Array<{
       chats: { offset: (n: number) => unknown; get: (...a: unknown[]) => unknown };
       chatMessages: { where: (...a: unknown[]) => unknown };
-      lunrIndex: { clear: () => Promise<unknown> };
     }>,
 );
 vi.mock("../src/services/db", async (importOriginal) => {
@@ -160,12 +159,7 @@ async function seedChats(chats: Chat[]): Promise<void> {
 
 beforeEach(async () => {
   const db = getDB();
-  await Promise.all([
-    db.chats.clear(),
-    db.chatMessages.clear(),
-    db.lunrIndex.clear(),
-    db.cache.clear(),
-  ]);
+  await Promise.all([db.chats.clear(), db.chatMessages.clear(), db.cache.clear()]);
   kit.reset();
   resetFaults();
   await loadWorker();
@@ -1248,47 +1242,6 @@ describe("search worker: the index format version (HVN-65)", () => {
     await restart();
     expect(rebuilds()).toBe(0);
     expect(new Set(hitIds(await search("wombat", false)))).toEqual(new Set(["comma", "plain"]));
-  });
-
-  it("frees the rows of the old Lunr index once the first good file exists, and not before", async () => {
-    await seedOldArchive();
-    await getDB().lunrIndex.put({ id: "segment_0", index: {}, meta: { docIds: [], timestamp: 1 } });
-    await loadWorker();
-
-    expect(await getDB().lunrIndex.count()).toBe(1);
-    await send({ type: "init" });
-    await waitUntilIndexReady("wombat");
-
-    expect(rebuilds()).toBe(1);
-    // Freed after the rebuild is announced, so it is not seen at once.
-    for (let i = 0; i < 400 && (await getDB().lunrIndex.count()) > 0; i++) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    expect(await getDB().lunrIndex.count()).toBe(0);
-  });
-
-  it("indexes a chat added while the old Lunr rows are being freed", async () => {
-    await seedOldArchive();
-    await getDB().lunrIndex.put({ id: "segment_0", index: {}, meta: { docIds: [], timestamp: 1 } });
-    await loadWorker();
-    // Clearing 148 MB of rows takes seconds at a real archive's size: hold it.
-    const db = workerDbs[workerDbs.length - 1];
-    const hold = newHold();
-    const clear = db.lunrIndex.clear.bind(db.lunrIndex);
-    vi.spyOn(db.lunrIndex, "clear").mockImplementation(async () => {
-      hold.reached();
-      await hold.released;
-      return clear();
-    });
-
-    await send({ type: "init" });
-    await hold.paused; // the new file has replaced the old index
-    await seedChats([buildChat("plain", "a wombat and a quokka")]); // saved again
-    await send({ type: "add", chatId: "plain" });
-    hold.resume();
-    await waitForPassEnd(0);
-
-    expect(hitIds(await search("quokka", false))).toEqual(["plain"]);
   });
 
   it("tells a search that comes right after the start that the index is rebuilding", async () => {

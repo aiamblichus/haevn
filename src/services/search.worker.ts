@@ -498,8 +498,6 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
       self.postMessage({ type: "initProgress", processed: count, total: count, phase: "complete" });
     }
     failureRetried = false; // the next failure gets its retry
-    // Last, and after the index answers: clearing the old rows takes seconds at a big archive.
-    await freeLunrRows();
     return {};
   } catch (e) {
     log.error("[SearchWorker] Rebuild failed", e);
@@ -514,19 +512,6 @@ async function rebuildPass(emitProgress: boolean): Promise<RebuildOutcome> {
     // The archive's rebuild notice stops at its last percentage unless it is told the pass ended.
     self.postMessage({ type: "indexRebuildFailed", error: rebuildFailure });
     return { error: rebuildFailure };
-  }
-}
-
-/**
- * The index lived in the `lunrIndex` table before SQLite. Once the first good file exists those
- * rows are dead weight (148 MB at αιamblichus's size); the table itself goes in a later schema
- * version. A failure to clear it costs space only.
- */
-async function freeLunrRows(): Promise<void> {
-  try {
-    await db.lunrIndex.clear();
-  } catch (e) {
-    log.warn("[SearchWorker] Could not clear the old Lunr index rows", e);
   }
 }
 
