@@ -41,23 +41,42 @@ function fakeClock(): void {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 }
 
-/** Drive fake timers until the run has settled; a provider's own timer starts only when its turn comes. */
-async function untilSettled<T>(run: Promise<T>): Promise<T> {
+/**
+ * Run to the end with the fake clock moving only while the run waits on something that never
+ * answers (`probe.hang`). Real work (the transformers hash with crypto.subtle, which answers off
+ * the loop and late on a busy runner) never sees the clock move, so it cannot be timed out by a
+ * clock that raced it. Once the run has opened a tab after the hang it stops moving the clock, so
+ * the providers that follow are not hurried either.
+ */
+async function untilSettled<T>(run: Promise<T>, probe: FakeProbe): Promise<T> {
   let settled = false;
   run.then(
     () => (settled = true),
     () => (settled = true),
   );
+  let seen = 0;
+  let tabsAtHang: number | undefined;
   while (!settled) {
-    // Real macrotasks first: the transformers hash with crypto.subtle, which answers off the loop.
     for (let i = 0; i < 5; i++) await new Promise<void>((resolve) => realSetImmediate(resolve));
-    await vi.advanceTimersByTimeAsync(250);
+    if (probe.hangs > seen) {
+      seen = probe.hangs;
+      tabsAtHang = probe.opened.length;
+    }
+    if (tabsAtHang !== undefined && probe.opened.length === tabsAtHang) {
+      await vi.advanceTimersByTimeAsync(250);
+    } else {
+      tabsAtHang = undefined;
+    }
   }
   return run;
 }
 
 const row = (report: ProviderHealthReport, provider: string): ProviderHealthRow =>
   report.rows.find((r) => r.provider === provider) as ProviderHealthRow;
+
+/** Every row's provider and status, for an assertion message that says which rows went wrong. */
+const statuses = (report: ProviderHealthReport): string =>
+  report.rows.map((r) => `${r.provider}:${r.status}${r.note ? ` (${r.note})` : ""}`).join(" | ");
 
 beforeEach(() => {
   registerAllProviders();
@@ -405,19 +424,43 @@ describe("providerHealth: a slow provider gets a time limit", () => {
   it("stops a list that never answers, reports a timeout, and goes on", async () => {
     fakeClock();
     const probe = new FakeProbe();
+    probe.realLatencyMs = 20;
     probe.script("grok", (s) => (s.ids = "hang"));
     const run = runProviderHealth(
       { timeoutMs: 5_000 },
       deps(probe, { sleep: async () => undefined }),
     );
-    const report = await untilSettled(run);
+    const report = await untilSettled(run, probe);
 
     expect(row(report, "grok")).toMatchObject({ status: "timeout", checked: 0 });
     expect(row(report, "grok").note).toContain("5 s");
     expect(row(report, "grok").note).toContain("listing the chats");
     expect(row(report, "grok").ms).toBeGreaterThanOrEqual(5_000);
-    expect(report.rows.filter((r) => r.status === "ok")).toHaveLength(8);
+    expect(
+      report.rows.filter((r) => r.status === "ok"),
+      statuses(report),
+    ).toHaveLength(8);
     // its tab is closed all the same
+    expect(probe.closed.sort()).toEqual([...probe.opened].sort());
+  });
+
+  it("a provider that hangs first costs the providers after it nothing", async () => {
+    // claude is checked first (a release blocker); the other eight must still answer ok, however
+    // slowly their real work goes
+    fakeClock();
+    const probe = new FakeProbe();
+    probe.realLatencyMs = 20;
+    probe.script("claude", (s) => (s.ids = "hang"));
+    const report = await untilSettled(
+      runProviderHealth({ timeoutMs: 5_000 }, deps(probe, { sleep: async () => undefined })),
+      probe,
+    );
+    expect(row(report, "claude").status).toBe("timeout");
+    expect(
+      report.rows.filter((r) => r.status === "ok"),
+      statuses(report),
+    ).toHaveLength(8);
+    expect(report.rows.filter((r) => r.status === "skipped")).toEqual([]);
     expect(probe.closed.sort()).toEqual([...probe.opened].sort());
   });
 
@@ -429,7 +472,7 @@ describe("providerHealth: a slow provider gets a time limit", () => {
       (s.chats as Record<string, FetchedChat | Hang>)[first] = "hang";
     });
     const run = runProviderHealth({ providers: ["claude"], timeoutMs: 5_000 }, deps(probe));
-    const report = await untilSettled(run);
+    const report = await untilSettled(run, probe);
     expect(row(report, "claude").status).toBe("timeout");
     expect(row(report, "claude").note).toContain("fetching chat 1");
   });
@@ -441,12 +484,13 @@ describe("providerHealth: a slow provider gets a time limit", () => {
     probe.listIds = async (tabId: number) => {
       probe.listed.push("claude");
       void tabId;
+      probe.hangs++;
       return new Promise<string[]>((resolve) => {
         release = resolve;
       });
     };
     const run = runProviderHealth({ providers: ["claude"], timeoutMs: 5_000 }, deps(probe));
-    await untilSettled(run);
+    await untilSettled(run, probe);
     release(idsFor("claude"));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(probe.fetched).toEqual([]);
@@ -458,6 +502,7 @@ describe("providerHealth: a slow provider gets a time limit", () => {
     const probe = new FakeProbe();
     let lateTab: (() => void) | undefined;
     probe.open = async (_url, _fg, onTab) => {
+      probe.hangs++;
       return new Promise<number>(() => {
         lateTab = () => {
           const id = probe.nextTab++;
@@ -468,6 +513,7 @@ describe("providerHealth: a slow provider gets a time limit", () => {
     };
     const report = await untilSettled(
       runProviderHealth({ providers: ["claude"], timeoutMs: 5_000 }, deps(probe)),
+      probe,
     );
     expect(row(report, "claude").status).toBe("timeout");
     expect(probe.opened).toEqual([]);
@@ -488,7 +534,7 @@ describe("providerHealth: a slow provider gets a time limit", () => {
       { providers: ["grok"], timeoutMs: 120_000, totalMs: 7_000 },
       deps(probe),
     );
-    const report = await untilSettled(only);
+    const report = await untilSettled(only, probe);
     // its own limit is 120 s but the run's is 7 s (nothing spent yet): it stops at 7, and says 7
     expect(row(report, "grok").status).toBe("timeout");
     expect(row(report, "grok").note).toContain("7 s");

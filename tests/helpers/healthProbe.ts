@@ -56,6 +56,14 @@ export class FakeProbe implements HealthProbe {
   closed: number[] = [];
   fetched: { provider: string; id: string }[] = [];
   listed: string[] = [];
+  /**
+   * How long each fetch really takes, in milliseconds of real time. A busy runner answers late;
+   * this makes every run as slow as the slowest one, so a test that races a fake clock against
+   * real work fails here and not only there.
+   */
+  realLatencyMs = 0;
+  /** How many calls have been left hanging so far (see `hang`). */
+  hangs = 0;
   /** How many tabs were open at once, at most */
   maxOpen = 0;
 
@@ -66,6 +74,18 @@ export class FakeProbe implements HealthProbe {
   script(name: string, change: (s: Script) => void): void {
     const s = this.scripts.get(name) as Script;
     change(s);
+  }
+
+  /** A call that never answers. A test that fakes the clock moves it only while one is waiting. */
+  hang<T>(): Promise<T> {
+    this.hangs++;
+    return new Promise<T>(() => undefined);
+  }
+
+  /** Real time passing, spent in macrotasks so the fake timers stay where they are. */
+  private async slow(): Promise<void> {
+    const until = performance.now() + this.realLatencyMs;
+    while (performance.now() < until) await new Promise<void>((r) => setImmediate(r));
   }
 
   private providerOf(tabId: number): string {
@@ -104,7 +124,7 @@ export class FakeProbe implements HealthProbe {
     const name = this.providerOf(tabId);
     this.listed.push(name);
     const ids = (this.scripts.get(name) as Script).ids;
-    if (ids === "hang") return new Promise<string[]>(() => undefined);
+    if (ids === "hang") return this.hang<string[]>();
     if (ids instanceof Error) throw ids;
     return ids ?? [];
   }
@@ -112,8 +132,9 @@ export class FakeProbe implements HealthProbe {
   async fetchChat(tabId: number, provider: Provider, chatId: string): Promise<FetchedChat> {
     expect(this.providerOf(tabId)).toBe(provider.name);
     this.fetched.push({ provider: provider.name, id: chatId });
+    await this.slow();
     const answer = (this.scripts.get(provider.name) as Script).chats?.[chatId];
-    if (answer === "hang") return new Promise<FetchedChat>(() => undefined);
+    if (answer === "hang") return this.hang<FetchedChat>();
     return answer ?? { success: false, error: "no such chat" };
   }
 
