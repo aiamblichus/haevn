@@ -12,6 +12,7 @@ const finishBulkSyncIndexing = vi.hoisted(() => vi.fn());
 const saveImportedChat = vi.hoisted(() => vi.fn());
 const getChatsMetadata = vi.hoisted(() => vi.fn());
 const getChatMessages = vi.hoisted(() => vi.fn());
+const unmovedRefusal = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/services/settingsService", () => ({
   getCliSettings,
@@ -23,6 +24,7 @@ vi.mock("../src/services/syncService", () => ({
     getChat,
     getChatsMetadata,
     getChatMessages,
+    unmovedRefusal,
     startBulkSyncIndexing,
     finishBulkSyncIndexing,
   },
@@ -113,6 +115,8 @@ beforeEach(async () => {
   getChatsMetadata.mockResolvedValue({ metadata: [], total: 0 });
   getChatMessages.mockReset();
   getChatMessages.mockResolvedValue({});
+  unmovedRefusal.mockReset();
+  unmovedRefusal.mockResolvedValue(undefined);
   vi.stubGlobal("WebSocket", FakeWebSocket);
   vi.stubGlobal("chrome", {
     alarms: { create: vi.fn(), clear: vi.fn(async () => true) },
@@ -402,6 +406,24 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     });
 
     expect(await getDB().metadataQueue.count()).toBe(0);
+  });
+});
+
+describe("get, branches and export refuse a chat whose messages have not moved (HVN-31)", () => {
+  it.each([
+    "get",
+    "branches",
+    "export",
+  ])("%s answers with the refusal, and reads the chat for nothing", async (action) => {
+    const refusal = "Chat old cannot be read yet: its messages have not moved.";
+    unmovedRefusal.mockResolvedValue(refusal);
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({ action, chatId: "old" });
+
+    expect(reply).toMatchObject({ success: false, error: refusal });
+    expect(unmovedRefusal).toHaveBeenCalledWith("old");
+    expect(getChat).not.toHaveBeenCalled();
   });
 });
 

@@ -845,6 +845,8 @@ async function handleGet(
   id: string,
   req: Extract<WsRequest, { action: "get" }>,
 ): Promise<WsResponse> {
+  const refusal = await SyncService.unmovedRefusal(req.chatId);
+  if (refusal) return { id, success: false, error: refusal };
   const chat = await SyncService.getChat(req.chatId);
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
@@ -878,6 +880,8 @@ async function handleBranches(
   id: string,
   req: Extract<WsRequest, { action: "branches" }>,
 ): Promise<WsResponse> {
+  const refusal = await SyncService.unmovedRefusal(req.chatId);
+  if (refusal) return { id, success: false, error: refusal };
   const chat = await SyncService.getChatWithMessages(req.chatId);
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
@@ -911,6 +915,8 @@ async function handleExport(
   id: string,
   req: Extract<WsRequest, { action: "export" }>,
 ): Promise<WsResponse> {
+  const refusal = await SyncService.unmovedRefusal(req.chatId);
+  if (refusal) return { id, success: false, error: refusal };
   const chat = await SyncService.getChatWithMessages(req.chatId);
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };

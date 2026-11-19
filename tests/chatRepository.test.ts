@@ -59,6 +59,21 @@ describe("ChatRepository message reads take the table only (HVN-31)", () => {
     expect(await ChatRepository.getChatMessageCount("inline")).toBe(0);
     expect((await ChatRepository.getChatWithMessages("inline"))?.messages).toEqual({});
   });
+
+  it("refuses a read of a chat whose messages are still in its row, naming the chat", async () => {
+    const inline = {
+      id: "m1",
+      chatId: "held",
+      childrenIds: [],
+      message: [],
+    } as unknown as ChatMessage;
+    await getDB().chats.put({ ...buildChat("held"), messages: { m1: inline } });
+    await getDB().chats.put({ ...buildChat("moved"), messages: {} });
+
+    expect(await ChatRepository.unmovedRefusal("held")).toMatch(/^Chat held cannot be read yet/);
+    expect(await ChatRepository.unmovedRefusal("moved")).toBeUndefined();
+    expect(await ChatRepository.unmovedRefusal("missing")).toBeUndefined();
+  });
 });
 
 describe("ChatRepository.hardDeleteChats", () => {

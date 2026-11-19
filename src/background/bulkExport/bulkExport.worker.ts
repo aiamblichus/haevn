@@ -14,6 +14,7 @@ import {
   generateAttachmentFilename,
 } from "../../formatters";
 import type { Chat, ChatMessage } from "../../model/haevn_model";
+import { isHeldForMove } from "../../services/chatPersistence";
 import { HaevnDatabase } from "../../services/db";
 import { ExportManifestWriter } from "../../services/exportManifest";
 import {
@@ -53,6 +54,8 @@ interface WorkerState {
   totalChats: number;
   processedChats: number;
   skippedCount: number;
+  /** Of the skipped, the chats whose messages had not moved to the table yet (HVN-31). */
+  unmovedCount: number;
   globalAttachmentIndex: number;
   exportId: string;
   meta: {
@@ -242,9 +245,14 @@ function toMessageDict(rows: ChatMessage[]): Record<string, ChatMessage> {
   return Object.fromEntries(rows.map((row) => [row.id, row]));
 }
 
-async function loadChatWithMessages(chatId: string): Promise<Chat | undefined> {
+/**
+ * A chat with its messages from the table. A chat whose messages are still in its row has not been
+ * moved (HVN-31): it comes back as "held", since exporting it would write an empty chat.
+ */
+async function loadChatWithMessages(chatId: string): Promise<Chat | "held" | undefined> {
   const chat = await db.chats.get(chatId);
   if (!chat) return undefined;
+  if (isHeldForMove(chat)) return "held";
 
   const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
   const metadataRecord = await db.chatMetadata.get(chatId);
@@ -445,6 +453,8 @@ async function processBatch(
 ): Promise<{
   processedCount: number;
   skippedCount: number;
+  /** Of the skipped, the chats whose messages had not moved to the table yet (HVN-31). */
+  unmovedCount: number;
   /** How many of batchChatIds were dealt with, from the front: staged, missing or failed. */
   consumedCount: number;
   nextAttachmentIndex: number;
@@ -455,6 +465,7 @@ async function processBatch(
 
   let batchProcessedCount = 0;
   let batchSkippedCount = 0;
+  let batchUnmovedCount = 0;
   let batchConsumedCount = 0;
   const attachmentIndex = globalAttachmentIndex;
 
@@ -469,6 +480,16 @@ async function processBatch(
     if (!chat) {
       log.warn(`[BulkExportWorker] Chat ${chatId} not found, skipping`);
       batchSkippedCount++;
+      batchConsumedCount++;
+      continue;
+    }
+
+    if (chat === "held") {
+      log.warn(
+        `[BulkExportWorker] Chat ${chatId} has messages not moved to the new layout yet, skipping`,
+      );
+      batchSkippedCount++;
+      batchUnmovedCount++;
       batchConsumedCount++;
       continue;
     }
@@ -514,6 +535,7 @@ async function processBatch(
   return {
     processedCount: batchProcessedCount,
     skippedCount: batchSkippedCount,
+    unmovedCount: batchUnmovedCount,
     consumedCount: batchConsumedCount,
     nextAttachmentIndex: attachmentIndex,
   };
@@ -562,6 +584,7 @@ async function processNextBatch(): Promise<void> {
       type: "complete",
       processed: state.processedChats,
       skipped: state.skippedCount,
+      unmoved: state.unmovedCount,
       batches: state.currentBatchNumber,
       requestId,
     } as BulkExportWorkerResponse);
@@ -607,6 +630,7 @@ async function processNextBatch(): Promise<void> {
     // Update state. Only the chats the batch dealt with leave the queue: a pause that lands
     // mid-batch stops it early, and the rest must still be there when the export resumes.
     state.skippedCount += result.skippedCount;
+    state.unmovedCount += result.unmovedCount;
     state.remainingChatIds = state.remainingChatIds.slice(result.consumedCount);
     state.globalAttachmentIndex = result.nextAttachmentIndex;
 
@@ -697,6 +721,7 @@ async function processNextBatch(): Promise<void> {
         type: "complete",
         processed: state.processedChats,
         skipped: state.skippedCount,
+        unmoved: state.unmovedCount,
         batches: batchNumber,
         requestId,
       } as BulkExportWorkerResponse);
@@ -820,6 +845,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
           totalChats: msg.chatIds.length,
           processedChats: 0,
           skippedCount: 0,
+          unmovedCount: 0,
           globalAttachmentIndex: 0,
           exportId: msg.exportId,
           meta: msg.meta,

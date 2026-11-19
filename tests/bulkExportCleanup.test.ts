@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { safeSendMessage } from "../src/background/utils/messageUtils";
 import type { ExportOptions } from "../src/formatters";
 import type {
   BulkExportWorkerMessage,
@@ -10,7 +11,9 @@ vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../src/background/utils/messageUtils", () => ({ safeSendMessage: () => undefined }));
+vi.mock("../src/background/utils/messageUtils", () => ({
+  safeSendMessage: vi.fn(() => undefined),
+}));
 
 // What the service worker asks of the offscreen document, in the order it asks. `events` also
 // takes what Chrome reports about the download, so a test can say what came before a delete.
@@ -162,6 +165,21 @@ describe("a completed bulk export (HVN-62)", () => {
     );
     expect(await getBulkExportState()).toBeNull();
     expect(await getActiveOperation()).toBe("idle");
+  });
+});
+
+describe("the completion message of an export with unmoved chats (HVN-31)", () => {
+  it("says how many chats were skipped, and why the unmoved ones were", async () => {
+    await startExport();
+
+    await worker.listener?.({ type: "complete", processed: 2, skipped: 1, unmoved: 1, batches: 1 });
+
+    expect(safeSendMessage).toHaveBeenCalledWith({
+      action: "bulkExportComplete",
+      message: expect.stringContaining(
+        "(1 skipped; 1 with messages not moved to the new layout yet)",
+      ),
+    });
   });
 });
 

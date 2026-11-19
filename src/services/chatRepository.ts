@@ -406,6 +406,17 @@ export namespace ChatRepository {
     return { ...chat, messages };
   }
 
+  /**
+   * Why a chat cannot be read yet, or undefined when it can. A chat whose messages are still in its
+   * row has not been moved (HVN-31): its table is empty, so an export or a read of it would be an
+   * empty chat, and the caller refuses with this instead.
+   */
+  export async function unmovedRefusal(chatId: string): Promise<string | undefined> {
+    const row = await getDB().chats.get(chatId);
+    if (!row || row.deletedAt || !ChatPersistence.isHeldForMove(row)) return undefined;
+    return `Chat ${chatId} cannot be read yet: its messages have not moved to the new storage layout. They move when the extension starts; if this persists, reload the extension.`;
+  }
+
   export async function getBranchMessages(
     chatId: string,
     leafMessageId: string,

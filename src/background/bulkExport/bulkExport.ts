@@ -180,6 +180,7 @@ async function handleWorkerMessage(
           status: "complete",
           processedChats: message.processed,
           skippedCount: message.skipped,
+          unmovedCount: message.unmoved ?? 0,
         });
         const exportState = await getExportJobState();
         log.info(`[BulkExport] Export state for download:`, {
@@ -514,6 +515,7 @@ export async function startBulkExport(chatIds: string[], options: ExportOptions)
       totalBatches,
       downloadedFiles: [],
       skippedCount: 0,
+      unmovedCount: 0,
       globalAttachmentIndex: 0,
     };
 
@@ -642,6 +644,19 @@ export async function cancelBulkExport(graceMs = CANCEL_GRACE_MS): Promise<void>
 }
 
 /**
+ * The skipped part of the completion message: how many chats were skipped, and for the ones whose
+ * messages had not moved to the new layout yet, why (HVN-31).
+ */
+function describeSkipped(state: BulkExportState): string {
+  if (state.skippedCount === 0) return "";
+  const unmoved =
+    state.unmovedCount > 0
+      ? `; ${state.unmovedCount} with messages not moved to the new layout yet`
+      : "";
+  return ` (${state.skippedCount} skipped${unmoved})`;
+}
+
+/**
  * Cleans up bulk export state and sends completion message.
  */
 async function cleanupBulkExport(action: string): Promise<void> {
@@ -656,7 +671,7 @@ async function cleanupBulkExport(action: string): Promise<void> {
   if (action === "bulkExportComplete") {
     const message = `Exported ${state.processedChats} chats in ${
       state.currentBatchNumber
-    } batch(es)${state.skippedCount > 0 ? ` (${state.skippedCount} skipped)` : ""}.`;
+    } batch(es)${describeSkipped(state)}.`;
     safeSendMessage({
       action: "bulkExportComplete",
       message,

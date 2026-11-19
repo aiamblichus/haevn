@@ -46,6 +46,10 @@ export async function exportSingleChatFile(
   chatId: string,
   options: ExportOptions,
 ): Promise<{ filename: string; downloadId: number }> {
+  const refusal = await SyncService.unmovedRefusal(chatId);
+  if (refusal) {
+    throw new Error(refusal);
+  }
   const chat = await SyncService.getChatWithMessages(chatId);
   if (!chat) {
     throw new Error(`Chat not found: ${chatId}`);
