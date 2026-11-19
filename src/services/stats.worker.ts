@@ -2,17 +2,16 @@
 import type { StatsWorkerMessage, StatsWorkerResponse } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import { countLiveChatsForSource } from "./liveChatCount";
 
 // Use the shared database class - worker gets its own instance
 const db = new HaevnDatabase();
 
-// Calculate provider stats (runs in worker thread)
+// Calculate provider stats (runs in worker thread). Live chats only: a soft-deleted chat is not in
+// the archive's count for the provider (HVN-85).
 async function calculateProviderStats(providerName: string): Promise<number> {
   try {
-    // Use indexed source field for exact match (O(log n) instead of O(n))
-    const providerLower = providerName.toLowerCase();
-    const count = await db.chats.where("source").equals(providerLower).count();
-    return count;
+    return await countLiveChatsForSource(db, providerName.toLowerCase());
   } catch (err) {
     log.error(`[StatsWorker] Failed to calculate stats for ${providerName}:`, err);
     return 0;
