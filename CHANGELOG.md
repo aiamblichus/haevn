@@ -25,6 +25,10 @@
 
 ### Fixed
 
+- A search worker restart during a bulk sync or import no longer leaves the chats it updated unindexed: the window to catch up is kept in the database and paid at the next start. The unused `lunrIndex` table is removed (database version 21).
+- The CLI refuses a negative `--offset`, `--limit`, `--context`, `--head` or `--tail` in either form (`--offset -1` was read as page 1), and `haevn get --head/--tail` trims JSON output as it trims Markdown.
+- Claude and Qwen syncs no longer download files that nothing shows, and a Qwen assistant message's generated images line up with the images downloaded for it (an attached file could take the first image's place).
+- The Manifesto view no longer repaints every frame while it is open, and its animations stop when the system asks for reduced motion.
 - A re-sync whose image download fails keeps the image already stored for that message, instead of replacing it with a link to the platform (which may no longer have it).
 - The export dialog and the ZIP's manifest count the chats written: with some skipped, they no longer say "2 exported" for 1 ("1 chat", not "1 chats").
 - Provider counts leave out deleted chats, and show the last count instead of 0 while recounting.
