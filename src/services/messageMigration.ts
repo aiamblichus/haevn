@@ -17,12 +17,17 @@ import type { Chat } from "../model/haevn_model";
 import { getStorageAdapter } from "../storage";
 import { log } from "../utils/logger";
 import { getDB } from "./db";
-import { isMessageMigrationDone, MESSAGE_MIGRATION_FLAG } from "./messageMigrationFlag";
 import { SyncService } from "./syncService";
 
-export { MESSAGE_MIGRATION_FLAG };
+/** The storage key of the flag that says the move has finished on this install. */
+export const MESSAGE_MIGRATION_FLAG = "haevn.migration.v17Messages";
 
 const DEFAULT_BATCH_SIZE = 20;
+
+/** Whether the move has finished on this install: its flag is `done`. */
+export async function isMessageMigrationDone(): Promise<boolean> {
+  return (await getStorageAdapter().get<string>(MESSAGE_MIGRATION_FLAG)) === "done";
+}
 
 export interface MessageMigrationOptions {
   /** Chats read per batch. Each chat is moved in a transaction of its own; batches yield between. */
@@ -169,8 +174,9 @@ function readBatch(after: string | undefined, size: number): Promise<Chat[]> {
 
 /**
  * Moves one chat's messages from its row into the table, in one transaction. The row is read
- * inside it, so a save that moved the chat since the batch was read is not overwritten. Returns
- * what was moved, or undefined when there was nothing left to move.
+ * inside it, so a save that moved the chat since the batch was read is not overwritten. A table
+ * that already holds the chat's messages is the newer copy, so it is kept and the row's copy is
+ * dropped with a warning. Returns what was stored, or undefined when there was nothing to move.
  */
 async function moveChat(
   chatId: string,
@@ -181,10 +187,16 @@ async function moveChat(
     const inline = Object.values(row?.messages ?? {});
     if (!row || inline.length === 0) return undefined;
 
-    await db.chatMessages.where("chatId").equals(chatId).delete();
-    await db.chatMessages.bulkPut(inline.map((message) => ({ ...message, chatId })));
+    const held = await db.chatMessages.where("chatId").equals(chatId).count();
+    if (held > 0) {
+      log.warn(
+        `[MessageMigration] Chat ${chatId} has messages in its row and in its table; the table is kept and the ${inline.length} in the row are dropped`,
+      );
+    } else {
+      await db.chatMessages.bulkPut(inline.map((message) => ({ ...message, chatId })));
+    }
     await db.chats.update(chatId, { messages: {} });
-    return { messages: inline.length, deleted: row.deleted === 1 };
+    return { messages: held > 0 ? 0 : inline.length, deleted: row.deleted === 1 };
   });
 }
 

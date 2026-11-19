@@ -4,11 +4,13 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
+import { saveChatToDb } from "../src/services/chatPersistence";
 import { getDB } from "../src/services/db";
-import * as MetadataService from "../src/services/metadataService";
 import { MESSAGE_MIGRATION_FLAG, runMessageMigration } from "../src/services/messageMigration";
+import * as MetadataService from "../src/services/metadataService";
 import { resetMemorySqliteHost } from "../src/services/searchIndex";
 import { getStorageAdapter } from "../src/storage";
+import { log } from "../src/utils/logger";
 
 const toWorker = vi.hoisted(() => ({
   send: undefined as undefined | ((message: unknown) => Promise<void>),
@@ -154,6 +156,11 @@ async function movedIds(ids: string[]): Promise<string[]> {
   return moved;
 }
 
+/** The ids of a chat's messages in the table, in key order. */
+async function tableIds(chatId: string): Promise<string[]> {
+  return (await getDB().chatMessages.where("chatId").equals(chatId).toArray()).map((m) => m.id);
+}
+
 const flag = () => getStorageAdapter().get<string>(MESSAGE_MIGRATION_FLAG);
 
 // Spies (the fetch the model is sent through, the alarms) are put back after each test.
@@ -268,6 +275,67 @@ describe("moving messages out of chat rows (HVN-31)", () => {
   });
 });
 
+describe("a move that races a save or fails midway (HVN-31)", () => {
+  it("does not write back the row its batch read, when a save lands before the move's transaction", async () => {
+    await putLegacy(legacyChat("old", ["old one", "old two"]));
+    const newer = chatRow("old", { "old-n": message("old", "old-n", "the newer message") });
+    // The batch has read the old row. A save writes the chat before the move's transaction opens.
+    const db = getDB();
+    const transaction = db.transaction.bind(db) as unknown as (
+      ...args: unknown[]
+    ) => Promise<unknown>;
+    let saveLanded = false;
+    vi.spyOn(db, "transaction").mockImplementation(((...args: unknown[]) => {
+      if (saveLanded) return transaction(...args);
+      saveLanded = true;
+      return saveChatToDb(newer).then(() => transaction(...args));
+    }) as never);
+
+    const report = await runMessageMigration();
+
+    expect(saveLanded).toBe(true);
+    expect(report).toMatchObject({ status: "done", migrated: 0, failed: [] });
+    expect(await tableIds("old")).toEqual(["old-n"]);
+    expect(await getDB().chats.get("old")).toMatchObject({ messages: {} });
+  });
+
+  it("rolls the table back when the row cannot be updated, and the row keeps its messages", async () => {
+    // The table holds nothing for the chat, so the move writes its messages there before the row.
+    await putLegacy(legacyChat("old", ["old one", "old two"]));
+    vi.spyOn(getDB().chats, "update").mockRejectedValueOnce(new Error("the row would not update"));
+
+    const report = await runMessageMigration();
+
+    expect(report).toMatchObject({ status: "incomplete", failed: ["old"], migrated: 0 });
+    expect(await tableIds("old")).toEqual([]);
+    expect(Object.keys((await getDB().chats.get("old"))?.messages ?? {}).sort()).toEqual([
+      "old-m0",
+      "old-m1",
+    ]);
+    expect(await flag()).toBeNull();
+  });
+});
+
+describe("a move that finds the chat's messages already in the table (HVN-31)", () => {
+  it("keeps the table as it is, empties the row, and warns that both held messages", async () => {
+    // The row holds a and b. The table holds a newer b, and a c that only the table has.
+    await putLegacy(legacyChat("old", ["a", "b"]));
+    await getDB().chatMessages.bulkPut([
+      { ...message("old", "old-m1", "b, saved again since"), chatId: "old" },
+      { ...message("old", "old-c", "c"), chatId: "old" },
+    ]);
+    const before = await getDB().chatMessages.where("chatId").equals("old").toArray();
+    vi.mocked(log.warn).mockClear();
+
+    const report = await runMessageMigration();
+
+    expect(report).toMatchObject({ status: "done", failed: [] });
+    expect(await getDB().chatMessages.where("chatId").equals("old").toArray()).toEqual(before);
+    expect(await getDB().chats.get("old")).toMatchObject({ messages: {} });
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("Chat old"));
+  });
+});
+
 describe("what the index reads of a chat (HVN-31)", () => {
   it("indexes the table's messages, and not the messages a row still carries inline", async () => {
     await putLegacy(legacyChat("old", ["a pineapple on pizza"]));
@@ -360,7 +428,7 @@ describe("the metadata queue holds a chat until its messages have moved (HVN-31)
     await getDB().metadataQueue.put({ chatId: "old", status: "pending", retries: 0, addedAt: 1 });
 
     await expect(MetadataService.generateOnRequest("old")).rejects.toThrow(
-      "still being moved to the new layout; try again in a minute",
+      "have not moved to the new storage layout yet. They move when the extension starts",
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();

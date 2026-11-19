@@ -144,6 +144,14 @@ export async function saveChatToDb(chat: Chat): Promise<void> {
 }
 
 /**
+ * Whether a chat's messages are still in its row, the layout before v17: the move has not reached
+ * the chat yet (HVN-31). A saved chat, or one the move has emptied, holds none in its row.
+ */
+export function isHeldForMove(chat: Chat | undefined): boolean {
+  return Object.keys(chat?.messages ?? {}).length > 0;
+}
+
+/**
  * Full save operation that sets all metadata and writes to DB.
  * This is the convenience function that workers should use.
  *

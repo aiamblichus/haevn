@@ -3,7 +3,7 @@ import { registerAllProviders } from "../providers/index";
 import { getAllProviders, getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
 import { diagnosticsService } from "../services/diagnosticsService";
-import { runMessageMigration } from "../services/messageMigration";
+import { isMessageMigrationDone, runMessageMigration } from "../services/messageMigration";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
 import { sweepOrphanedExports } from "./bulkExport/bulkExport";
@@ -87,8 +87,9 @@ try {
 // Check for missing thumbnails and generate in background (non-blocking)
 (async () => {
   try {
-    // A thumbnail is made from the messages in their table, so the check waits for the move
-    await messagesMoved;
+    // A thumbnail is made from the messages in their table, so until the move is done the check
+    // waits for it. Once the flag says it is done, the check does not wait on the index.
+    if (!(await isMessageMigrationDone())) await messagesMoved;
     log.info("Checking for missing thumbnails...");
     await diagnosticsService.wrap("init:Thumbnails", () => handleCheckMissingThumbnails(undefined));
   } catch (err) {

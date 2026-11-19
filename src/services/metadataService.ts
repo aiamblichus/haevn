@@ -2,8 +2,8 @@ import { Type } from "@sinclair/typebox";
 import objectHash from "object-hash";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
-import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
+import { isHeldForMove } from "./chatPersistence";
 import type {
   ChatEmbeddingRecord,
   ChatMetadataRecord,
@@ -254,14 +254,6 @@ export async function setManualMetadata(
  * Process one pending metadata queue item. Called by the alarm listener.
  * Reschedules the alarm if more items remain.
  */
-/**
- * Whether a chat row still holds its messages inline. The move of messages into their table
- * (HVN-31) has not reached such a chat, and an excerpt read from the table would be empty.
- */
-function isHeldForMove(chat: Chat | undefined): boolean {
-  return Object.keys(chat?.messages ?? {}).length > 0;
-}
-
 export async function processQueueTick(): Promise<void> {
   const db = getDB();
   const config = await getMetadataAIConfig();
@@ -789,7 +781,7 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   // Written with an empty excerpt otherwise (HVN-31): the request is refused until the move reaches it
   if (isHeldForMove(chat)) {
     throw new Error(
-      "This chat's messages are still being moved to the new layout; try again in a minute",
+      "This chat's messages have not moved to the new storage layout yet. They move when the extension starts; if this persists, reload the extension.",
     );
   }
 
