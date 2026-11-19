@@ -97,8 +97,11 @@ describe("formatHealthText", () => {
     const text = formatHealthText(
       report([row({ provider: "claude", status: "fail", note: "bad \u001b[31mred\u0007" })]),
     );
-    expect(text).not.toContain("\u001b[31m");
+    // The injected sequence must not survive. The formatter's own colours may: picocolors turns
+    // them on when CI is set, so a bare "\u001b[31m" check fails there and passes locally.
+    expect(text).not.toContain("\u001b[31mred");
     expect(text).not.toContain("\u0007");
+    expect(text).toContain("red");
   });
 });
 
