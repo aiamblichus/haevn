@@ -25,6 +25,10 @@
 
 ### Fixed
 
+- A re-sync whose image download fails keeps the image already stored for that message, instead of replacing it with a link to the platform (which may no longer have it).
+- The export dialog and the ZIP's manifest count the chats written: with some skipped, they no longer say "2 exported" for 1 ("1 chat", not "1 chats").
+- Provider counts leave out deleted chats, and show the last count instead of 0 while recounting.
+- Error, saved and warning boxes in settings, import, metadata and export follow the dark theme.
 - Chats stored before the v17 layout change (messages inside the chat record) now move to the messages table once, at startup, in batches; nothing moved them before, so AI metadata got an empty excerpt for them. Until a chat has moved, an export skips it and says so ("N with messages not moved to the new layout yet"), and AI metadata waits for it, instead of writing it empty.
 - The Starmap opens on large archives. Its embeddings crossed a message to the layout worker as JSON (about 70 MB at 2,500 chats), past Chrome's 64 MiB limit; the worker now reads them itself, and only positions and labels reach the page (about 2 MB).
 - An idle archive tab no longer uses about 14% CPU: the logo's glow animated a filter on the main thread and now pulses on the compositor (and stops under reduced motion). The five-minute embedding refresh no longer loads every vector into memory to compare fingerprints.
