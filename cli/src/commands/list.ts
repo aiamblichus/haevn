@@ -7,7 +7,7 @@ import { daemonRequest } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { ListMetadataKey } from "../types";
 import type { Chat } from "../types/chat";
-import { parseWholeNumber } from "../utils/args";
+import { flagText, parseWholeNumber } from "../utils/args";
 import {
   consola,
   formatPlatform,
@@ -70,14 +70,14 @@ export default defineCommand({
         `(${METADATA_KEY_OPTIONS.join(", ")}); "all" expands to the four concrete keys`,
     },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
     const { platform, after, sort, format } = args;
     let limit: number;
     let offset: number;
     let includeMetadata: ListMetadataKey[];
     try {
-      limit = parseWholeNumber("limit", args.limit, 20, 1);
-      offset = parseOffset(args.offset);
+      limit = parseWholeNumber("limit", flagText(args.limit, rawArgs, ["--limit", "-l"]), 20, 1);
+      offset = parseOffset(flagText(args.offset, rawArgs, ["--offset"]));
       includeMetadata = parseMetadataKeys(args["include-metadata"]);
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));

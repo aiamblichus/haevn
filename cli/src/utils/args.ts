@@ -15,3 +15,21 @@ export function parseWholeNumber(
   }
   return value;
 }
+
+/**
+ * The text a flag was typed with, for `parseWholeNumber`. citty takes a value that starts with `-`
+ * as a flag of its own, so `--offset -1` arrives as `--offset` with an empty value, and the `-1` as
+ * a flag named `1`. The token is still in `rawArgs`: it is read from there, so `--offset -1` is
+ * refused as `--offset=-1` is. Otherwise the parsed value stands (undefined when the flag is absent).
+ */
+export function flagText(
+  parsed: string | undefined,
+  rawArgs: readonly string[] | undefined,
+  names: readonly string[],
+): string | undefined {
+  const raw = rawArgs ?? [];
+  for (let i = 0; i < raw.length - 1; i++) {
+    if (names.includes(raw[i]) && raw[i + 1].startsWith("-")) return raw[i + 1];
+  }
+  return parsed;
+}

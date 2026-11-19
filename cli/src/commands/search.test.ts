@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { daemonRequestWithMeta } from "../daemon/client.js";
+import { runAsTyped } from "../testing/runAsTyped";
 import type { SearchResult } from "../types/chat";
-import { formatSearchResultsText, searchJson } from "./search";
+import { consola } from "../utils/output";
+import searchCommand, { formatSearchResultsText, searchJson } from "./search";
+
+vi.mock("../daemon/client.js", () => ({ daemonRequestWithMeta: vi.fn() }));
 
 function hit(overrides: Partial<SearchResult>): SearchResult {
   return {
@@ -74,5 +79,32 @@ describe("haevn search and the chats the limit cut off (HVN-77)", () => {
     expect(cut).toContain("More chats match than were returned. Raise --limit");
     expect(whole).not.toContain("More chats match");
     expect(formatSearchResultsText([hit({})])).not.toContain("More chats match");
+  });
+});
+
+describe("haevn search refuses a negative --limit or --context, either way (HVN-84)", () => {
+  beforeEach(() => {
+    vi.mocked(daemonRequestWithMeta).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    [["react", "--limit", "-1"], '--limit must be a whole number, 1 or more (got "-1").'],
+    [["react", "--limit=-1"], '--limit must be a whole number, 1 or more (got "-1").'],
+    [["react", "--context", "-5"], '--context must be a whole number, 0 or more (got "-5").'],
+    [["react", "-c", "-5"], '--context must be a whole number, 0 or more (got "-5").'],
+  ])("%j exits 1 with the message, before it asks the daemon", async (rawArgs, message) => {
+    const error = vi.spyOn(consola, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`exit ${code}`);
+    });
+
+    await expect(runAsTyped(searchCommand, rawArgs)).rejects.toThrow("exit 1");
+
+    expect(error).toHaveBeenCalledWith(message);
+    expect(daemonRequestWithMeta).not.toHaveBeenCalled();
   });
 });

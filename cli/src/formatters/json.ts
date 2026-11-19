@@ -4,23 +4,29 @@
 
 import type { Chat } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
-import { getMessageRole, getMessagesOnBranch, getMessageText } from "../utils/tree";
+import { getMessageRole, getMessagesOnBranch, getMessageText, windowMessages } from "../utils/tree";
 
 export interface BranchJsonOptions {
   includeThinking?: boolean;
   skipSystem?: boolean;
+  /** As for Markdown: only the first N messages of the branch (0 = all); head wins over tail. */
+  head?: number;
+  /** As for Markdown: only the last N messages of the branch (0 = all). */
+  tail?: number;
 }
 
 /**
- * Format a branch as JSON for structured output.
+ * Format a branch as JSON for structured output. `branch.path` always lists the whole branch; the
+ * `branch.messages` are the ones a head or tail window keeps, as Markdown keeps them.
  */
 export function formatBranchAsJson(
   chat: Chat,
   branchPath: string[],
   options: BranchJsonOptions = {},
 ): object {
-  const { includeThinking = false, skipSystem = false } = options;
-  const messages = getMessagesOnBranch(chat, branchPath).filter((msg) => {
+  const { includeThinking = false, skipSystem = false, head = 0, tail = 0 } = options;
+  const cut = windowMessages(getMessagesOnBranch(chat, branchPath), { head, tail });
+  const messages = cut.messages.filter((msg) => {
     if (!skipSystem) return true;
     return getMessageRole(msg) !== "system";
   });

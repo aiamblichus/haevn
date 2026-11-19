@@ -8,6 +8,7 @@ import { daemonRequest } from "../daemon/client.js";
 import { formatBranchAsJson, toJsonString } from "../formatters/json";
 import { formatBranchAsMarkdown } from "../formatters/markdown";
 import type { Chat } from "../types/chat";
+import { flagText, parseWholeNumber } from "../utils/args";
 import { resolveMessageRef } from "../utils/messageRefs";
 import { consola, safeText } from "../utils/output";
 import { getBranchContainingMessage, getPrimaryBranch } from "../utils/tree";
@@ -69,7 +70,7 @@ export default defineCommand({
       description: "Only show the first N messages",
     },
   },
-  async run({ args }) {
+  async run({ args, rawArgs }) {
     const {
       chatId,
       message: messageId,
@@ -79,9 +80,17 @@ export default defineCommand({
       "include-media": includeMedia,
       "include-thinking": includeThinking,
       "skip-system": skipSystem,
-      tail,
-      head,
     } = args;
+
+    let head: number;
+    let tail: number;
+    try {
+      head = parseWholeNumber("head", flagText(args.head, rawArgs, ["--head"]), 0);
+      tail = parseWholeNumber("tail", flagText(args.tail, rawArgs, ["--tail", "-t"]), 0);
+    } catch (err) {
+      consola.error(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
 
     let chat: Chat;
     let resolvedMessageId = messageId;
@@ -112,8 +121,8 @@ export default defineCommand({
         includeMedia,
         includeThinking,
         skipSystem,
-        tail: tail ? Number.parseInt(tail, 10) : 0,
-        head: head ? Number.parseInt(head, 10) : 0,
+        tail,
+        head,
       });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
@@ -162,6 +171,8 @@ export function outputBranch(
       formatBranchAsJson(chat, branchPath, {
         includeThinking: options.includeThinking,
         skipSystem: options.skipSystem,
+        head: options.head,
+        tail: options.tail,
       }),
     );
   }

@@ -114,6 +114,26 @@ export function getMessagesOnBranch(chat: Chat, path: string[]): ChatMessage[] {
 }
 
 /**
+ * The head or tail window that `get --head` and `get --tail` cut from a branch's messages. head
+ * wins over tail; 0 means no window. Markdown and JSON both cut through here, so they cut the same
+ * messages. `headOmitted` and `tailOmitted` count what the window left out at each end.
+ */
+export function windowMessages<T>(
+  messages: readonly T[],
+  limits: { head?: number; tail?: number },
+): { messages: T[]; headOmitted: number; tailOmitted: number } {
+  const { head = 0, tail = 0 } = limits;
+  const total = messages.length;
+  if (head > 0 && head < total) {
+    return { messages: messages.slice(0, head), headOmitted: total - head, tailOmitted: 0 };
+  }
+  if (tail > 0 && tail < total) {
+    return { messages: messages.slice(-tail), headOmitted: 0, tailOmitted: total - tail };
+  }
+  return { messages: [...messages], headOmitted: 0, tailOmitted: 0 };
+}
+
+/**
  * Get the role of a message (system, user, or assistant).
  */
 export function getMessageRole(message: ChatMessage): "system" | "user" | "assistant" {

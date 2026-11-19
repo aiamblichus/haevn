@@ -6,7 +6,7 @@ import { defineCommand } from "citty";
 import { daemonRequestWithMeta } from "../daemon/client.js";
 import { toJsonString } from "../formatters/json";
 import type { SearchResult } from "../types";
-import { parseWholeNumber } from "../utils/args";
+import { flagText, parseWholeNumber } from "../utils/args";
 import { createMessageRef } from "../utils/messageRefs";
 import {
   consola,
@@ -75,14 +75,18 @@ export default defineCommand({
       description: "Only messages before date (YYYY-MM-DD)",
     },
   },
-  async run({ args }) {
-    const { query, platform, category, format, after, before, context } = args;
+  async run({ args, rawArgs }) {
+    const { query, platform, category, format, after, before } = args;
     const includeMetadata = !args["no-metadata"];
     let limit: number;
     let contextChars: number;
     try {
-      limit = parseWholeNumber("limit", args.limit, 20, 1);
-      contextChars = parseWholeNumber("context", context, 120);
+      limit = parseWholeNumber("limit", flagText(args.limit, rawArgs, ["--limit", "-l"]), 20, 1);
+      contextChars = parseWholeNumber(
+        "context",
+        flagText(args.context, rawArgs, ["--context", "-c"]),
+        120,
+      );
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
