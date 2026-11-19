@@ -124,7 +124,21 @@ async function openMemoryHost(): Promise<SqliteHost> {
   };
 }
 
+/**
+ * The index lives in the "opfs-sahpool" VFS. At start-up the library also tries to install its
+ * "opfs" and "opfs-wl" VFSes, which find a helper script by URL; an IIFE worker has none to give,
+ * so each logs "Ignoring inability to install …: Invalid URL". They are never used: turn them off
+ * by name before the first init (the library reads this once, at bootstrap, then deletes it).
+ * "opfs-sahpool" has its own switch and does not need what they share.
+ */
+function disableUnusedOpfsVfses(): void {
+  (globalThis as { sqlite3ApiConfig?: unknown }).sqlite3ApiConfig = {
+    disable: { vfs: { opfs: true, "opfs-wl": true } },
+  };
+}
+
 async function openOpfsHost(): Promise<SqliteHost> {
+  disableUnusedOpfsVfses();
   const sqlite3 = await (sqlite3InitModule as unknown as WasmInit)({
     // An IIFE bundle has no `import.meta.url` to find the module beside; it sits next to the
     // worker script, which is at the extension's root.
