@@ -5,6 +5,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -177,10 +178,17 @@ export const MetadataModal = ({
               {chatTitle}
             </span>
           </DialogTitle>
+          <DialogDescription>
+            The title, description and categories of this chat, which you can edit here.
+          </DialogDescription>
         </DialogHeader>
 
         {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
+        {error && (
+          <div className="text-sm text-destructive bg-destructive/10 border border-destructive/50 p-2 rounded">
+            {error}
+          </div>
+        )}
 
         {!loading && mode === "view" && (
           <div className="space-y-4 text-sm">

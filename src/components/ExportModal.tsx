@@ -320,7 +320,7 @@ export const ExportModal = ({
                 <DialogDescription>{exportModalIds.length} chat(s) selected.</DialogDescription>
               </DialogHeader>
 
-              {scopeNote && <p className="text-sm text-yellow-600">{scopeNote}</p>}
+              {scopeNote && <p className="text-sm text-secondary">{scopeNote}</p>}
 
               <div className="space-y-3">
                 <div className="space-y-1">
@@ -346,7 +346,7 @@ export const ExportModal = ({
                   </select>
                   <p className="text-xs text-muted-foreground">{selectedExporterDef.description}</p>
                   {!canUseSelectedExporterForCurrentSelection && (
-                    <p className="text-xs text-yellow-600">
+                    <p className="text-xs text-secondary">
                       This exporter currently supports single-chat export only.
                     </p>
                   )}
