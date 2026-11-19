@@ -3,6 +3,7 @@ import { registerAllProviders } from "../providers/index";
 import { getAllProviders, getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
 import { diagnosticsService } from "../services/diagnosticsService";
+import { isMessageMigrationDone, runMessageMigration } from "../services/messageMigration";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
 import { sweepOrphanedExports } from "./bulkExport/bulkExport";
@@ -48,9 +49,16 @@ clearStaleImportState().catch((err) => log.warn("Failed to clear stale import st
 const PROVIDERS = getAllProviders().map((provider) => provider.name);
 
 // Initialize SyncService (opens or builds the search index, etc.)
-diagnosticsService
+const searchReady = diagnosticsService
   .wrap("init:SyncService", () => SyncService.init())
   .catch((err) => log.warn("SyncService init failed", err));
+
+// Move the messages of chats saved before DB v17 into their table (HVN-31). It starts once the index
+// is open, so each chat it moves is indexed by a worker that is listening. After its flag is set, a
+// start only reads the flag.
+const messagesMoved = searchReady
+  .then(() => diagnosticsService.wrap("init:MessageMigration", () => runMessageMigration()))
+  .catch((err) => log.error("[Init] Message migration failed", err));
 
 // Call setup for every provider synchronously to ensure listeners are registered early
 try {
@@ -79,6 +87,9 @@ try {
 // Check for missing thumbnails and generate in background (non-blocking)
 (async () => {
   try {
+    // A thumbnail is made from the messages in their table, so until the move is done the check
+    // waits for it. Once the flag says it is done, the check does not wait on the index.
+    if (!(await isMessageMigrationDone())) await messagesMoved;
     log.info("Checking for missing thumbnails...");
     await diagnosticsService.wrap("init:Thumbnails", () => handleCheckMissingThumbnails(undefined));
   } catch (err) {

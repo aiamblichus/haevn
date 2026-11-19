@@ -21,6 +21,7 @@ export namespace SyncService {
   export const getChatsMetadata = ChatRepository.getChatsMetadata;
   export const getChat = ChatRepository.getChat;
   export const getChatWithMessages = ChatRepository.getChatWithMessages;
+  export const unmovedRefusal = ChatRepository.unmovedRefusal;
   export const getChatMessages = ChatRepository.getChatMessages;
   export const getPrimaryBranchMessages = ChatRepository.getPrimaryBranchMessages;
   export const getBranchMessages = ChatRepository.getBranchMessages;

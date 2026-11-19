@@ -3,6 +3,7 @@ import objectHash from "object-hash";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
+import { isHeldForMove } from "./chatPersistence";
 import type {
   ChatEmbeddingRecord,
   ChatMetadataRecord,
@@ -262,10 +263,24 @@ export async function processQueueTick(): Promise<void> {
     return;
   }
 
-  const item = (await db.metadataQueue.where("status").equals("pending").sortBy("addedAt"))[0];
-
-  if (!item) {
+  const pending = await db.metadataQueue.where("status").equals("pending").sortBy("addedAt");
+  if (pending.length === 0) {
     await chrome.alarms.clear(METADATA_PROCESS_ALARM);
+    return;
+  }
+
+  // The first pending chat whose messages are in their table. A held chat keeps its place and its
+  // retries, and the tick goes on to the next one.
+  let item: MetadataQueueRecord | undefined;
+  for (const candidate of pending) {
+    if (!isHeldForMove(await db.chats.get(candidate.chatId))) {
+      item = candidate;
+      break;
+    }
+  }
+  if (!item) {
+    // Every pending chat is held: look again at the queue period, not on every tick
+    chrome.alarms.create(METADATA_PROCESS_ALARM, { delayInMinutes: METADATA_QUEUE_PERIOD_MINUTES });
     return;
   }
 
@@ -763,6 +778,12 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
   const chat = await getDB().chats.get(chatId);
   if (!chat) throw new Error(`Chat ${chatId} not found`);
+  // Written with an empty excerpt otherwise (HVN-31): the request is refused until the move reaches it
+  if (isHeldForMove(chat)) {
+    throw new Error(
+      "This chat's messages have not moved to the new storage layout yet. They move when the extension starts; if this persists, reload the extension.",
+    );
+  }
 
   const messages = await getDB().chatMessages.where("chatId").equals(chatId).toArray();
 

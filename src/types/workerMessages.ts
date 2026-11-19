@@ -172,7 +172,7 @@ export type BulkExportWorkerResponse = (
       totalBatches?: number;
     }
   | { type: "batchComplete"; batchNumber: number; zipFilename: string }
-  | { type: "complete"; processed: number; skipped: number; batches: number }
+  | { type: "complete"; processed: number; skipped: number; unmoved?: number; batches: number }
   | { type: "error"; error: string }
   | { type: "paused" }
   | { type: "cancelled" }

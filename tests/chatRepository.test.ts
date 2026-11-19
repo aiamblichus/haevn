@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { Chat } from "../src/model/haevn_model";
+import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import { ChatRepository } from "../src/services/chatRepository";
 import { getDB } from "../src/services/db";
 
@@ -41,6 +41,40 @@ async function seedChat(chatId: string): Promise<void> {
   await db.metadataQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1704067200000 });
   await db.embeddingQueue.put({ chatId, status: "pending", retries: 0, addedAt: 1704067200000 });
 }
+
+describe("ChatRepository message reads take the table only (HVN-31)", () => {
+  it("reads no messages from a row that still carries them inline", async () => {
+    const inline = {
+      id: "m1",
+      chatId: "inline",
+      childrenIds: [],
+      message: [],
+      model: "m",
+      done: true,
+      timestamp: 1,
+    } as unknown as ChatMessage;
+    await getDB().chats.put({ ...buildChat("inline"), messages: { m1: inline } });
+
+    expect(await ChatRepository.getChatMessages("inline")).toEqual({});
+    expect(await ChatRepository.getChatMessageCount("inline")).toBe(0);
+    expect((await ChatRepository.getChatWithMessages("inline"))?.messages).toEqual({});
+  });
+
+  it("refuses a read of a chat whose messages are still in its row, naming the chat", async () => {
+    const inline = {
+      id: "m1",
+      chatId: "held",
+      childrenIds: [],
+      message: [],
+    } as unknown as ChatMessage;
+    await getDB().chats.put({ ...buildChat("held"), messages: { m1: inline } });
+    await getDB().chats.put({ ...buildChat("moved"), messages: {} });
+
+    expect(await ChatRepository.unmovedRefusal("held")).toMatch(/^Chat held cannot be read yet/);
+    expect(await ChatRepository.unmovedRefusal("moved")).toBeUndefined();
+    expect(await ChatRepository.unmovedRefusal("missing")).toBeUndefined();
+  });
+});
 
 describe("ChatRepository.hardDeleteChats", () => {
   beforeEach(async () => {

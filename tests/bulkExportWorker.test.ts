@@ -117,6 +117,8 @@ let chatLoads: string[] = [];
 // Chats the database holds for a test (ids not in it, and not "a…", are not found), and what
 // happens when one is loaded.
 let chatRows = new Map<string, Chat>();
+// The messages of those chats, in the chatMessages table (their rows hold none, as a save leaves them).
+let chatMessageRows = new Map<string, unknown[]>();
 let onChatLoad: ((id: string) => Promise<void> | void) | undefined;
 // Chat "a0" waits on this before it answers; a test replaces it to hold the first batch.
 let firstLoad: Promise<void> = Promise.resolve();
@@ -136,6 +138,7 @@ async function loadWorker(): Promise<void> {
   posted = [];
   chatLoads = [];
   chatRows = new Map();
+  chatMessageRows = new Map();
   onChatLoad = undefined;
   opfs.files.clear();
   opfs.onWrite = undefined;
@@ -163,6 +166,12 @@ async function loadWorker(): Promise<void> {
     if (id === "a100") throw new Error("boom");
     return undefined;
   });
+  vi.spyOn(db.chatMessages, "where").mockImplementation(((_index: string) => ({
+    equals: (chatId: string) => ({
+      toArray: async () =>
+        (chatMessageRows.get(chatId) ?? []).map((row) => ({ ...(row as object), chatId })),
+    }),
+  })) as never);
 }
 
 /** Holds the first batch at its first chat until the returned function is called. */
@@ -318,8 +327,9 @@ function seedChats(
       source: "claude",
       sourceId: `s-${id}`,
       title: id,
-      messages,
+      messages: {},
     } as unknown as Chat);
+    chatMessageRows.set(id, Object.values(messages));
   }
   return ids;
 }
@@ -678,5 +688,32 @@ describe("a cancel during the start's staging setup (HVN-63)", () => {
     stagingSetup.fail = undefined;
     await send(startMessage("r2", "e2", []));
     expect(posted).toContainEqual(expect.objectContaining({ type: "complete", requestId: "r2" }));
+  });
+});
+
+describe("a chat whose messages have not moved to the table yet (HVN-31)", () => {
+  it("is skipped and counted as unmoved, and the moved chat is exported", async () => {
+    await loadWorker();
+    const ids = seedChats(2);
+    // c1 still keeps its messages in its row, as a chat from before the move does; its table has none.
+    chatRows.set("c1", {
+      ...chatRows.get("c1"),
+      messages: { m1: { id: "m1" } },
+    } as unknown as Chat);
+    chatMessageRows.set("c1", []);
+
+    await send(startMessage("r1", "e1", ids));
+
+    expect(stagedChatIds("e1")).toEqual(["c0"]);
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: "complete",
+        requestId: "r1",
+        processed: 1,
+        skipped: 1,
+        unmoved: 1,
+        batches: 1,
+      }),
+    );
   });
 });

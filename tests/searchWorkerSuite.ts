@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
+import { saveChatToDb } from "../src/services/chatPersistence";
 import { getDB } from "../src/services/db";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
@@ -149,8 +150,11 @@ function buildChat(id: string, text: string): Chat {
   };
 }
 
+/** Chats as a save writes them: the messages in their table, and the row with none (HVN-31). */
 async function seedChats(chats: Chat[]): Promise<void> {
-  await getDB().chats.bulkPut(chats);
+  for (const chat of chats) {
+    await saveChatToDb(chat);
+  }
 }
 
 beforeEach(async () => {

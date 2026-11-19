@@ -163,31 +163,16 @@ function getContentUrl(attachment: AttachmentInfo): string {
   return "";
 }
 
+/** The chat with its messages from the `chatMessages` table; a row's own `messages` is not read (HVN-31). */
 async function hydrateChatMessages(chat: Chat): Promise<Chat> {
-  if (!chat.id) return chat;
+  if (!chat.id) return { ...chat, messages: {} };
 
-  const hasEmbeddedMessages = Boolean(chat.messages && Object.keys(chat.messages).length > 0);
-
-  // Prefer normalized messages table when available (DB v17+).
   const storedRows = await db.chatMessages.where("chatId").equals(chat.id).toArray();
-  if (storedRows.length === 0) {
-    return chat;
-  }
-
-  // If chat already embeds full message map, keep it to avoid unnecessary reconstruction.
-  if (hasEmbeddedMessages && Object.keys(chat.messages).length >= storedRows.length) {
-    return chat;
-  }
-
-  const hydratedMessages: Record<string, ChatMessage> = {};
+  const messages: Record<string, ChatMessage> = {};
   for (const row of storedRows) {
-    hydratedMessages[row.id] = row;
+    messages[row.id] = row;
   }
-
-  return {
-    ...chat,
-    messages: hydratedMessages,
-  };
+  return { ...chat, messages };
 }
 
 /**
@@ -204,7 +189,7 @@ async function generateThumbnailsForChat(
       return { count: 0, thumbnails: [] };
     }
 
-    // Extract all attachments (supports both embedded chat.messages and normalized chatMessages table)
+    // Extract all attachments, from the messages in the chatMessages table
     const hydratedChat = await hydrateChatMessages(chat);
     const attachments = extractAttachmentsFromChat(hydratedChat);
 
@@ -279,7 +264,7 @@ async function generateThumbnailsForChat(
         }
 
         // Get message timestamp
-        const chatMessage = chat.messages[attachment.messageId];
+        const chatMessage = hydratedChat.messages[attachment.messageId];
         const timestamp = chatMessage?.timestamp;
 
         // Transaction to check and write atomically (prevents race condition duplicates)
@@ -369,7 +354,7 @@ async function findChatsWithMissingThumbnails(): Promise<string[]> {
       // Skip if chat has no ID (shouldn't happen, but TypeScript safety)
       if (!chat.id) continue;
 
-      // Extract attachments (supports both embedded chat.messages and normalized chatMessages table)
+      // Extract attachments, from the messages in the chatMessages table
       const hydratedChat = await hydrateChatMessages(chat);
       const attachments = extractAttachmentsFromChat(hydratedChat);
       const mediaAttachments = attachments.filter(

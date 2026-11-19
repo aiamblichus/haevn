@@ -393,16 +393,10 @@ export namespace ChatRepository {
     }
   }
 
+  /** A chat's messages, from the chatMessages table; a row's own `messages` is never read (HVN-31). */
   export async function getChatMessages(chatId: string): Promise<Record<string, ChatMessage>> {
-    const db = getDB();
-    const rows = await db.chatMessages.where("chatId").equals(chatId).toArray();
-    if (rows.length > 0) {
-      return toMessageDict(rows);
-    }
-
-    // Legacy fallback while lazy migration is still in-progress.
-    const chat = await db.chats.get(chatId);
-    return (chat?.messages || {}) as Record<string, ChatMessage>;
+    const rows = await getDB().chatMessages.where("chatId").equals(chatId).toArray();
+    return toMessageDict(rows);
   }
 
   export async function getChatWithMessages(chatId: string): Promise<Chat | undefined> {
@@ -410,6 +404,17 @@ export namespace ChatRepository {
     if (!chat) return undefined;
     const messages = await getChatMessages(chatId);
     return { ...chat, messages };
+  }
+
+  /**
+   * Why a chat cannot be read yet, or undefined when it can. A chat whose messages are still in its
+   * row has not been moved (HVN-31): its table is empty, so an export or a read of it would be an
+   * empty chat, and the caller refuses with this instead.
+   */
+  export async function unmovedRefusal(chatId: string): Promise<string | undefined> {
+    const row = await getDB().chats.get(chatId);
+    if (!row || row.deletedAt || !ChatPersistence.isHeldForMove(row)) return undefined;
+    return `Chat ${chatId} cannot be read yet: its messages have not moved to the new storage layout. They move when the extension starts; if this persists, reload the extension.`;
   }
 
   export async function getBranchMessages(
@@ -457,13 +462,7 @@ export namespace ChatRepository {
   }
 
   export async function getChatMessageCount(chatId: string): Promise<number> {
-    const db = getDB();
-    const migratedCount = await db.chatMessages.where("chatId").equals(chatId).count();
-    if (migratedCount > 0) {
-      return migratedCount;
-    }
-    const chat = await db.chats.get(chatId);
-    return Object.keys(chat?.messages || {}).length;
+    return getDB().chatMessages.where("chatId").equals(chatId).count();
   }
 
   export async function saveChatMessages(
