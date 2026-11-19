@@ -923,12 +923,10 @@ const App = () => {
               <ProvidersView
                 isActive={activeView === "providers"}
                 onRefreshChats={loadChats}
-                onOpenImportModal={() => {
-                  setImportProviderFilter(null);
-                  setImportModalOpen(true);
-                }}
-                setImportProviderFilter={(format) => {
+                onOpenImportModal={(format) => {
+                  // One write: a reset here would undo the provider's format (HVN-101)
                   setImportProviderFilter(format);
+                  setImportModalOpen(true);
                 }}
               />
             ) : activeView === "gallery" ? (
