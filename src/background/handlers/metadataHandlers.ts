@@ -1,5 +1,4 @@
 import { ChatRepository } from "../../services/chatRepository";
-import { getDB } from "../../services/db";
 import * as MetadataRepository from "../../services/metadataRepository";
 import {
   enqueueAllMissing,
@@ -183,7 +182,7 @@ export async function handleGetStarmapData(
     const chatIds = layout.points.map((p) => p.chatId);
 
     const [chats, metadataMap] = await Promise.all([
-      getDB().chats.bulkGet(chatIds),
+      ChatRepository.getChatRows(chatIds),
       MetadataRepository.getMany(chatIds),
     ]);
 
@@ -215,7 +214,7 @@ export async function handleGetStarmapData(
       })
       .filter((n): n is NonNullable<typeof n> => n !== null);
 
-    const embeddedCount = await getDB().chatEmbeddings.count();
+    const embeddedCount = await MetadataRepository.countEmbeddings();
 
     sendResponse({
       success: true,
@@ -295,7 +294,7 @@ export async function handleGetChatPreview(
     const [metadata, messageCount, chat] = await Promise.all([
       MetadataRepository.get(message.chatId),
       ChatRepository.getChatMessageCount(message.chatId),
-      getDB().chats.get(message.chatId),
+      ChatRepository.getChatRow(message.chatId),
     ]);
     sendResponse({
       success: true,

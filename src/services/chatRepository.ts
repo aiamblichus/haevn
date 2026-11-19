@@ -364,6 +364,19 @@ export namespace ChatRepository {
   }
 
   /**
+   * The stored rows of these chats, in the order asked, with undefined for an unknown id. Deleted
+   * rows come back too: the caller reads `deleted` (the Starmap skips them).
+   */
+  export async function getChatRows(chatIds: string[]): Promise<(Chat | undefined)[]> {
+    return getDB().chats.bulkGet(chatIds);
+  }
+
+  /** The stored row of one chat, deleted or not: `getChat` hides a deleted one. */
+  export async function getChatRow(chatId: string): Promise<Chat | undefined> {
+    return getDB().chats.get(chatId);
+  }
+
+  /**
    * Retrieves a chat by its source and sourceId using the compound index.
    * This is much more efficient than scanning all chats.
    * @param source The provider name (e.g., "claude", "chatgpt")
