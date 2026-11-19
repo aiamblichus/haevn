@@ -16,12 +16,12 @@ OpenRouter is currently supported as an **import-only** provider in HAEVN.
 ## How a chatroom becomes a chat
 
 - A chatroom's turns are linked in the order they were written. When two models answer the same message, their replies become branches of that message, and the next message follows the later reply.
-- The chatroom has no id of its own, so HAEVN names the chat after the id of the chatroom's first message. It does not change when the chatroom is renamed or grows.
+- The chatroom has no id of its own, so HAEVN names the chat after the id of the chatroom's first message. It does not change when the chatroom is renamed or grows. If you delete a chatroom's first message in OpenRouter, a later export of it imports as a new chat beside the old one.
 - Artifacts, attachments and images are kept as they came in the chat's parameters; they are not shown in the viewer yet.
 
 ## Re-importing
 
-Importing the same export again, or a later export of the same chatrooms, replaces the earlier copy of each chat rather than adding a second one. Leave **Overwrite existing chats with the same ID** ticked (the default), or pass no `--no-overwrite` on the CLI.
+Importing the same export again, or a later export of the same chatrooms, replaces the earlier copy of each chat rather than adding a second one. Leave **Overwrite existing chats with the same ID** ticked (the default), or leave out `--no-overwrite` on the CLI.
 
 ## Import
 
