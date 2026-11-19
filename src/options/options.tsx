@@ -1,18 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { aistudioProvider } from "../providers/aistudio/provider";
-import { chatgptProvider } from "../providers/chatgpt/provider";
-import { claudeProvider } from "../providers/claude/provider";
-import { claudeCodeProvider } from "../providers/claudecode/provider";
-import { codexProvider } from "../providers/codex/provider";
-import { deepseekProvider } from "../providers/deepseek/provider";
-import { geminiProvider } from "../providers/gemini/provider";
-import { openrouterProvider } from "../providers/openrouter/provider";
-import { openwebuiProvider } from "../providers/openwebui/provider";
-import { piProvider } from "../providers/pi/provider";
-import { poeProvider } from "../providers/poe/provider";
-import { registerProvider } from "../providers/provider";
-import { qwenProvider } from "../providers/qwen/provider";
+import { registerAllProviders } from "../providers/index";
 import type {
   BackgroundEvent,
   BackgroundRequest,
@@ -51,19 +39,8 @@ import type {
   StatusKind,
 } from "./types";
 
-// Register providers for use in Options page
-registerProvider(geminiProvider);
-registerProvider(claudeProvider);
-registerProvider(poeProvider);
-registerProvider(chatgptProvider);
-registerProvider(openwebuiProvider);
-registerProvider(qwenProvider);
-registerProvider(aistudioProvider);
-registerProvider(deepseekProvider);
-registerProvider(claudeCodeProvider);
-registerProvider(codexProvider);
-registerProvider(piProvider);
-registerProvider(openrouterProvider);
+// Register every provider for the Options page: the Providers view lists the registry (HVN-103)
+registerAllProviders();
 
 const App = () => {
   const [activeView, setActiveView] = useState("archive");

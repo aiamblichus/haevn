@@ -4,6 +4,7 @@
 
 import consola from "consola";
 import pc from "picocolors";
+import { PLATFORM_COLORS } from "./platformColors";
 
 export { consola, pc };
 
@@ -43,22 +44,11 @@ export function formatRelativeTime(ts: number | undefined): string {
 }
 
 /**
- * Platform display names and colors.
+ * A platform's name in its colour. A platform with no colour in PLATFORM_COLORS is printed in white.
  */
-const platformColors: Record<string, (s: string) => string> = {
-  claude: pc.magenta,
-  chatgpt: pc.green,
-  gemini: pc.blue,
-  poe: pc.yellow,
-  openwebui: pc.cyan,
-  qwen: pc.red,
-  deepseek: pc.dim,
-  aistudio: pc.blue,
-  grok: pc.white,
-};
-
 export function formatPlatform(platform: string): string {
-  const colorFn = platformColors[platform.toLowerCase()] || pc.white;
+  const color = PLATFORM_COLORS.get(platform.toLowerCase());
+  const colorFn = color ? pc[color] : pc.white;
   return colorFn(platform);
 }
 

@@ -10,13 +10,14 @@ import { SyncService } from "./syncService";
 /**
  * Extract provider name from source string.
  * Shared utility used by multiple services (chat delete, import, etc.)
+ * The first name that the source contains wins, so "claudecode" is listed before "claude" (HVN-103).
  */
-function extractProviderName(source: string): string | null {
+export function extractProviderName(source: string): string | null {
   const sourceLower = source.toLowerCase();
   const providers = [
     "gemini",
-    "claude",
     "claudecode",
+    "claude",
     "codex",
     "pi",
     "openrouter",

@@ -65,10 +65,15 @@ function buildChatUrl(source: string, sourceId: string | undefined): string | nu
     const cleanId = sourceId.startsWith("c_") ? sourceId.substring(2) : sourceId;
     return `https://gemini.google.com/app/${cleanId}`;
   }
+  // Claude Code is import-only: no web chat, and it must not fall into the claude.ai branch (HVN-103)
+  if (s.includes("claudecode")) return null;
   if (s.includes("claude")) return `https://claude.ai/chat/${sourceId}`;
   if (s.includes("poe")) return `https://poe.com/chat/${sourceId}`;
   if (s.includes("chatgpt") || s.includes("openai")) return `https://chatgpt.com/c/${sourceId}`;
   if (s.includes("aistudio")) return `https://aistudio.google.com/prompts/${sourceId}`;
+  if (s.includes("qwen")) return `https://chat.qwen.ai/c/${sourceId}`;
+  if (s.includes("deepseek")) return `https://chat.deepseek.com/a/chat/s/${sourceId}`;
+  if (s.includes("grok")) return `https://grok.com/c/${sourceId}`;
   return null;
 }
 
@@ -282,6 +287,7 @@ const Header = ({
   const getIconPath = (source: string): string | null => {
     const s = (source || "").toLowerCase();
     if (s.includes("gemini") || s.includes("bard")) return "icons/gemini.png";
+    if (s.includes("claudecode")) return "icons/claudecode.png";
     if (s.includes("claude")) return "icons/claude.png";
     if (s.includes("poe")) return "icons/poe.png";
     if (s.includes("chatgpt")) return "icons/chatgpt.png";
@@ -289,6 +295,7 @@ const Header = ({
     if (s.includes("qwen")) return "icons/qwen.png";
     if (s.includes("aistudio")) return "icons/aistudio.png";
     if (s.includes("deepseek")) return "icons/deepseek.png";
+    if (s.includes("grok")) return "icons/grok.png";
     if (s.includes("codex")) return "icons/codex.png";
     if (s.includes("openrouter")) return "icons/openrouter.png";
     if (s === "pi" || s.startsWith("pi")) return "icons/pi.png";

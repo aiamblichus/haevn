@@ -63,6 +63,7 @@ export const getPlatformIcon = (source: string): React.ReactElement => {
   const s = (source || "").toLowerCase();
   let iconPath: string | null = null;
   if (s.includes("gemini") || s.includes("bard")) iconPath = "icons/gemini.png";
+  else if (s.includes("claudecode")) iconPath = "icons/claudecode.png";
   else if (s.includes("claude")) iconPath = "icons/claude.png";
   else if (s.includes("poe")) iconPath = "icons/poe.png";
   else if (s.includes("chatgpt")) iconPath = "icons/chatgpt.png";
@@ -97,6 +98,8 @@ export const buildChatUrl = (source: string, sourceId: string): string | null =>
     const cleanId = sourceId.startsWith("c_") ? sourceId.substring(2) : sourceId;
     return `https://gemini.google.com/app/${cleanId}`;
   }
+  // Claude Code is import-only: it has no web chat, and must not fall into the claude.ai branch
+  if (source.includes("claudecode")) return null;
   if (source.includes("claude")) return `https://claude.ai/chat/${sourceId}`;
   if (source.includes("poe")) return `https://poe.com/chat/${sourceId}`;
   if (source.includes("chatgpt")) return `https://chatgpt.com/c/${sourceId}`;
