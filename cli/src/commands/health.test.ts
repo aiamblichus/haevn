@@ -172,6 +172,41 @@ describe("haevn health", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  it("exits 1 when a release-blocking provider was skipped for time, and not for any other skip", async () => {
+    vi.spyOn(consola, "log").mockImplementation(() => undefined);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const exit = exits();
+    const skipped = (provider: string) =>
+      row({ provider, status: "skipped", signedIn: null, listed: null, checked: 0 });
+
+    vi.mocked(daemonRequest).mockResolvedValue(
+      report([row({ provider: "claude" }), skipped("gemini")]),
+    );
+    await expect(runAsTyped(healthCommand, [])).rejects.toThrow("exit 1");
+
+    exit.mockClear();
+    vi.mocked(daemonRequest).mockResolvedValue(
+      report([row({ provider: "claude" }), skipped("openwebui"), skipped("grok")]),
+    );
+    await runAsTyped(healthCommand, []);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("says a skipped release-blocking provider was not checked, and how to check it", () => {
+    const text = formatHealthText(
+      report([
+        row({ provider: "claude" }),
+        row({ provider: "chatgpt", status: "skipped", signedIn: null, listed: null, checked: 0 }),
+        row({ provider: "gemini", status: "skipped", signedIn: null, listed: null, checked: 0 }),
+      ]),
+    );
+    expect(text).toContain("release-blocking: chatgpt, gemini");
+    expect(text).toContain("haevn health -p chatgpt,gemini");
+    expect(formatHealthText(report([row({ provider: "claude" })]))).not.toContain(
+      "release-blocking",
+    );
+  });
+
   it.each([
     [["-n", "0"], '--chats must be a whole number, 1 or more (got "0").'],
     [["-n", "6"], '--chats must be a whole number, 1 to 5 (got "6").'],

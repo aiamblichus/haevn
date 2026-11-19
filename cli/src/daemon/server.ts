@@ -48,8 +48,9 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 export const HEALTH_REQUEST_TIMEOUT_MS = 270_000;
 
-export function timeoutFor(body: CliRequestBody): number {
-  return body.action === "health" ? HEALTH_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+export function timeoutFor(body: CliRequestBody | null | undefined): number {
+  // `JSON.parse("null")` is valid JSON: a body that is not an object gets the default
+  return body?.action === "health" ? HEALTH_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 }
 
 // ─── Counter for request IDs ──────────────────────────────────────────────────

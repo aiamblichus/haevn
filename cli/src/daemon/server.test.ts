@@ -62,6 +62,8 @@ describe("how long the daemon waits for the extension", () => {
     expect(timeoutFor({ action: "list" })).toBe(30_000);
     expect(timeoutFor({ action: "import", format: "pi", files: [] })).toBe(30_000);
     expect(timeoutFor({ action: "health" })).toBe(HEALTH_REQUEST_TIMEOUT_MS);
+    // a body of `null` (valid JSON) does not throw
+    expect(timeoutFor(null)).toBe(30_000);
     // longer than the extension's own 240 s limit on a run, so a slow run is answered, not cut
     expect(HEALTH_REQUEST_TIMEOUT_MS).toBeGreaterThan(240_000);
   });

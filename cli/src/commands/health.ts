@@ -10,7 +10,8 @@
  * The extension opens a tab on each provider's site, lists the chats, fetches the first few,
  * transforms them without saving anything or touching media, and checks the result. It is
  * read-only, and the report holds no chat text, title or id, so it can be pasted into a ticket.
- * Exit code: 0 when no provider failed or timed out, 1 when one did.
+ * Exit code: 0 when no provider failed or timed out, 1 when one did, or when a release-blocking
+ * provider (claude, chatgpt, gemini) was skipped because the run ran out of time.
  */
 
 import { defineCommand } from "citty";
@@ -105,11 +106,26 @@ export default defineCommand({
       consola.log(formatHealthText(report));
     }
 
-    if (report.rows.some((row) => row.status === "fail" || row.status === "timeout")) {
-      process.exit(1);
-    }
+    if (healthExitCode(report) !== 0) process.exit(1);
   },
 });
+
+/**
+ * The providers whose failure blocks a release. The extension checks them first
+ * (`RELEASE_BLOCKING_PROVIDERS` in `src/background/health/providerHealth.ts`; keep the lists equal).
+ */
+export const RELEASE_BLOCKING = ["claude", "chatgpt", "gemini"];
+
+/** A release-blocking provider the run did not get to: not checked, so not a pass. */
+export function blockingNotChecked(report: HealthReport): HealthRow[] {
+  return report.rows.filter((r) => r.status === "skipped" && RELEASE_BLOCKING.includes(r.provider));
+}
+
+/** 1 when a provider failed or timed out, or a release-blocking one was skipped; else 0. */
+export function healthExitCode(report: HealthReport): number {
+  const broke = report.rows.some((r) => r.status === "fail" || r.status === "timeout");
+  return broke || blockingNotChecked(report).length > 0 ? 1 : 0;
+}
 
 /** "claude, ChatGPT" -> ["claude", "chatgpt"]; undefined when the flag is absent or blank. */
 export function parseProviders(input: string | undefined): string[] | undefined {
@@ -225,5 +241,14 @@ export function formatHealthText(report: HealthReport): string {
       `  ${checked} of ${report.rows.length} providers checked, ${failed} failed, ${notChecked} not checked (not signed in, unreachable or skipped).`,
     ),
   );
+  const blocking = blockingNotChecked(report);
+  if (blocking.length > 0) {
+    const names = blocking.map((r) => r.provider).join(", ");
+    lines.push(
+      pc.red(
+        `  Not checked, and release-blocking: ${names}. The run's time ran out first; check them alone: haevn health -p ${names.replaceAll(", ", ",")}`,
+      ),
+    );
+  }
   return lines.join("\n");
 }
