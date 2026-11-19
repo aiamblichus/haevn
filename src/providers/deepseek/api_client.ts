@@ -26,7 +26,11 @@ export class DeepseekApiClient {
       this.token = tokenObj.value;
       return this.token;
     } catch (error) {
-      log.error("[DeepSeek] Failed to parse token from localStorage", { error, tokenStr });
+      // Never the token itself: the log can end up in a bug report (HVN-105)
+      log.error("[DeepSeek] Failed to parse token from localStorage", {
+        error,
+        tokenLength: tokenStr.length,
+      });
       throw new Error("Failed to parse DeepSeek auth token");
     }
   }
