@@ -256,12 +256,22 @@ haevn health -f json               # the report as JSON
   gemini     fail  text.empty x3 in 2 of 2 chats: a text, thinking or prompt part is an empty string
 ```
 
-- **It changes nothing.** No chat is saved, no media is downloaded or stored, nothing is indexed. A chat already in your archive is never overwritten by what the check fetched.
-- **The report holds no chat text, titles or ids**, only counts, the names of the rules that failed and short reasons, so you can paste it into a bug report.
-- **Not signed in** and **unreachable** are rows, not failures. A provider that is not signed in is *not checked*; the last line says how many were.
-- It opens real tabs (Gemini and AI Studio in the foreground, as a bulk sync does) and takes from a few seconds to a few minutes. It will not start while a sync, import or export is running. Each provider has a 40 s limit (`--timeout`), the whole run 4 minutes.
+- **Your archive is never changed.** No chat is saved, no media is stored, nothing is indexed, and a chat already in your archive is never overwritten by what the check fetched. Two things still happen, as when you browse the site: for ChatGPT, the check loads the images of the chats it fetches into memory and discards them; and loading a provider's tab can refresh the sign-in details HAEVN already keeps for that site.
+- **The report holds no chat text, titles or ids**, only counts, the names of the rules that failed and short reasons, so you can paste it into a bug report. (The extension's own log, `haevnDebug.getLogs()`, can mention a chat as it does in a sync.)
+- **Not signed in** and **unreachable** are rows, not failures, and the provider was *not checked*; the last line says how many were. A provider you know you are signed in to that shows `not signed in` is a failure of the check or of the sign-in details HAEVN keeps for it, not a pass: read its note.
+- It opens real tabs (Gemini and AI Studio in the foreground, as a bulk sync does) and takes from a few seconds to a few minutes. It will not start while a sync, import or export is running.
+- **Time.** Each provider gets 40 s and the whole run 4 minutes. Claude, ChatGPT and Gemini are checked first, then the rest, so a slow run skips the others and never these. A large account can spend the 40 s listing its chats (the row says `TIMEOUT` and `listing the chats`): run that provider alone with a longer limit, `haevn health -p chatgpt --timeout 120`.
 - Open WebUI is checked only when its address is set in the settings.
-- Exit code: 1 when a provider failed or timed out, 0 otherwise. The same check is `haevnDebug.providerHealth()` in the browser console of the Options page.
+- **Exit code:** 1 when a provider failed or timed out, or when Claude, ChatGPT or Gemini was skipped because the run ran out of time; 0 otherwise. The same check is `haevnDebug.providerHealth()` in the browser console of the Options page.
+
+### What a finding means
+
+A `fail` is a rule that makes a chat unusable (no messages, a current message that is not in the tree, an empty text, a date outside 2015 to tomorrow). A `warn` is odd but possible and never changes the exit code. Some are expected on a healthy account:
+
+- `title.fallback` on the newest chat: the head of the list is where untitled chats are.
+- `tree.multiple-roots` on Poe: a chat break starts a new root by design.
+- `text.empty` on ChatGPT is most likely a finding about HAEVN's converter (it may read the text of a reasoning node from the wrong place), not about the site. Report it; do not treat it as the site being down.
+- `roles.not-alternating` counts only two of your own messages in a row (a reply that was dropped). A model that answers in several steps, as ChatGPT does, is not one.
 
 ## Tips
 
