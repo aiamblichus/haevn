@@ -242,12 +242,12 @@ describe("moving messages out of chat rows (HVN-31)", () => {
       legacyChat("ok2", ["three"]),
     );
     const table = getDB().chatMessages;
-    const realBulkPut = table.bulkPut.bind(table);
-    const failing = vi.spyOn(table, "bulkPut").mockImplementation((async (
+    const realBulkAdd = table.bulkAdd.bind(table);
+    const failing = vi.spyOn(table, "bulkAdd").mockImplementation((async (
       rows: Array<{ chatId: string }>,
     ) => {
       if (rows.some((row) => row.chatId === "bad")) throw new Error("the disk is full");
-      return realBulkPut(rows as never);
+      return realBulkAdd(rows as never);
     }) as never);
 
     const report = await runMessageMigration();
@@ -317,22 +317,25 @@ describe("a move that races a save or fails midway (HVN-31)", () => {
 });
 
 describe("a move that finds the chat's messages already in the table (HVN-31)", () => {
-  it("keeps the table as it is, empties the row, and warns that both held messages", async () => {
+  it("adds the row's messages the table lacks, keeps the table's copy of a shared one, and empties the row", async () => {
     // The row holds a and b. The table holds a newer b, and a c that only the table has.
     await putLegacy(legacyChat("old", ["a", "b"]));
+    const newerB = { ...message("old", "old-m1", "b, saved again since"), chatId: "old" };
     await getDB().chatMessages.bulkPut([
-      { ...message("old", "old-m1", "b, saved again since"), chatId: "old" },
+      newerB,
       { ...message("old", "old-c", "c"), chatId: "old" },
     ]);
-    const before = await getDB().chatMessages.where("chatId").equals("old").toArray();
     vi.mocked(log.warn).mockClear();
 
     const report = await runMessageMigration();
 
     expect(report).toMatchObject({ status: "done", failed: [] });
-    expect(await getDB().chatMessages.where("chatId").equals("old").toArray()).toEqual(before);
+    expect(await tableIds("old")).toEqual(["old-c", "old-m0", "old-m1"]);
+    expect(await getDB().chatMessages.get(["old", "old-m1"])).toEqual(newerB);
     expect(await getDB().chats.get("old")).toMatchObject({ messages: {} });
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("Chat old"));
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("1 added from the row, 1 already in the table kept"),
+    );
   });
 });
 

@@ -174,9 +174,10 @@ function readBatch(after: string | undefined, size: number): Promise<Chat[]> {
 
 /**
  * Moves one chat's messages from its row into the table, in one transaction. The row is read
- * inside it, so a save that moved the chat since the batch was read is not overwritten. A table
- * that already holds the chat's messages is the newer copy, so it is kept and the row's copy is
- * dropped with a warning. Returns what was stored, or undefined when there was nothing to move.
+ * inside it, so a save that moved the chat since the batch was read is not overwritten. A message
+ * the table already holds is kept as the table has it, since the table is the newer copy; the row's
+ * other messages are added to the table. Returns what was added, or undefined when there was
+ * nothing to move.
  */
 async function moveChat(
   chatId: string,
@@ -187,16 +188,19 @@ async function moveChat(
     const inline = Object.values(row?.messages ?? {});
     if (!row || inline.length === 0) return undefined;
 
-    const held = await db.chatMessages.where("chatId").equals(chatId).count();
-    if (held > 0) {
+    const table = await db.chatMessages.where("chatId").equals(chatId).toArray();
+    const inTable = new Set(table.map((message) => message.id));
+    const added = inline.filter((message) => !inTable.has(message.id));
+    if (table.length > 0) {
       log.warn(
-        `[MessageMigration] Chat ${chatId} has messages in its row and in its table; the table is kept and the ${inline.length} in the row are dropped`,
+        `[MessageMigration] Chat ${chatId} has messages in its row and in its table: ${added.length} added from the row, ${inline.length - added.length} already in the table kept`,
       );
-    } else {
-      await db.chatMessages.bulkPut(inline.map((message) => ({ ...message, chatId })));
+    }
+    if (added.length > 0) {
+      await db.chatMessages.bulkAdd(added.map((message) => ({ ...message, chatId })));
     }
     await db.chats.update(chatId, { messages: {} });
-    return { messages: held > 0 ? 0 : inline.length, deleted: row.deleted === 1 };
+    return { messages: added.length, deleted: row.deleted === 1 };
   });
 }
 
