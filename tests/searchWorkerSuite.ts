@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { saveChatToDb } from "../src/services/chatPersistence";
 import { getDB } from "../src/services/db";
+import { BULK_WINDOW_KEY, type BulkWindow, endBulkWindow } from "../src/services/searchBulkWindow";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
 import { faults, opens, resetFaults, withFaults } from "./helpers/faultyIndex";
@@ -159,7 +160,12 @@ async function seedChats(chats: Chat[]): Promise<void> {
 
 beforeEach(async () => {
   const db = getDB();
-  await Promise.all([db.chats.clear(), db.chatMessages.clear(), db.lunrIndex.clear()]);
+  await Promise.all([
+    db.chats.clear(),
+    db.chatMessages.clear(),
+    db.lunrIndex.clear(),
+    db.cache.clear(),
+  ]);
   kit.reset();
   resetFaults();
   await loadWorker();
@@ -2047,6 +2053,12 @@ describe("search worker: the chats a bulk operation saves (HVN-87)", () => {
     vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
     await send({ type: "startBulk" });
     await send({ type: "endBulk" });
+    // Its catch-up has settled: until then the window is still owed, and the next operation keeps
+    // its time (HVN-88, "keeps the older time" in searchBulkWindow.test.ts).
+    for (let i = 0; i < 400 && (await getDB().cache.get(BULK_WINDOW_KEY)); i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(await getDB().cache.get(BULK_WINDOW_KEY)).toBeUndefined();
 
     vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
     await send({ type: "startBulk" });
@@ -2059,5 +2071,191 @@ describe("search worker: the chats a bulk operation saves (HVN-87)", () => {
     expect(await foundAfterCatchUp("quokka", ["fresh"])).toEqual(["fresh"]);
     await new Promise((r) => setTimeout(r, 50));
     expect([...new Set(hitIds(await search("quokka", false)))]).toEqual(["fresh"]);
+  });
+});
+
+describe("search worker: a bulk window survives a restart of the worker (HVN-88)", () => {
+  /** A chat as a bulk save leaves it: in the database, saved at `savedAt`, not in the index. */
+  function saved(id: string, text: string, savedAt: number): Chat {
+    return { ...buildChat(id, text), lastSyncedTimestamp: savedAt };
+  }
+
+  const windowRow = () => getDB().cache.get(BULK_WINDOW_KEY);
+  const windowOf = async () => (await windowRow())?.value as BulkWindow | undefined;
+  const rebuilds = () => posted.filter((m) => m.type === "indexRebuildComplete").length;
+
+  /** Chat "old" is in the index, as an earlier session left it. */
+  async function startWithAnIndex(): Promise<void> {
+    await seedChats([buildChat("old", "a wombat")]);
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+  }
+
+  /** The worker is gone and a new one starts, as an offscreen document that closed leaves it. */
+  async function restartWithInit(): Promise<void> {
+    await loadWorker();
+    await send({ type: "init" });
+    await waitUntilIndexReady("wombat");
+  }
+
+  /** The ids `query` finds now. */
+  async function found(query: string): Promise<string[]> {
+    return [...new Set(hitIds(await search(query, false)))].sort();
+  }
+
+  /** Wait until `check` holds, for work the worker does in the background. */
+  async function until(check: () => Promise<boolean>): Promise<void> {
+    for (let i = 0; i < 400; i++) {
+      if (await check()) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error("the worker never got there");
+  }
+
+  /** Give background work that should NOT happen a fair chance to happen. */
+  const settle = () => new Promise((r) => setTimeout(r, 100));
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("catches up at the next init when the worker restarted mid-bulk, and a chat was updated", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    // The same count of chats, so the consistency check at init has nothing to rebuild.
+    await seedChats([saved("old", "a quokka", Date.now())]);
+
+    await restartWithInit();
+
+    await until(async () => (await found("quokka")).length > 0);
+    expect(await found("quokka")).toEqual(["old"]);
+    expect(rebuilds()).toBe(0);
+  });
+
+  it("catches up at endBulk when the worker restarted mid-bulk and got no init first", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    await loadWorker(); // a worker that has opened nothing yet
+
+    await send({ type: "endBulk" });
+
+    await until(async () => (await found("quokka")).length > 0);
+    expect(await found("quokka")).toEqual(["old"]);
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("catches up an operation that had ended when the worker went, before its catch-up finished", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    // endBulk's reply was sent and the window marked, then the worker went.
+    await endBulkWindow(getDB());
+
+    await restartWithInit();
+
+    await until(async () => (await found("quokka")).length > 0);
+    expect(await found("quokka")).toEqual(["old"]);
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("clears the window after the catch-up of a normal endBulk", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    expect(await windowOf()).toMatchObject({ ended: false });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    await send({ type: "endBulk" });
+    await until(async () => (await found("quokka")).length > 0);
+    await until(async () => (await windowRow()) === undefined);
+
+    // Nothing is owed any more: an update after it is not found by the next start.
+    await seedChats([saved("old", "a lemur", Date.now())]);
+    await restartWithInit();
+    await settle();
+    expect(await found("lemur")).toEqual([]);
+    expect(await found("quokka")).toEqual(["old"]);
+  });
+
+  it("catches up nothing at init when no bulk window was opened", async () => {
+    await startWithAnIndex();
+    await seedChats([saved("old", "a quokka", Date.now())]); // updated, in no window
+
+    await restartWithInit();
+    await settle();
+
+    expect(await found("quokka")).toEqual([]);
+    expect(await found("wombat")).toEqual(["old"]);
+    expect(await windowRow()).toBeUndefined();
+  });
+
+  it("keeps a window that has not ended after the catch-up at init, moved forward", async () => {
+    await startWithAnIndex();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
+    await send({ type: "startBulk" });
+    const began = (await windowOf()) as BulkWindow;
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    vi.setSystemTime(new Date("2026-11-18T10:05:00Z"));
+
+    await restartWithInit();
+    await until(async () => (await found("quokka")).length > 0);
+    await until(async () => ((await windowOf()) as BulkWindow).since > began.since);
+
+    // The operation is still running: it saves another chat and ends.
+    expect(await windowOf()).toMatchObject({ ended: false });
+    await seedChats([saved("late", "a quokka", Date.now())]);
+    await send({ type: "endBulk" });
+    await until(async () => (await found("quokka")).length === 2);
+    expect(await found("quokka")).toEqual(["late", "old"]);
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("keeps the window when the catch-up failed, so that the next start tries again", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    faults.put = new Error("QuotaExceededError");
+    faults.putAfter = 0;
+    await send({ type: "endBulk" });
+    await settle();
+    expect(await windowRow()).toBeDefined();
+    expect(await found("quokka")).toEqual([]);
+
+    resetFaults();
+    await restartWithInit();
+    await until(async () => (await found("quokka")).length > 0);
+    expect(await found("quokka")).toEqual(["old"]);
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("keeps the window when there is no index of this format to put the chats in", async () => {
+    await seedChats([buildChat("old", "a wombat")]);
+    await kit.seedFormat(99); // an index that an earlier release left, which this one cannot read
+    await loadWorker();
+    await send({ type: "startBulk" });
+    await seedChats([saved("new", "a quokka", Date.now())]);
+
+    await send({ type: "endBulk" });
+    await settle();
+
+    // The next start rebuilds from the database, and then the window is paid.
+    expect(await windowOf()).toMatchObject({ ended: true });
+    await restartWithInit();
+    await until(async () => (await found("quokka")).length > 0);
+    await until(async () => (await windowRow()) === undefined);
+  });
+
+  it("keeps the window when the index could not be opened for the catch-up", async () => {
+    await startWithAnIndex();
+    await send({ type: "startBulk" });
+    await seedChats([saved("old", "a quokka", Date.now())]);
+    await loadWorker();
+    faults.open = new Error("the file is busy");
+    faults.openFailures = 5;
+
+    await send({ type: "endBulk" });
+    await settle();
+
+    expect(await windowRow()).toBeDefined();
   });
 });

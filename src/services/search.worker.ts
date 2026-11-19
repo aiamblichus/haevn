@@ -8,6 +8,13 @@ import type {
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
 import { HaevnDatabase } from "./db";
+import {
+  type BulkWindow,
+  endBulkWindow,
+  openBulkWindow,
+  readBulkWindow,
+  settleBulkWindow,
+} from "./searchBulkWindow";
 import { extractIndexedChat } from "./searchDocument";
 import { inCategory, needsCategory } from "./searchFilters";
 import {
@@ -93,8 +100,6 @@ let openFailure: string | null = null;
  * and an unfinished rebuild have none, and a search says the index is being rebuilt.
  */
 let hasLiveIndex = false;
-/** When the bulk operation that is running began; null when none is. */
-let bulkSince: number | null = null;
 let rebuildState: IndexRebuildState | null = null;
 // The run that is rebuilding now (every pass of it), so a second request can join it.
 let rebuildRun: Promise<RebuildOutcome> | null = null;
@@ -248,15 +253,19 @@ function removeFromIndex(chatIds: string[]): void {
 /**
  * Bring the chats a bulk operation saved into the index: the ones saved since it began, found by
  * their save time. The bulk paths save without indexing, and this takes the place of the full
- * rebuild that used to close them.
+ * rebuild that used to close them. True when the chats are in the index (or a pass that began
+ * after they were saved put them there); false when nothing could be done or it failed, so that
+ * the window stays on record for the next start.
  */
-async function catchUpSince(since: number): Promise<void> {
-  if (!index || !hasLiveIndex) return;
+async function catchUpSince(since: number): Promise<boolean> {
+  if (!index) return false;
   if (rebuildRun) {
     // The pass may have read these chats before they were saved: it goes once more.
-    await rebuildAll(false);
-    return;
+    const outcome = await rebuildAll(false);
+    return outcome.error === undefined;
   }
+  // No file to put them in: the rebuild that the next start makes reads them from the database.
+  if (!hasLiveIndex) return false;
   try {
     const keys = await db.chats.where("lastSyncedTimestamp").aboveOrEqual(since).primaryKeys();
     const ids = keys.map(String);
@@ -266,7 +275,7 @@ async function catchUpSince(since: number): Promise<void> {
         (chat): chat is Chat => !!chat && chat.deleted !== 1,
       );
       const chats = await attachMessages(rows);
-      if (!index || !hasLiveIndex) return;
+      if (!index || !hasLiveIndex) return false;
       const live = index;
       live.transaction(() => {
         for (const chat of chats) {
@@ -275,9 +284,48 @@ async function catchUpSince(since: number): Promise<void> {
         }
       });
     }
+    return true;
   } catch (e) {
     log.error("[SearchWorker] Catching up after a bulk operation failed", e);
     rebuildFailure = e instanceof Error ? e.message : String(e);
+    return false;
+  }
+}
+
+/**
+ * Pay what a bulk window owes: catch up from it, and on success settle it (an ended window is
+ * cleared, one that may still be live moves forward). The window stays on record when the
+ * catch-up did not happen, so the next `init` tries again. Never rejects.
+ */
+async function catchUpWindow(window: BulkWindow): Promise<void> {
+  // Taken before the read, so that a chat saved while it runs is inside the next window.
+  const startedAt = Date.now();
+  try {
+    if (!index) await openIndex();
+    if (await catchUpSince(window.since)) {
+      await settleBulkWindow(db, window, startedAt - CATCH_UP_MARGIN_MS);
+    }
+  } catch (e) {
+    log.error("[SearchWorker] Could not settle the bulk window", e);
+  }
+}
+
+/**
+ * A window on record when the worker starts is one that this worker did not see end: the worker
+ * restarted during a bulk operation (or between its `endBulk` and the end of the catch-up).
+ */
+async function recoverBulkWindow(): Promise<void> {
+  try {
+    const window = await readBulkWindow(db);
+    if (!window) return;
+    log.warn(
+      `[SearchWorker] A bulk window from ${new Date(window.since).toISOString()} was left on record${
+        window.ended ? " (the operation had ended)" : ""
+      }: catching up`,
+    );
+    await catchUpWindow(window);
+  } catch (e) {
+    log.error("[SearchWorker] Could not read the bulk window", e);
   }
 }
 
@@ -589,6 +637,8 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       // rebuild failed, starts a rebuild (not awaited). Answer init after that, so a search
       // sent on the heels of it is told about the rebuild instead of searching a short index.
       await checkIndexConsistency();
+      // In the background, like the catch-up at `endBulk`: search answers meanwhile.
+      void recoverBulkWindow();
       self.postMessage({ type: "initComplete", success: true });
       return;
     }
@@ -746,16 +796,19 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
 
     if (msg.type === "startBulk") {
       // A resumed operation keeps the window it began with (bulk sync calls this again on resume).
-      bulkSince ??= Date.now() - CATCH_UP_MARGIN_MS;
+      // The window is on record before the reply, so a restart after it cannot lose it.
+      await openBulkWindow(db, Date.now() - CATCH_UP_MARGIN_MS);
       self.postMessage({ type: "bulkComplete", success: true });
       return;
     }
 
     if (msg.type === "endBulk") {
-      const since = bulkSince;
-      bulkSince = null;
+      // The window on record, not one in memory: this worker may not be the one that saw the
+      // operation begin. Marked ended before the reply, so a restart during the catch-up leaves
+      // the catch-up owed.
+      const window = await endBulkWindow(db);
       // The chats the operation saved are indexed in the background; search answers meanwhile.
-      if (since !== null) void catchUpSince(since);
+      if (window) void catchUpWindow(window);
       self.postMessage({ type: "bulkComplete", success: true });
       return;
     }
