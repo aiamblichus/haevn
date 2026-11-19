@@ -78,6 +78,12 @@ Total: seven at 3 minutes and two at 5, **31 minutes**, plus the 5 before and ab
 - Tool calls are not drawn in the viewer (see above).
 - The date column in the archive is the provider's last-modified time, not the time of the sync.
 - A row may show a Sync Now button on a chat that cannot be synced (HVN-102), and Grok is missing from some provider lists in the options page (HVN-103).
+- **When you run `haevn health` (HVN-107) in place of the web half:** it checks the head of each list, read-only, and its findings are not all release blockers.
+  - **`text.empty` on ChatGPT** is most likely a finding about our transformer (it reads `.text` of the `thoughts` and `reasoning_recap` nodes, which may carry their text elsewhere), not about the site. Open a ticket for it; it does not block the release. A `text.empty` on Claude or Gemini does block.
+  - `title.fallback` on the newest chat, Poe `tree.multiple-roots` (a chat break makes a root by design) and ChatGPT or Gemini warns are warns: they never change the exit code and never block.
+  - A provider you know you are signed in to that shows `not signed in` is a failure of the check or of token capture, not a pass: read its note, open the site in that Chrome, and run it again.
+  - A large account can spend the 40 s on listing: `TIMEOUT` with `listing the chats`. Run that provider alone with `--timeout 120`.
+  - Exit code 1 means a provider failed or timed out, or a release-blocking one (Claude, ChatGPT, Gemini) was skipped for time: check it alone with `-p`.
 
 ## Import-only half (a peer, the dev profile)
 

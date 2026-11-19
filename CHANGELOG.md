@@ -4,6 +4,7 @@
 
 ### Added
 
+- `haevn health` (and `haevnDebug.providerHealth()` in the archive console) checks each web provider you are signed in to: it fetches two recent chats, transforms them without saving, and tests them against one definition of a working chat. Your archive is never changed. The table holds no chat text, titles or ids, and the command exits 1 when Claude, ChatGPT or Gemini fails.
 - Undo a delete: the archive shows "Deleted N chats — Undo" for the five minutes before deleted chats are removed for good.
 - `haevn list --offset N` pages through the archive; the JSON output's `hasMore` says whether more chats follow.
 - **Starmap**: an interactive 3D constellation of your chats in the archive, laid out from embeddings of their metadata (UMAP + clustering in a worker), with runtime controls, an embedding queue that can be paused, and rebuild controls.
@@ -26,6 +27,9 @@
 
 ### Fixed
 
+- The Providers view's Import opens on that provider's format; import-only chats no longer offer Sync Now; Grok appears in the Providers view; the Gallery filter lists every provider; Claude Code chats get their own icon and are no longer counted as Claude.
+- SQLite no longer logs "Ignoring inability to install 'opfs' sqlite3_vfs" at every search worker start.
+- A DeepSeek sign-in token that fails to parse, and a Claude Code session line that fails to parse, are no longer written to the log.
 - A search worker restart during a bulk sync or import no longer leaves the chats it updated unindexed: the window to catch up is kept in the database and paid at the next start. The unused `lunrIndex` table is removed (database version 21).
 - The CLI refuses a negative `--offset`, `--limit`, `--context`, `--head` or `--tail` in either form (`--offset -1` was read as page 1), and `haevn get --head/--tail` trims JSON output as it trims Markdown.
 - Claude and Qwen syncs no longer download files that nothing shows, and a Qwen assistant message's generated images line up with the images downloaded for it (an attached file could take the first image's place).

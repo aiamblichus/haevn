@@ -192,6 +192,27 @@ Use export for archival fidelity; use `get` for readable branch extraction.
 
 ---
 
+## Happy path 6 — Check that the providers still sync
+
+```bash
+haevn health                      # every web provider the user is signed in to
+haevn health -p claude,chatgpt    # only these
+haevn health -n 3 --timeout 60    # three chats each, 60 s per provider
+haevn health -f json              # the report as JSON
+```
+
+`health` asks the extension, **in the user's own Chrome**, to open a tab on each provider's site, list the chats, fetch the first two, convert them as a sync does (media skipped) and check them with `checkChat`: messages present, turns in order, no empty text, sane dates, a tree that leads to `currentId`. One row per provider: `ok`, `warn`, `fail`, `not signed in`, `unreachable`, `timeout` or `skipped`.
+
+- **The archive is never changed.** Nothing is saved, queued, indexed or stored; the report holds no chat text, title or id, so it can be pasted into a ticket. Two things still happen, as when browsing: ChatGPT's images for the sampled chats are loaded into memory and discarded, and a loaded tab can refresh the stored sign-in details (credential caches in `chrome.storage.local`). The extension's log can mention a chat, as in a sync.
+- **Not signed in, unreachable and skipped mean "not checked"**, not "passed". The last line counts the providers that were checked.
+- It needs the sessions of a real browser, so a seat runs it only against a Chrome the user has signed in and has agreed to. The dev profile has no logins: every web provider answers `not signed in` there, which is the expected output of a smoke test. Open WebUI is checked only when its address is set.
+- It takes seconds to minutes, opens tabs, and refuses to start while a sync, import or export runs (`BUSY`). Each provider gets 40 s (`--timeout`, up to 120) and the run 4 minutes; Claude, ChatGPT and Gemini (release-blocking) are checked first, so a slow run skips the others, never these. A big account can spend the 40 s on listing (`TIMEOUT`, "listing the chats"): re-run it alone, `haevn health -p chatgpt --timeout 120`.
+- Exit code 1 when a provider failed or timed out, or when Claude, ChatGPT or Gemini was skipped for time.
+- A `text.empty` on ChatGPT is probably a transformer finding (ticket it), not a site fault; a provider you know is signed in that reads `not signed in` is a failure of the check or of token capture (read its note).
+- A `fail` row names the rule (`text.empty`, `tree.current-missing`, `transform.threw`, `fetch.failed`, `list.failed`, …) and how many chats broke it. Read it as "look at this provider", then open one chat in the viewer.
+
+---
+
 ## Common agent workflows
 
 ### Investigate a user-reported issue in a specific thread
