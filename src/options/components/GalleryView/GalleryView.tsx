@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
+import { getAllProviders } from "../../../providers/provider";
 import type { GalleryMediaItem } from "../../../types/workerMessages";
 import { log } from "../../../utils/logger";
 import { ICONS, Icon } from "../../utils";
@@ -14,6 +15,8 @@ import { MediaCard } from "./MediaCard";
 import { MediaModal } from "./MediaModal";
 
 export const GalleryView = () => {
+  // The provider filter lists every registered provider, import-only ones too (HVN-103)
+  const providers = useMemo(() => getAllProviders(), []);
   // State
   const [items, setItems] = useState<GalleryMediaItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -227,14 +230,11 @@ export const GalleryView = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
-              <SelectItem value="gemini">Gemini</SelectItem>
-              <SelectItem value="claude">Claude</SelectItem>
-              <SelectItem value="poe">Poe</SelectItem>
-              <SelectItem value="chatgpt">ChatGPT</SelectItem>
-              <SelectItem value="openwebui">Open WebUI</SelectItem>
-              <SelectItem value="qwen">Qwen</SelectItem>
-              <SelectItem value="deepseek">DeepSeek</SelectItem>
-              <SelectItem value="aistudio">AI Studio</SelectItem>
+              {providers.map((provider) => (
+                <SelectItem key={provider.name} value={provider.name}>
+                  {provider.displayName}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

@@ -14,20 +14,20 @@ import type { BackgroundEvent } from "../../../types/messaging";
 import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
 import type { ProviderStats, ProviderSyncState } from "../../types";
+import { importFormatFor } from "./importFormat";
 import { ProviderCard } from "./ProviderCard";
 
 interface ProvidersViewProps {
   isActive?: boolean;
   onRefreshChats: () => void;
-  onOpenImportModal: () => void;
-  setImportProviderFilter: (provider: string) => void;
+  /** Opens the import dialog on the given format (HVN-101). */
+  onOpenImportModal: (format: string) => void;
 }
 
 export const ProvidersView = ({
   isActive,
   onRefreshChats,
   onOpenImportModal,
-  setImportProviderFilter,
 }: ProvidersViewProps) => {
   const providers = useMemo(() => getAllProviders(), []);
   const [openwebuiBaseUrl, setOpenwebuiBaseUrl] = useState<string | null>(null);
@@ -218,24 +218,12 @@ export const ProvidersView = ({
     return () => chrome.runtime.onMessage.removeListener(messageListener);
   }, [updateProviderStats, onRefreshChats, refreshSyncState]);
 
-  // Handler for importing to a provider
+  // Handler for importing to a provider: the dialog opens on the provider's own format (HVN-101)
   const handleProviderImport = useCallback(
     (providerName: string) => {
-      // Map provider name to import format
-      const formatMap: Record<string, string> = {
-        chatgpt: "chatgpt_zip",
-        claude: "claude_zip",
-        claudecode: "claudecode_jsonl",
-        codex: "codex_jsonl",
-        pi: "pi_jsonl",
-        openrouter: "openrouter_json",
-        openwebui: "openwebui_zip",
-      };
-      const defaultFormat = formatMap[providerName] || "chatgpt_zip";
-      setImportProviderFilter(defaultFormat);
-      onOpenImportModal();
+      onOpenImportModal(importFormatFor(providerName) ?? "chatgpt_zip");
     },
-    [setImportProviderFilter, onOpenImportModal],
+    [onOpenImportModal],
   );
 
   const handleStartSyncConfirmed = async (providerName: string, baseUrl?: string) => {

@@ -107,3 +107,11 @@ export function getProvider(name: string): Provider | undefined {
 export function getAllProviders(): Provider[] {
   return Array.from(providers.values());
 }
+
+/**
+ * True when the registry names this provider and it only imports backup files, so there is no
+ * live source to sync a chat from. A name the registry does not know is not import-only.
+ */
+export function isImportOnlyProvider(name: string): boolean {
+  return providers.get(name)?.importOnly === true;
+}
