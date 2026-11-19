@@ -551,6 +551,13 @@ details[open] summary svg {
 .manifesto-title {
   font-family: "Playfair Display", serif;
   font-weight: 900;
+  letter-spacing: 0.05em;
+  position: relative;
+}
+
+/* The gradient fill of the title and of its two glow copies (below). */
+.manifesto-title,
+.manifesto-title-glow {
   background: linear-gradient(
     135deg,
     hsl(var(--primary)) 0%,
@@ -560,43 +567,63 @@ details[open] summary svg {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+/* The title's glow: two copies of the title text over it, cross-faded by opacity. The rest
+   copy carries the resting shadow; the peak copy carries the brighter shadow and a 1.2
+   brightness. The title itself has no shadow, so the two never stack. Only opacity
+   animates, so the compositor runs the pulse and the title is not repainted each frame.
+   Reduced motion holds the rest state. */
+.manifesto-title-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.manifesto-title-rest {
   text-shadow:
     0 0 20px hsl(var(--primary) / 0.3),
     0 0 40px hsl(var(--accent) / 0.2),
     1px 0 0 hsl(var(--accent) / 0.3),
     -1px 0 0 hsl(var(--primary) / 0.3);
-  letter-spacing: 0.05em;
-  position: relative;
-  animation:
-    titleGlow 4s ease-in-out infinite,
-    chromaticShift 8s ease-in-out infinite;
+  animation: titleRestFade 8s ease-in-out infinite;
 }
 
-@keyframes titleGlow {
+.manifesto-title-peak {
+  text-shadow:
+    0 0 30px hsl(var(--primary) / 0.5),
+    0 0 60px hsl(var(--accent) / 0.3),
+    2px 0 0 hsl(var(--accent) / 0.4),
+    -2px 0 0 hsl(var(--primary) / 0.4);
+  filter: brightness(1.2);
+  opacity: 0;
+  animation: titlePeakFade 8s ease-in-out infinite;
+}
+
+@keyframes titleRestFade {
   0%,
   100% {
-    filter: brightness(1);
+    opacity: 1;
   }
   50% {
-    filter: brightness(1.2);
+    opacity: 0;
   }
 }
 
-@keyframes chromaticShift {
+@keyframes titlePeakFade {
   0%,
   100% {
-    text-shadow:
-      0 0 20px hsl(var(--primary) / 0.3),
-      0 0 40px hsl(var(--accent) / 0.2),
-      1px 0 0 hsl(var(--accent) / 0.3),
-      -1px 0 0 hsl(var(--primary) / 0.3);
+    opacity: 0;
   }
   50% {
-    text-shadow:
-      0 0 30px hsl(var(--primary) / 0.5),
-      0 0 60px hsl(var(--accent) / 0.3),
-      2px 0 0 hsl(var(--accent) / 0.4),
-      -2px 0 0 hsl(var(--primary) / 0.4);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manifesto-title-rest,
+  .manifesto-title-peak {
+    animation: none;
   }
 }
 
@@ -758,9 +785,7 @@ details[open] summary svg {
   border: 2px solid hsl(var(--primary) / 0.3);
   background: hsl(var(--card) / 0.6);
   position: relative;
-  box-shadow:
-    inset 0 0 20px hsl(var(--primary) / 0.1),
-    0 0 20px hsl(var(--primary) / 0.2);
+  isolation: isolate;
   clip-path: polygon(
     0% 0%,
     calc(100% - 20px) 0%,
@@ -769,21 +794,68 @@ details[open] summary svg {
     20px 100%,
     0% calc(100% - 20px)
   );
-  animation: calloutPulse 4s ease-in-out infinite;
 }
 
-@keyframes calloutPulse {
+/* The callout's pulse, on a glow layer (the callout's last child, under its text and over
+   its background). The two states are pre-rendered shadows: the rest state fades out as
+   the peak state fades in, and only their opacity animates, so no frame repaints. The
+   clip-path clips the outer shadows, so the inner glow is what shows. Every callout pulses
+   in primary, as before: the variant shadows were overridden by this animation and never
+   showed. */
+.manifesto-callout-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.manifesto-callout-glow::before,
+.manifesto-callout-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.manifesto-callout-glow::before {
+  box-shadow:
+    inset 0 0 20px hsl(var(--primary) / 0.1),
+    0 0 20px hsl(var(--primary) / 0.2);
+  animation: calloutGlowRest 4s ease-in-out infinite;
+}
+
+.manifesto-callout-glow::after {
+  box-shadow:
+    inset 0 0 30px hsl(var(--primary) / 0.2),
+    0 0 30px hsl(var(--primary) / 0.4),
+    0 0 40px hsl(var(--accent) / 0.2);
+  opacity: 0;
+  animation: calloutGlowPeak 4s ease-in-out infinite;
+}
+
+@keyframes calloutGlowRest {
   0%,
   100% {
-    box-shadow:
-      inset 0 0 20px hsl(var(--primary) / 0.1),
-      0 0 20px hsl(var(--primary) / 0.2);
+    opacity: 1;
   }
   50% {
-    box-shadow:
-      inset 0 0 30px hsl(var(--primary) / 0.2),
-      0 0 30px hsl(var(--primary) / 0.4),
-      0 0 40px hsl(var(--accent) / 0.2);
+    opacity: 0;
+  }
+}
+
+@keyframes calloutGlowPeak {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manifesto-callout-glow::before,
+  .manifesto-callout-glow::after {
+    animation: none;
   }
 }
 
@@ -813,9 +885,6 @@ details[open] summary svg {
 
 .manifesto-callout-important {
   border-color: hsl(var(--secondary) / 0.5);
-  box-shadow:
-    inset 0 0 20px hsl(var(--secondary) / 0.1),
-    0 0 20px hsl(var(--secondary) / 0.3);
 }
 
 .manifesto-callout-important::before,
@@ -830,9 +899,6 @@ details[open] summary svg {
 
 .manifesto-callout-purple {
   border-color: hsl(var(--accent) / 0.5);
-  box-shadow:
-    inset 0 0 20px hsl(var(--accent) / 0.1),
-    0 0 20px hsl(var(--accent) / 0.2);
 }
 
 .manifesto-callout-purple::before,
@@ -850,6 +916,13 @@ details[open] summary svg {
   padding: 2rem 2.5rem;
   text-align: center;
   background: linear-gradient(135deg, hsl(var(--card) / 0.8) 0%, hsl(var(--card) / 0.6) 100%);
+}
+
+/* The spacing the space-y-4 utility gave these lines, written out: the utility would also
+   have spaced the glow layer, which is absolutely placed. */
+.manifesto-callout-final > .manifesto-paragraph + .manifesto-paragraph {
+  margin-top: 1rem;
+  margin-bottom: 0;
 }
 
 /* List Items */
@@ -1014,5 +1087,9 @@ details[open] summary svg {
   .manifesto-section-title {
     color: #000;
     text-shadow: none;
+  }
+
+  .manifesto-title-glow {
+    display: none;
   }
 }
