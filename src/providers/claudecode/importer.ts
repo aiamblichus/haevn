@@ -58,7 +58,8 @@ export async function parseClaudeCodeJsonl(content: string): Promise<ClaudeCodeR
         models.add(message.message.model);
       }
     } catch (error) {
-      console.warn("Failed to parse JSONL line:", line, error);
+      // Not the line itself: it is chat content (HVN-105)
+      console.warn("Failed to parse JSONL line:", { length: line.length }, error);
       // Continue parsing remaining lines
     }
   }
