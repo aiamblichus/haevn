@@ -28,6 +28,7 @@
     "format": "biome format --write ./src",
     "skills:sync": "node scripts/sync-skills.mjs",
     "skills:check": "node scripts/sync-skills.mjs --check",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "hook:pre-commit": "bash scripts/hooks/pre-commit.sh",
