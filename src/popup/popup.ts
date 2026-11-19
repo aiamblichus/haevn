@@ -2,7 +2,15 @@ import type { BulkSyncState } from "../background/bulkSync/types";
 import type { Chat } from "../model/haevn_model";
 import { log } from "../utils/logger";
 import type { PlatformInfo } from "../utils/platform";
-import { listenForPopupBroadcasts } from "./popupBroadcasts";
+import { listenForPopupBroadcasts, type PopupBroadcast } from "./popupBroadcasts";
+import {
+  bulkCompleteKind,
+  failureMessage,
+  PopupStatus,
+  type PopupStatusKind,
+  READY_TEXT,
+  statusClassName,
+} from "./status";
 
 log.info("HAEVN Popup loaded");
 
@@ -30,6 +38,9 @@ let syncIndicatorText: HTMLElement | null;
 let syncActionsSection: HTMLElement | null;
 let exportSection: HTMLElement | null;
 let archiveLoadingIndicator: HTMLElement | null;
+let statusLine: HTMLElement | null = null;
+// The status line's latest message, and the resets that must not overwrite a newer one (HVN-110)
+const status = new PopupStatus(renderStatusLine);
 
 let currentTab: TabInfo = {};
 let currentPlatform: PlatformInfo | null = null;
@@ -73,6 +84,7 @@ function initializeElements(): void {
   syncActionsSection = document.getElementById("syncActionsSection");
   exportSection = document.getElementById("exportSection");
   archiveLoadingIndicator = document.getElementById("archiveLoadingIndicator");
+  statusLine = document.getElementById("popupStatus");
 }
 
 function getSyncProgressSection(): HTMLElement | null {
@@ -307,7 +319,7 @@ function updatePlatformUI(platform: PlatformInfo): void {
   }
 
   if (platform.isSupported) {
-    updateStatus("Ready to sync", "success");
+    updateStatus(READY_TEXT, "info");
     // Show sync and export sections for supported platforms
     if (syncActionsSection) {
       syncActionsSection.classList.remove("hidden");
@@ -527,6 +539,10 @@ function setupEventListeners(): void {
         log.warn("Could not get bulk sync state", e);
       }
     } else if (message.action?.startsWith("bulkSync")) {
+      // A sync that failed or finished for this provider is reported in the status line (HVN-110)
+      if (message.provider === currentPlatform?.name) {
+        reportBulkOutcome(message);
+      }
       // Re-fetch the global state and update the view
       try {
         const res = await chrome.runtime.sendMessage({
@@ -608,10 +624,8 @@ async function handleSingleExport(): Promise<void> {
         await checkCurrentChatSynced();
       }
 
-      setTimeout(() => {
-        hideProgress();
-        updateStatus("Ready to sync", "success");
-      }, 2000);
+      hideProgress();
+      status.restAfter(2000);
     } else {
       throw new Error(response?.error || "Sync failed");
     }
@@ -621,7 +635,8 @@ async function handleSingleExport(): Promise<void> {
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
-    updateStatus("Sync failed", "error");
+    // The background's own message, kept until the next action (HVN-110)
+    updateStatus(failureMessage(error, "Sync failed"), "error");
     hideProgress();
   } finally {
     isSingleSyncing = false;
@@ -648,18 +663,13 @@ async function handleExport(): Promise<void> {
 
     if (response?.success) {
       updateStatus("Exported!", "success");
-      setTimeout(() => {
-        updateStatus("Ready to sync", "success");
-      }, 2000);
+      status.restAfter(2000);
     } else {
       throw new Error(response?.error || "Export failed");
     }
   } catch (error: unknown) {
     log.error("Export failed", error);
-    updateStatus("Export failed", "error");
-    setTimeout(() => {
-      updateStatus("Ready to sync", "success");
-    }, 2000);
+    updateStatus(failureMessage(error, "Export failed"), "error");
   }
 }
 
@@ -691,9 +701,7 @@ async function handleExportAll(): Promise<void> {
     if (filteredChats.length === 0) {
       updateStatus("No chats to export", "warning");
       hideProgress();
-      setTimeout(() => {
-        updateStatus("Ready to sync", "success");
-      }, 2000);
+      status.restAfter(2000);
       return;
     }
 
@@ -719,20 +727,15 @@ async function handleExportAll(): Promise<void> {
     if (response?.success) {
       showProgress(100);
       updateStatus("Export started. Processing batches...", "success");
-      setTimeout(() => {
-        hideProgress();
-        updateStatus("Ready to sync", "success");
-      }, 3000);
+      hideProgress();
+      status.restAfter(3000);
     } else {
       throw new Error(response?.error || "Export failed to start");
     }
   } catch (error) {
     log.error("Export All failed", error);
-    updateStatus("Export failed", "error");
+    updateStatus(failureMessage(error, "Export failed"), "error");
     hideProgress();
-    setTimeout(() => {
-      updateStatus("Ready to sync", "success");
-    }, 2000);
   }
 }
 
@@ -806,11 +809,12 @@ async function handleBulkSync(): Promise<void> {
     }
 
     // Don't close popup immediately - let user see the progress
-    // The popup will show the global progress view when sync is active
+    // The popup will show the global progress view when sync is active; the sync's finish or
+    // failure arrives as a broadcast and is reported then (HVN-110)
+    status.clear();
   } catch (error: unknown) {
     log.error("Bulk sync failed", error);
-    const errorMessage = error instanceof Error ? error.message : "Failed to start sync";
-    updateStatus(errorMessage, "error");
+    updateStatus(failureMessage(error, "Failed to start sync"), "error");
     hideProgress();
     isBulkSyncing = false;
     updateButtonStates();
@@ -860,8 +864,35 @@ function updateSyncIndicator(): void {
 
 // Bulk export and export options removed from popup UI
 
-function updateStatus(_message?: string, _type?: string): void {
-  // Status display removed - function kept for compatibility but does nothing
+/** Shows the outcome of the last action in the status line (HVN-110). An empty message hides it. */
+function updateStatus(message: string, kind: PopupStatusKind = "info"): void {
+  if (message) {
+    status.show(message, kind);
+  } else {
+    status.clear();
+  }
+}
+
+function renderStatusLine(text: string, kind: PopupStatusKind): void {
+  if (!statusLine) return;
+  if (!text) {
+    statusLine.textContent = "";
+    statusLine.className = "hidden";
+    return;
+  }
+  statusLine.textContent = text;
+  statusLine.className = statusClassName(kind);
+}
+
+/** Reports how a bulk sync for this popup's provider ended: failed, finished or canceled. */
+function reportBulkOutcome(message: PopupBroadcast): void {
+  if (message.action === "bulkSyncFailed") {
+    updateStatus(message.error || "Bulk sync failed", "error");
+  } else if (message.action === "bulkSyncComplete") {
+    updateStatus(message.status || "Bulk sync complete.", bulkCompleteKind(message.failedCount));
+  } else if (message.action === "bulkSyncCanceled") {
+    updateStatus(message.status || "Bulk sync canceled.", "warning");
+  }
 }
 
 function showProgress(_progress?: number, _message?: string): void {

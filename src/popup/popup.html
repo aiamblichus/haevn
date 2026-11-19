@@ -61,6 +61,9 @@
 
     <!-- Main Content -->
     <main class="flex-grow overflow-y-auto p-3 space-y-2.5">
+        <!-- Outcome of the last action: a failure names its error (HVN-110) -->
+        <p id="popupStatus" role="status" aria-live="polite" class="hidden"></p>
+
         <!-- Platform Detection -->
         <div class="bg-[hsl(var(--card))] border-2 border-[hsl(var(--border))] p-3 space-y-2" style="box-shadow: 0 0 0 1px rgba(0,0,0,0.3), 2px 2px 0 0 rgba(0,0,0,0.2);">
           <div class="flex items-center gap-3">
