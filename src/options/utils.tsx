@@ -72,6 +72,7 @@ export const getPlatformIcon = (source: string): React.ReactElement => {
   else if (s.includes("deepseek")) iconPath = "icons/deepseek.png";
   else if (s.includes("grok")) iconPath = "icons/grok.png";
   else if (s.includes("codex")) iconPath = "icons/codex.png";
+  else if (s.includes("openrouter")) iconPath = "icons/openrouter.png";
   else if (s === "pi" || s.startsWith("pi")) iconPath = "icons/pi.png";
 
   if (iconPath) {

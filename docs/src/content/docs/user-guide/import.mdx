@@ -15,11 +15,12 @@ HAEVN can import conversations from external sources — useful for seeding your
 | **Claude Code** | JSONL file | Local session files in your `.claude/` directory |
 | **Codex** | JSONL file | Local session files in your `.codex/sessions/` directory |
 | **PI** | JSONL file | Local session files in your `.pi/sessions/` directory |
+| **OpenRouter** | JSON file | An OpenRouter chatroom export; every chatroom in it is imported as a chat (see the [OpenRouter page](/platforms/openrouter/)) |
 | **HAEVN backup** | ZIP | From a previous HAEVN export |
 | **HAEVN Markdown** | `.md` | YAML-frontmatter markdown transcript |
 
 <Aside>
-  Claude Code, Codex, and PI are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
+  Claude Code, Codex, PI, and OpenRouter are import-only providers right now (no live sync). For Claude Code details, see the [Claude platform page](/platforms/claude/).
 </Aside>
 
 ## How to import
@@ -51,6 +52,9 @@ haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
 
 # PI
 haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_...jsonl
+
+# OpenRouter chatroom export (one file, many chats)
+haevn import --format openrouter ./open-router-chats.json
 
 # HAEVN Markdown
 haevn import --format markdown ./conversation.md

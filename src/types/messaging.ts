@@ -23,6 +23,7 @@ import type { Chat } from "../model/haevn_model";
 import type { ClaudeCodeRawExtraction } from "../providers/claudecode/model";
 import type { CodexRawExtraction } from "../providers/codex/model";
 import type { DeepseekConversationData } from "../providers/deepseek/model";
+import type { OpenRouterRawExtraction } from "../providers/openrouter/model";
 import type { PiRawExtraction } from "../providers/pi/model";
 import type { ChatMetadataRecord, MetadataQueueRecord } from "../services/db";
 import type { MetadataAIConfig, StarmapConfig } from "../services/settingsService";
@@ -126,9 +127,10 @@ export type AllProviderRawData =
   | { conversation: unknown; assets?: unknown } // ChatGPT
   | { chat: unknown } // OpenWebUI
   | DeepseekConversationData
-  // The three importers' raw extractions are interfaces, so the Record arm above does not cover them
+  // The four importers' raw extractions are interfaces, so the Record arm above does not cover them
   | ClaudeCodeRawExtraction
   | CodexRawExtraction
+  | OpenRouterRawExtraction
   | PiRawExtraction;
 
 /**

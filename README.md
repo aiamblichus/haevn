@@ -47,6 +47,7 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 | Claude Code                              | ❌          | ❌        | Import only |
 | Codex                                    | ❌          | ❌        | Import only |
 | Pi                                       | ❌          | ❌        | Import only |
+| OpenRouter                               | ❌          | ❌        | Import only |
 
 ---
 

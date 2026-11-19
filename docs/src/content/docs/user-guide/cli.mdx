@@ -41,7 +41,7 @@ haevn list -l 5
 - `haevn get <chatId> -m <messageRef>` — fetch one branch by short ref.
 - `haevn info <chatId>` — view or edit metadata for a single chat.
 - `haevn export <chatId> -o file --format <haevn_json|haevn_markdown|pi_session_jsonl>` — export one chat.
-- `haevn import --format <claude_code|codex|pi> <file...>` — import local JSONL session files.
+- `haevn import --format <claude_code|codex|pi|openrouter> <file...>` — import local JSONL session files or an OpenRouter chatroom export.
 
 ## Short message refs
 
@@ -226,6 +226,9 @@ haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-...jsonl
 
 # PI session JSONL
 haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_...jsonl
+
+# OpenRouter chatroom export (one file, one chat per chatroom)
+haevn import --format openrouter ./open-router-chats.json
 ```
 
 Flags:

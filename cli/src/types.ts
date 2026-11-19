@@ -98,6 +98,7 @@ export type ImportFormat =
   | "claude_code"
   | "codex"
   | "pi"
+  | "openrouter"
   | "haevn_json"
   | "markdown"
   | "image"
@@ -135,6 +136,7 @@ export interface ChatMetadataRecord {
 
 export interface ImportResult {
   format: ImportFormat;
+  /** The number of chats the files held, which `processed` counts up to (not the number of files). */
   total: number;
   processed: number;
   saved: number;

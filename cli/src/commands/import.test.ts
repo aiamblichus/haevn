@@ -50,6 +50,17 @@ describe("summarizeImport (HVN-11)", () => {
     );
   });
 
+  it("says no chats were found, and exits 1, when the files held none", () => {
+    const summary = summarizeImport(
+      { ...savedResult, total: 0, processed: 0, saved: 0 },
+      { format: "openrouter", skipIndex: false },
+    );
+
+    expect(summary.exitCode).toBe(1);
+    expect(summary.lines.join("\n")).toContain("No chats found in the input");
+    expect(summary.lines.join("\n")).not.toContain("Imported");
+  });
+
   it("reports the index as skipped, and exits 0, when indexing was turned off", () => {
     const summary = summarizeImport(savedResult, { format: "haevn_json", skipIndex: true });
 

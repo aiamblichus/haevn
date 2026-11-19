@@ -246,6 +246,9 @@ haevn import --format codex ~/.codex/sessions/2026/03/23/rollout-2026-03-23T14-2
 # Import one PI session JSONL
 haevn import --format pi ~/.pi/sessions/2026-03-23T14-48-43-844Z_02c5dec9-40a7-4a9c-9856-417044063a6f.jsonl
 
+# Import an OpenRouter chatroom export: one file, one chat per chatroom
+haevn import --format openrouter ./open-router-chats.json
+
 # Import multiple files in one run
 haevn import --format claude_code ./sessions/*.jsonl
 
@@ -257,14 +260,15 @@ haevn import --format claude_code --skip-index ./sessions/*.jsonl
 ```
 
 Options:
-- `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`)
+- `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`, `openrouter`, `haevn_json`, `markdown`, `image`, `video`)
 - `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
 - `--skip-index` - Save the chats without indexing them for search; they are not searchable until the extension next rebuilds its index (default: index them as they are saved; more than 20 files rebuild the index once at the end)
 
 Notes:
 - If the chats are saved but the extension cannot bring its search index up to date, `haevn import` prints `index=failed (reason)` and exits 1; the chats are in the archive and the next rebuild of the search index picks them up.
 - An import takes the extension's operation lock. While a bulk sync, another import or a bulk export runs, `haevn import` exits 1 with "Another operation is running"; run it again when that ends.
-- `claude_code`, `codex`, and `pi` are import-only providers (no live sync).
+- `claude_code`, `codex`, `pi`, and `openrouter` are import-only providers (no live sync).
+- An OpenRouter export file holds many chatrooms and gives one chat each, named after the chatroom's first message, so importing the same export again replaces the chats instead of duplicating them. `processed` and `total` count chats, not files. A file with no chat (every chatroom empty) prints "No chats found in the input" and exits 1.
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.
 
 ## Setup

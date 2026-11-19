@@ -5,7 +5,7 @@ import { registerAllProviders } from "../src/providers/index";
 // Every (platform name, hostname) pair the hand-written chain recognised, with the provider it
 // chose (HVN-35). The chain matched a hostname by substring and tried the providers in
 // registration order, so the mixed rows pin that order: the first provider that matches wins.
-// Import-only providers (claudecode, codex, pi) were never selected, and still are not.
+// Import-only providers (claudecode, codex, pi, openrouter) were never selected, and still are not.
 const CASES: Array<[platformName: string | undefined, hostname: string, provider: string | null]> = [
   // Platform name alone
   ["gemini", "", "gemini"],
@@ -49,6 +49,8 @@ const CASES: Array<[platformName: string | undefined, hostname: string, provider
   ["claudecode", "", null],
   ["codex", "", null],
   ["pi", "", null],
+  ["openrouter", "", null],
+  ["openrouter", "openrouter.ai", null],
   ["claudecode", "claude.ai", "claude"],
 
   // Nothing recognised
