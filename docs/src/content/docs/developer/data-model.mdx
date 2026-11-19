@@ -9,14 +9,14 @@ The canonical data format is documented in the [Data Formats reference](/referen
 
 | Layer | Technology | What's stored |
 |---|---|---|
-| Primary store | IndexedDB (Dexie) | Chat metadata, message content, thumbnails, search index |
+| Primary store | IndexedDB (Dexie) | Chat metadata, message content, thumbnails |
 | Media store | OPFS | Full-size images, documents, audio, video |
+| Search index | OPFS (SQLite FTS5) | The full-text index (`src/services/searchIndex.ts`); Dexie has had no search table since version 21 |
 | Config | chrome.storage.local | Settings, operational state |
 
 ## Dexie schema (key tables)
 
 - **`chats`** — one record per conversation (metadata + message tree)
-- **`lunrIndex`** — the old serialized Lunr index; no longer written (the search index is an OPFS file, `src/services/searchIndex.ts`)
 - **`thumbnails`** — compressed image thumbnails (for Gallery view)
 - **`operationalState`** — bulk sync state machine (survives service worker restarts)
 
