@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import type { ExporterId, ExportOptions } from "../formatters";
 import type { BackgroundEvent } from "../types/messaging";
 import { log } from "../utils/logger";
+import { pluralNoun } from "../utils/plural";
 import {
+  completedExportProgress,
   dismissNeedsConfirm,
   type ExportProgress,
   exportFooter,
@@ -189,15 +191,14 @@ export const ExportModal = ({
           }
           break;
         case "bulkExportComplete":
+          // The worker's count of chats written, not the chats asked for (HVN-96).
           setProgress((prev) =>
             prev
-              ? {
-                  ...prev,
-                  processed: prev.total,
-                  status: "message" in msg ? msg.message || "Export complete!" : "Export complete!",
-                  isPaused: false,
-                  isComplete: true,
-                }
+              ? completedExportProgress(
+                  prev,
+                  msg.processed ?? prev.processed,
+                  msg.message || "Export complete!",
+                )
               : null,
           );
           // Keep modal open to show completion state
@@ -374,7 +375,8 @@ export const ExportModal = ({
                   </div>
                   {progress && (
                     <div className="text-xs text-muted-foreground mb-2">
-                      {progress.processed} of {progress.total} chats processed
+                      {progress.processed} of {progress.total} {pluralNoun(progress.total, "chat")}{" "}
+                      processed
                       {progress.isPaused && " (Paused)"}
                     </div>
                   )}

@@ -330,7 +330,7 @@ async function buildManifestJson(state: WorkerState): Promise<void> {
     state.meta.exportVersion,
   )},"export_id":${JSON.stringify(state.exportId)},"export_timestamp":${JSON.stringify(
     state.meta.exportTimestamp,
-  )},"total_chats":${state.totalChats},"total_media_items":${
+  )},"total_chats":${state.processedChats},"total_media_items":${
     state.totalMediaItems
   },"total_size_bytes":${state.totalSizeBytes},"provider_stats":${JSON.stringify(
     state.providerStats,
@@ -687,7 +687,8 @@ async function processNextBatch(): Promise<void> {
         export_version: state.meta.exportVersion,
         export_id: state.exportId,
         export_timestamp: state.meta.exportTimestamp,
-        total_chats: state.totalChats,
+        // The chats written, not the chats asked for: a skipped chat is in neither (HVN-96).
+        total_chats: state.processedChats,
         total_media_items: state.totalMediaItems,
         total_size_bytes: state.totalSizeBytes,
         provider_stats: state.providerStats,

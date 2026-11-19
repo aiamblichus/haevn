@@ -1,4 +1,5 @@
 import { BULK_EXPORT_MANIFEST_STATUS, BULK_EXPORT_ZIP_STATUS } from "../types/workerMessages";
+import { pluralNoun } from "../utils/plural";
 
 /** The phases after the last batch: the worker no longer checks for a pause in them. */
 const UNPAUSABLE = new Set<string>([BULK_EXPORT_MANIFEST_STATUS, BULK_EXPORT_ZIP_STATUS]);
@@ -57,6 +58,25 @@ export function dismissNeedsConfirm(
   return isExporting && !progress?.isComplete;
 }
 
+/**
+ * The progress view once the worker reports the export complete. Both counts are what was written
+ * (`written`), not the chats asked for: a skipped chat is neither exported nor "processed" (HVN-96).
+ */
+export function completedExportProgress(
+  prev: ExportProgress,
+  written: number,
+  status: string,
+): ExportProgress {
+  return {
+    ...prev,
+    processed: written,
+    total: written,
+    status,
+    isPaused: false,
+    isComplete: true,
+  };
+}
+
 /** The title and the line under it of the progress view. */
 export function exportProgressHeading(progress: ExportProgress | null): {
   title: string;
@@ -65,7 +85,7 @@ export function exportProgressHeading(progress: ExportProgress | null): {
   if (progress?.isComplete) {
     return {
       title: "Export finished",
-      description: `${progress.total} chat(s) exported.`,
+      description: `${progress.processed} ${pluralNoun(progress.processed, "chat")} exported.`,
     };
   }
   return {

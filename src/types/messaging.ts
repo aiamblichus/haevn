@@ -720,6 +720,10 @@ export type BackgroundEvent =
   | {
       action: "bulkExportComplete";
       message?: string;
+      /** The chats written to the ZIP. The export asked for more when some were skipped (HVN-96). */
+      processed: number;
+      /** The chats asked for and not written: missing, unmoved or failed to stage (HVN-96). */
+      skipped: number;
     }
   | {
       action: "bulkExportCanceled";

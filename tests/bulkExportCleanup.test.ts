@@ -179,6 +179,52 @@ describe("the completion message of an export with unmoved chats (HVN-31)", () =
       message: expect.stringContaining(
         "(1 skipped; 1 with messages not moved to the new layout yet)",
       ),
+      processed: 2,
+      skipped: 1,
+    });
+  });
+});
+
+describe("the completion payload carries the chats written (HVN-96)", () => {
+  /** The worker's progress for the one batch, which sets the batch the message names. */
+  async function oneBatchProgress(processed: number, total: number): Promise<void> {
+    await worker.listener?.({
+      type: "progress",
+      processed,
+      total,
+      status: "Completed batch 1/1.",
+      processedMedia: 0,
+      bytesWritten: 0,
+      currentBatch: 1,
+      totalBatches: 1,
+    });
+  }
+
+  it("reports one chat, not one chats, when one was written and two skipped", async () => {
+    await startExport();
+    await oneBatchProgress(1, 3);
+
+    await worker.listener?.({ type: "complete", processed: 1, skipped: 2, unmoved: 0, batches: 1 });
+
+    expect(safeSendMessage).toHaveBeenCalledWith({
+      action: "bulkExportComplete",
+      message: "Exported 1 chat in 1 batch (2 skipped).",
+      processed: 1,
+      skipped: 2,
+    });
+  });
+
+  it("reports every chat written, with no skipped part, when none was skipped", async () => {
+    await startExport();
+    await oneBatchProgress(3, 3);
+
+    await worker.listener?.({ type: "complete", processed: 3, skipped: 0, unmoved: 0, batches: 1 });
+
+    expect(safeSendMessage).toHaveBeenCalledWith({
+      action: "bulkExportComplete",
+      message: "Exported 3 chats in 1 batch.",
+      processed: 3,
+      skipped: 0,
     });
   });
 });
