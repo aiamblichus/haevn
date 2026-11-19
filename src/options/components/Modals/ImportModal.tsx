@@ -15,6 +15,7 @@ import { log } from "../../../utils/logger";
 import { buildImportStagingPath, deleteFileFromOpfs, writeFileToOpfs } from "../../../utils/opfs";
 import { useStatus } from "../../context/StatusContext";
 import { handleImport } from "../../import/importHandlers";
+import { formatListedUnder } from "./importFormats";
 
 type ImportProviderType =
   | "chatgpt_zip"
@@ -341,29 +342,29 @@ export const ImportModal = ({
                 setImportProvider((e.target as HTMLSelectElement).value as ImportProviderType)
               }
             >
-              {(!importProviderFilter || importProviderFilter.startsWith("chatgpt")) && (
+              {formatListedUnder(importProviderFilter, "chatgpt_zip") && (
                 <option value="chatgpt_zip">ChatGPT Backup (.zip)</option>
               )}
-              {(!importProviderFilter || importProviderFilter.startsWith("claude")) && (
-                <>
-                  <option value="claude_zip">Claude Backup (.zip)</option>
-                  <option value="claudecode_jsonl">Claude Code Session (.jsonl)</option>
-                </>
+              {formatListedUnder(importProviderFilter, "claude_zip") && (
+                <option value="claude_zip">Claude Backup (.zip)</option>
               )}
-              {(!importProviderFilter || importProviderFilter.startsWith("codex")) && (
+              {formatListedUnder(importProviderFilter, "claudecode_jsonl") && (
+                <option value="claudecode_jsonl">Claude Code Session (.jsonl)</option>
+              )}
+              {formatListedUnder(importProviderFilter, "codex_jsonl") && (
                 <option value="codex_jsonl">Codex Session (.jsonl)</option>
               )}
-              {(!importProviderFilter || importProviderFilter.startsWith("pi")) && (
+              {formatListedUnder(importProviderFilter, "pi_jsonl") && (
                 <option value="pi_jsonl">PI Session (.jsonl)</option>
               )}
-              {(!importProviderFilter || importProviderFilter.startsWith("openrouter")) && (
+              {formatListedUnder(importProviderFilter, "openrouter_json") && (
                 <option value="openrouter_json">OpenRouter Chats (.json)</option>
               )}
-              {(!importProviderFilter || importProviderFilter.startsWith("openwebui")) && (
-                <>
-                  <option value="openwebui_json">Open WebUI (conversations.json file)</option>
-                  <option value="openwebui_zip">Open WebUI (.zip with conversations.json)</option>
-                </>
+              {formatListedUnder(importProviderFilter, "openwebui_json") && (
+                <option value="openwebui_json">Open WebUI (conversations.json file)</option>
+              )}
+              {formatListedUnder(importProviderFilter, "openwebui_zip") && (
+                <option value="openwebui_zip">Open WebUI (.zip with conversations.json)</option>
               )}
               {!importProviderFilter && (
                 <>

@@ -2,13 +2,15 @@ import { useCallback } from "react";
 import type { Chat } from "../../model/haevn_model";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { logNoResponse } from "../../utils/noResponse";
-import { useStatus } from "../context/StatusContext";
-import type { ExportOptions } from "../types";
+import type { ExportOptions, StatusContextValue } from "../types";
 import { buildChatUrl } from "../utils";
 
-export const useApi = () => {
-  const { setStatus } = useStatus();
-
+/**
+ * The archive's actions. Their status lines go to `setStatus`, which the caller passes in. The
+ * options App calls this above StatusContext.Provider, where the context has no value to read, so
+ * a hook that read the context here would drop every line (HVN-111).
+ */
+export const useApi = (setStatus: StatusContextValue["setStatus"]) => {
   const syncChatById = useCallback(
     async (chatId: string): Promise<boolean> => {
       try {
