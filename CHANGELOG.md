@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- A failed sync now shows its error in the popup and in the archive's header; both used to drop it, so a failed re-sync looked like success. Import-only chats no longer offer Open at Provider, and the Claude Code import dialog no longer lists the Claude backup format.
 - The Providers view's Import opens on that provider's format; import-only chats no longer offer Sync Now; Grok appears in the Providers view; the Gallery filter lists every provider; Claude Code chats get their own icon and are no longer counted as Claude.
 - SQLite no longer logs "Ignoring inability to install 'opfs' sqlite3_vfs" at every search worker start.
 - A DeepSeek sign-in token that fails to parse, and a Claude Code session line that fails to parse, are no longer written to the log.
