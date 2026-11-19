@@ -114,7 +114,8 @@ const App = () => {
     setStatusColor(color);
   }, []);
 
-  const { syncChatById, openChatInProvider, openChatInViewer, exportChatById } = useApi();
+  // Passed in: App sits above StatusContext.Provider, so the context would give the no-op default
+  const { syncChatById, openChatInProvider, openChatInViewer, exportChatById } = useApi(setStatus);
 
   // Load configured categories for the category filter
   useEffect(() => {

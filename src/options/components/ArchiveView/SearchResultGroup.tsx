@@ -1,4 +1,5 @@
 import { parseEntities } from "parse-entities";
+import { isImportOnlyProvider } from "../../../providers/provider";
 import type { SearchResult } from "../../types";
 import { escapeHtml, getPlatformIcon, ICONS, Icon } from "../../utils";
 import { ChatPreviewPopover } from "./ChatPreviewPopover";
@@ -32,6 +33,8 @@ export const SearchResultGroup = ({
   onMetadata,
   canOpenProvider = true,
 }: SearchResultGroupProps) => {
+  // An import-only chat has no provider to open (HVN-111): the registry says which these are.
+  const canOpen = canOpenProvider && !isImportOnlyProvider(group.source);
   const decodedTitle = parseEntities(group.chatTitle || "");
   const truncatedTitle =
     decodedTitle.length > 80 ? `${decodedTitle.substring(0, 80)}…` : decodedTitle;
@@ -70,7 +73,7 @@ export const SearchResultGroup = ({
           </div>
         </div>
         <div className="flex items-center gap-2 text-haevn-teal-light flex-shrink-0">
-          {canOpenProvider && (
+          {canOpen && (
             <button
               className="p-1 hover:bg-haevn-purple/20 rounded-md transition-colors"
               title="Open at Provider"

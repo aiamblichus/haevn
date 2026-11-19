@@ -6,6 +6,10 @@ export interface PopupBroadcast {
   provider?: string;
   progress?: number;
   status?: string;
+  /** On bulkSyncFailed: the reason the sync failed. */
+  error?: string;
+  /** On bulkSyncComplete: how many chats did not sync. */
+  failedCount?: number;
 }
 
 /** True for `bulkSync*` (progress and state changes) and `chatSynced`: the popup's broadcasts. */

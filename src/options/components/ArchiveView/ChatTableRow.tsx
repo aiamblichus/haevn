@@ -27,8 +27,11 @@ export const ChatTableRow = ({
     onAction(action, chat.id);
   };
 
-  // An import-only chat has no web source to sync from, so it offers no Sync Now (HVN-102).
-  const canSync = !isImportOnlyProvider(chat.source);
+  // An import-only chat has no web source to sync from, so it offers no Sync Now (HVN-102), and no
+  // provider to open either (HVN-111).
+  const importOnly = isImportOnlyProvider(chat.source);
+  const canSync = !importOnly;
+  const canOpen = canOpenProvider && !importOnly;
 
   return (
     <div className="flex items-center border-b border-border hover:bg-muted/50 transition-colors">
@@ -80,7 +83,7 @@ export const ChatTableRow = ({
               <Icon icon={ICONS.sync} />
             </Button>
           )}
-          {canOpenProvider && (
+          {canOpen && (
             <Button
               variant="ghost"
               size="icon"
