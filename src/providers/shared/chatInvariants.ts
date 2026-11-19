@@ -261,8 +261,11 @@ function checkOne(chat: Chat, now: number, tally: Tally): void {
   if (ids.length > 0 && modelTurns === 0) note(tally, "turns.no-model");
 
   // Alternation along the current branch. A request that is only a system prompt is set-up, not a
-  // turn, so it does not count as a side.
-  const sides: ("request" | "response")[] = [];
+  // turn, so it does not count as a side. A response is not held to alternate: ChatGPT makes one
+  // response per node (thoughts, a tool call, its output, the answer), so a run of responses is
+  // normal. What a broken chat shows is two user turns in a row, a reply that was dropped. A tool
+  // return is a request too, so only a request that carries a user prompt counts for that.
+  const sides: { side: "request" | "response"; user: boolean }[] = [];
   for (const id of path) {
     const models: ModelMessage[] = Array.isArray(messages[id].message) ? messages[id].message : [];
     for (const model of models) {
@@ -270,15 +273,15 @@ function checkOne(chat: Chat, now: number, tally: Tally): void {
       if (parts.length === 0) continue;
       if (model.kind === "request") {
         if (parts.every((p) => p.part_kind === "system-prompt")) continue;
-        sides.push("request");
+        sides.push({ side: "request", user: parts.some((p) => p.part_kind === "user-prompt") });
       } else if (model.kind === "response") {
-        sides.push("response");
+        sides.push({ side: "response", user: false });
       }
     }
   }
-  if (sides[0] === "response") note(tally, "roles.model-first");
+  if (sides[0]?.side === "response") note(tally, "roles.model-first");
   for (let i = 1; i < sides.length; i++) {
-    if (sides[i] === sides[i - 1]) note(tally, "roles.not-alternating");
+    if (sides[i].user && sides[i - 1].user) note(tally, "roles.not-alternating");
   }
 
   // 5. Time

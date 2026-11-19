@@ -196,6 +196,79 @@ describe("checkChat: the healthy chat", () => {
     expect(checkChat(chat, OPTIONS)).toEqual([]);
   });
 
+  /** A straight line of nodes, one model message each, in order. */
+  function line(...models: ModelMessage[]): Chat {
+    const chat = healthy();
+    const ids = models.map((_, i) => `n${i}`);
+    chat.messages = Object.fromEntries(
+      models.map((model, i) => [
+        ids[i],
+        node(ids[i], ids[i - 1], ids[i + 1] ? [ids[i + 1]] : [], [model], T0 + i * 1000),
+      ]),
+    );
+    chat.currentId = ids[ids.length - 1];
+    return chat;
+  }
+  const systemOnly: ModelMessage = {
+    kind: "request",
+    parts: [
+      { part_kind: "system-prompt", content: "be brief", timestamp: new Date(T0).toISOString() },
+    ],
+  };
+  const toolReturn: ModelMessage = {
+    kind: "request",
+    parts: [
+      {
+        part_kind: "tool-return",
+        tool_name: "python",
+        content: "ok",
+        tool_call_id: "t1",
+        timestamp: new Date(T0).toISOString(),
+      },
+    ],
+  };
+
+  it("lets a model answer in several nodes, with a tool return between them (ChatGPT's shape)", () => {
+    // ChatGPT makes a node for each thought, call, output and answer: response, response, then a
+    // tool's return as a request, then responses again. None of it is a dropped reply.
+    const chat = line(
+      systemOnly,
+      request("plot it"),
+      response("thinking"),
+      response("calling python"),
+      toolReturn,
+      response("here it is"),
+      request("thanks"),
+      response("welcome"),
+    );
+    expect(codes(chat)).toEqual([]);
+  });
+
+  it("does not take a tool's return, which is a request too, for a user turn on either side", () => {
+    expect(codes(line(request("a"), toolReturn, request("b"), response("c")))).toEqual([]);
+  });
+
+  it("still faults two user turns in a row, with a response-run elsewhere in the chat", () => {
+    const chat = line(
+      request("one"),
+      response("a"),
+      response("b"),
+      request("two"),
+      request("three"),
+    );
+    expect(codes(chat)).toEqual(["roles.not-alternating"]);
+    expect(checkChat(chat, OPTIONS)[0].count).toBe(1);
+  });
+
+  it("does not count a system prompt as a turn: a chat that starts with one", () => {
+    // with a user turn after it, nothing is wrong
+    expect(codes(line(systemOnly, request("hello"), response("hi")))).toEqual([]);
+    // and a system prompt followed by the model speaking is still the model speaking first
+    expect(codes(line(systemOnly, response("hi"), request("hello"), response("hi again")))).toEqual(
+      ["roles.model-first"],
+    );
+  });
+
   it("accepts a user prompt made of an image alone", () => {
     const chat = healthy();
     chat.messages.u1.message = [
