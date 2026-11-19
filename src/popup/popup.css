@@ -1093,3 +1093,12 @@ details[open] summary svg {
     display: none;
   }
 }
+
+/* The Manifesto's remaining motion stops under reduced motion (HVN-95) */
+@media (prefers-reduced-motion: reduce) {
+  .manifesto-container::before,
+  .manifesto-emoji,
+  .manifesto-section-title::before {
+    animation: none;
+  }
+}
