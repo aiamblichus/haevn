@@ -223,6 +223,29 @@ Notes:
 - CLI export is intentionally **single-chat** and **no-assets** (to keep daemon requests predictable).
 - Formatting is produced by the extension exporter pipeline (single source of truth), not reimplemented in CLI.
 
+### `health` - Check that the web providers still sync
+
+```bash
+haevn health                     # every web provider you are signed in to
+haevn health -p claude,chatgpt   # only these
+haevn health -n 3 --timeout 60   # three chats each, 60 s per provider
+haevn health -f json             # the report as JSON
+```
+
+The extension opens a tab on each provider's site (in your own Chrome), lists the chats, fetches the first few, converts them as a sync does, and checks them: messages present, turns in order, no empty text, sane dates, a tree that leads to the current message. It is **read-only** (nothing is saved, no media is fetched or stored, nothing is indexed) and the report holds **no chat text, titles or ids**.
+
+Options:
+- `-p, --provider <list>` - Comma-separated provider names (default: every web provider)
+- `-n, --chats <n>` - Chats to check per provider, from the head of its list (default 2, at most 5)
+- `--timeout <s>` - Seconds to give one provider (default 40, 5 to 120)
+- `-f, --format <fmt>` - Output format (text, json)
+
+Notes:
+- A row is `ok`, `warn`, `fail`, `not signed in`, `unreachable`, `timeout` or `skipped`. A provider that is not signed in, unreachable or skipped was **not checked**; the last line counts them.
+- Exit code 1 when a provider failed or timed out, 0 otherwise.
+- The run takes seconds to minutes (the whole run is limited to 4 minutes) and refuses to start while a sync, import or export holds the extension's operation lock.
+- The same operation runs from the extension: `haevnDebug.providerHealth()` on the Options page.
+
 ### `daemon` - Start the local daemon
 
 ```bash

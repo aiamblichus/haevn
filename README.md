@@ -230,6 +230,7 @@ CLI highlights:
 - **Context control** in search (`--context`).
 - **Safer payloads** for `get` by default (media omitted unless explicitly requested).
 - **Metadata management** via `haevn info` — view, edit, or AI-generate metadata per chat.
+- **Provider health** via `haevn health` — a read-only check that each web provider you are signed in to still syncs.
 
 See [CLI README](./cli/README.md) for full setup and command reference.
 
