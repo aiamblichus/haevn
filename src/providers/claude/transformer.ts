@@ -112,6 +112,14 @@ function convertFilesToUrlAssets(files: (ChatFile | ChatFileV2)[]): UrlAsset[] {
     .filter((asset): asset is UrlAsset => asset !== null);
 }
 
+/**
+ * A human message becomes a request, which keeps its files; any other message becomes a response.
+ * The download step and the tree step both ask this, so they agree on which files are kept.
+ */
+function isUserMessage(claudeMsg: ChatTranscript["chat_messages"][0]): boolean {
+  return claudeMsg.sender === "human";
+}
+
 function findProjectForConversation(
   transcript: ChatTranscript,
   projects?: Project[] | null,
@@ -187,11 +195,14 @@ export async function convertClaudeTranscriptToHaevn(
     messageCount: transcript.chat_messages.length,
   });
 
-  // Step 1: Download all file attachments per message for OPFS storage
+  // Step 1: Download the file attachments of each user message for OPFS storage. Step 3 attaches
+  // them to the user's request only; an assistant message's files would be stored and referenced
+  // by nothing (HVN-97), so they are not downloaded.
   const messageMedia: Map<string, UserContent[]> = new Map();
 
   for (const claudeMsg of transcript.chat_messages) {
     const messageId = claudeMsg.uuid;
+    if (!isUserMessage(claudeMsg)) continue;
 
     // Combine files and files_v2 arrays, deduplicating by file_uuid
     // Both arrays often contain the same images
@@ -292,7 +303,7 @@ export async function convertClaudeTranscriptToHaevn(
 
     let modelMessage: ModelMessage;
 
-    if (claudeMsg.sender === "human") {
+    if (isUserMessage(claudeMsg)) {
       const userPromptPart: UserPromptPart = {
         part_kind: "user-prompt",
         content: contentParts.map((p) => (p as TextPart).content).join("\n"),
