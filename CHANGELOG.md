@@ -27,6 +27,12 @@
 
 ### Fixed
 
+- **Poe**: syncing saved every turn as the model's, because Poe no longer sends the field that names the author; your turns are yours again, a cleared context still starts a new section, and a failed reply keeps Poe's reason. Chats synced before this release were not affected.
+- **Claude**: newer chats hide their thinking and send short summaries; HAEVN stored an empty thinking block and dropped the summaries. It now keeps the summaries. Re-sync (forced) chats synced since about October 2026 to recover them.
+- **Open WebUI** (0.12): reasoning kept in the new structured form was dropped, and a failed generation lost its error; both are kept.
+- **Qwen**: sync failed for signed-in users (Qwen now wants its session token on each request), and `haevn health` called it "not signed in".
+- **Gemini**: the chat list was empty, so bulk sync found nothing; it reads the sidebar's new ids, and a sidebar it cannot read is now an error rather than an empty list.
+- **AI Studio**: the library list failed (it read the page before the table rendered, with selectors that no longer match).
 - A failed sync now shows its error in the popup and in the archive's header; both used to drop it, so a failed re-sync looked like success. Import-only chats no longer offer Open at Provider, and the Claude Code import dialog no longer lists the Claude backup format.
 - The Providers view's Import opens on that provider's format; import-only chats no longer offer Sync Now; Grok appears in the Providers view; the Gallery filter lists every provider; Claude Code chats get their own icon and are no longer counted as Claude.
 - SQLite no longer logs "Ignoring inability to install 'opfs' sqlite3_vfs" at every search worker start.
