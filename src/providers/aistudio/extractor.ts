@@ -4,6 +4,7 @@
 
 import { log } from "../../utils/logger";
 import { detectPlatform } from "../shared/platformDetector";
+import { chatIdsFromLinks, LIBRARY_SELECTORS, waitForLibraryRows } from "./library";
 import type {
   AIStudioCodeBlock,
   AIStudioConversationData,
@@ -47,12 +48,6 @@ const SELECTORS = {
   promptRunSettings: "ms-prompt-run-settings",
   // UI elements to filter out
   uiIconClasses: ["thinking-progress-icon"],
-  // Library page selectors (for bulk sync)
-  libraryScrollContainer: ".lib-table-wrapper",
-  libraryTableRow: "tr.mat-mdc-row",
-  libraryChatLink: "a.name-btn",
-  libraryTypeColumn: "td.mat-column-type",
-  libraryUpdatedColumn: "td.mat-column-updated",
 };
 
 function isNonContentAssistantImage(imgEl: HTMLImageElement): boolean {
@@ -597,14 +592,35 @@ export async function getAIStudioChatIds(): Promise<string[]> {
     log.warn("[AI Studio] getAIStudioChatIds called outside /library; attempting anyway.");
   }
 
-  // Find the scroll container for the library table
-  const scrollContainer = document.querySelector(
-    SELECTORS.libraryScrollContainer,
-  ) as HTMLElement | null;
+  // The table renders well after `load` (HVN-117): wait for its rows rather than query at once.
+  const state = await waitForLibraryRows({
+    rowCount: () => document.querySelectorAll(LIBRARY_SELECTORS.row).length,
+    tableRendered: () => !!document.querySelector(LIBRARY_SELECTORS.tableWrapper),
+  });
 
+  if (state === "never-rendered") {
+    log.error("[AI Studio] The library table did not render", {
+      pathname,
+      tableWrapper: LIBRARY_SELECTORS.tableWrapper,
+    });
+    throw new Error(
+      `The AI Studio library table did not render (no ${LIBRARY_SELECTORS.tableWrapper}). Are you on the library page, and is it loaded?`,
+    );
+  }
+  if (state === "empty") {
+    log.warn("[AI Studio] The library table rendered with no rows; the library is empty.");
+    return [];
+  }
+
+  // The wrapper of the table is not what scrolls; the page content around it is.
+  let scrollContainer = document.querySelector(
+    LIBRARY_SELECTORS.scrollContainer,
+  ) as HTMLElement | null;
   if (!scrollContainer) {
-    log.error("[AI Studio] Library scroll container not found (.lib-table-wrapper)");
-    throw new Error("Library scroll container not found. Are you on the library page?");
+    log.warn(
+      `[AI Studio] ${LIBRARY_SELECTORS.scrollContainer} not found; scrolling the document instead`,
+    );
+    scrollContainer = (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
   }
 
   // Scroll to load all items
@@ -613,29 +629,21 @@ export async function getAIStudioChatIds(): Promise<string[]> {
     delayMs: 1000, // 1000ms avoids Chrome's background-tab sub-second throttling
     maxDurationMs: 120000,
     requiredIdleChecks: 3, // was 5; 3 consecutive idle checks is sufficient
-    getItemCount: () => document.querySelectorAll(SELECTORS.libraryChatLink).length,
+    getItemCount: () => document.querySelectorAll(LIBRARY_SELECTORS.row).length,
   });
 
-  // Collect all chat links
-  const allLinks = Array.from(document.querySelectorAll(SELECTORS.libraryChatLink));
+  // Chat ids from the links' hrefs, /prompts/{chatId}, deduplicated in page order
+  const allLinks = Array.from(document.querySelectorAll(LIBRARY_SELECTORS.chatLink));
   log.info(`[AI Studio] Found ${allLinks.length} total chat links`);
+  const chatIds = chatIdsFromLinks(allLinks);
 
-  // Extract chat IDs from href attributes
-  // URL pattern: /prompts/{chatId}
-  const chatIds = allLinks
-    .map((el) => {
-      const href = el.getAttribute("href");
-      if (!href) return null;
-
-      // Match /prompts/{chatId} pattern
-      const match = href.match(/\/prompts\/([^/?#]+)/);
-      if (match?.[1]) {
-        return match[1];
-      }
-      return null;
-    })
-    .filter((id): id is string => id !== null)
-    .filter((id, index, self) => self.indexOf(id) === index); // Deduplicate
+  // Rows with no readable link is a site change, not an empty library.
+  if (chatIds.length === 0) {
+    const rowCount = document.querySelectorAll(LIBRARY_SELECTORS.row).length;
+    throw new Error(
+      `The AI Studio library has ${rowCount} rows but none holds a /prompts/ link (${LIBRARY_SELECTORS.chatLink}).`,
+    );
+  }
 
   log.info(
     `[AI Studio] Extracted ${chatIds.length} unique chat IDs in ${Math.round(performance.now() - start)}ms`,
