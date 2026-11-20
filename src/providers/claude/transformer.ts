@@ -30,6 +30,21 @@ import type {
   ToolUseContentPart,
 } from "./model";
 
+/**
+ * The text a thinking block contributes. Claude now hides the reasoning of newer chats: the block
+ * arrives with `thinking: ""`, `thinking_hidden: true` and the reasoning only as `summaries`
+ * (HVN-113). The full thinking wins when there is any (older chats, and hidden blocks the API
+ * still returns whole); otherwise the summaries are kept, one paragraph each. The canonical
+ * ThinkingPart has no summary marker, so a summary is stored as ordinary thinking.
+ */
+function thinkingText(part: ThinkingContentPart): string {
+  if (part.thinking?.trim()) return part.thinking;
+  return (part.summaries ?? [])
+    .map((s) => (typeof s?.summary === "string" ? s.summary.trim() : ""))
+    .filter((s) => s.length > 0)
+    .join("\n\n");
+}
+
 function convertContentParts(
   contentParts: ChatMessageContentPart[],
   timestamp: string,
@@ -45,10 +60,13 @@ function convertContentParts(
           } as TextPart;
         }
         case "thinking": {
-          const thinkingPart = part as ThinkingContentPart;
+          const content = thinkingText(part as ThinkingContentPart);
+          // A block with neither thinking nor summaries has nothing to keep (an empty part
+          // would only trip the text.empty invariant).
+          if (!content) return null;
           return {
             part_kind: "thinking",
-            content: thinkingPart.thinking,
+            content,
           } as ThinkingPart;
         }
         case "tool_use": {
