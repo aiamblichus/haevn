@@ -1,40 +1,79 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BinaryContent, UserPromptPart } from "../src/model/haevn_model";
-import type { PoeConversationData, Message, Attachment } from "../src/providers/poe/model";
+import type {
+  Attachment,
+  Message,
+  MessageAuthor,
+  PoeConversationData,
+} from "../src/providers/poe/model";
 import { transformPoeToHaevn } from "../src/providers/poe/transformer";
 import * as mediaUtils from "../src/utils/media_utils";
 
-// Helper to create a minimal Message object for testing
-function createMessage(overrides: Partial<Message> & { text: string; author: string; creationTime: number }): Message {
+// Messages in the shape Poe's payload has now (HVN-112): a user turn carries `authorUser` and
+// `bot: null`, a bot turn `authorUser: null` and a `bot`. There is no `author` field. Every text
+// here is synthetic.
+
+const SYNTHETIC_USER: MessageAuthor = {
+  uid: 1001,
+  id: "user-1001",
+  fullName: "Synthetic User",
+  handle: "synthetic-user",
+};
+
+const SYNTHETIC_BOT = {
+  botId: 456,
+  id: "bot-456",
+  displayName: "TestBot",
+  deletionState: "not_deleted",
+  picture: null,
+  smallPicture: null,
+};
+
+interface TurnOptions {
+  attachments?: Attachment[];
+  state?: string;
+  messageStateText?: string | null;
+}
+
+function baseMessage(
+  text: string,
+  creationTime: number,
+  options: TurnOptions,
+  authorUser: MessageAuthor | null,
+  bot: Message["bot"],
+): Message {
   return {
-    id: `msg-${overrides.creationTime}`,
-    messageId: overrides.creationTime,
-    messageCode: `code-${overrides.creationTime}`,
-    author: overrides.author,
-    bot: overrides.author !== "human" ? {
-      botId: 456,
-      id: "bot-456",
-      displayName: "TestBot",
-      deletionState: "not_deleted",
-      picture: null,
-      smallPicture: null,
-    } : null,
-    text: overrides.text,
+    id: `msg-${creationTime}`,
+    messageId: creationTime,
+    messageCode: `code-${creationTime}`,
+    authorUser,
+    bot,
+    text,
     contentType: "text_markdown",
     sourceType: "chat_input",
-    state: "complete",
-    creationTime: overrides.creationTime,
+    state: options.state ?? "complete",
+    creationTime,
     isEdited: false,
     isDeleted: false,
     isChatAnnouncement: false,
     hasCitations: false,
-    attachments: overrides.attachments || [],
+    attachments: options.attachments ?? [],
     referencedMessageV2: null,
     usersCanEdit: [],
-    messageStateText: null,
+    messageStateText: options.messageStateText ?? null,
     parameters: null,
     command: null,
   };
+}
+
+/** A user turn: `authorUser` set, `bot` null. */
+function userTurn(text: string, creationTime: number, options: TurnOptions = {}): Message {
+  return baseMessage(text, creationTime, options, SYNTHETIC_USER, null);
+}
+
+/** A bot turn: `authorUser` null, `bot` set. */
+function botTurn(text: string, creationTime: number, options: TurnOptions = {}): Message {
+  return baseMessage(text, creationTime, options, null, SYNTHETIC_BOT);
 }
 
 // Helper to create an attachment
@@ -55,6 +94,22 @@ function createAttachment(url: string, mimeType: string, name?: string): Attachm
   };
 }
 
+function poeData(
+  chatCode: string,
+  messages: Message[],
+  extra: Partial<PoeConversationData> = {},
+): PoeConversationData {
+  return {
+    chatId: "Q2hhdDoxMjM=",
+    chatCode,
+    title: "Synthetic Poe Chat",
+    botName: "TesterBot",
+    extractedAt: "2024-05-10T10:00:00.000Z",
+    messages,
+    ...extra,
+  };
+}
+
 describe("poe_transformer", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -65,17 +120,10 @@ describe("poe_transformer", () => {
     const msg1Time = 1714557480000000; // 2024-05-01T09:58:00.000Z in microseconds
     const msg2Time = 1714557540000000; // 2024-05-01T09:59:00.000Z in microseconds
 
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-1",
+    const data = poeData("poe-1", [userTurn("Hello", msg1Time), botTurn("Hi!", msg2Time)], {
       title: "Poe Chat",
       botName: "Claude-in-Poe",
-      extractedAt: "2024-05-01T10:00:00.000Z",
-      messages: [
-        createMessage({ text: "Hello", author: "human", creationTime: msg1Time }),
-        createMessage({ text: "Hi!", author: "bot", creationTime: msg2Time }),
-      ],
-    };
+    });
 
     const chats = await transformPoeToHaevn(data);
     expect(chats).toHaveLength(1);
@@ -85,17 +133,11 @@ describe("poe_transformer", () => {
   });
 
   it("extracts system prompt when available", async () => {
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-1",
+    const data = poeData("poe-1", [userTurn("Hello", 1714557480000000)], {
       title: "Poe Chat",
       botName: "Claude-in-Poe",
       systemPrompt: "You are a helpful assistant.",
-      extractedAt: "2024-05-01T10:00:00.000Z",
-      messages: [
-        createMessage({ text: "Hello", author: "human", creationTime: 1714557480000000 }),
-      ],
-    };
+    });
 
     const chats = await transformPoeToHaevn(data);
     expect(chats).toHaveLength(1);
@@ -131,21 +173,15 @@ describe("poe_transformer", () => {
     });
 
     const msgTime = 1714557480000000;
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-1",
-      title: "Poe Image Chat",
-      botName: "Claude-in-Poe",
-      extractedAt: "2024-05-01T10:00:00.000Z",
-      messages: [
-        createMessage({
-          text: "Look at this image",
-          author: "human",
-          creationTime: msgTime,
+    const data = poeData(
+      "poe-1",
+      [
+        userTurn("Look at this image", msgTime, {
           attachments: [createAttachment(imageUrl, "image/png", "image.png")],
         }),
       ],
-    };
+      { title: "Poe Image Chat", botName: "Claude-in-Poe" },
+    );
 
     const chats = await transformPoeToHaevn(data);
     expect(chats).toHaveLength(1);
@@ -166,19 +202,16 @@ describe("poe_transformer", () => {
   });
 
   it("creates linear message history", async () => {
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-linear-test",
-      title: "Poe Linear Chat",
-      botName: "TesterBot",
-      extractedAt: "2024-05-10T10:00:00.000Z",
-      messages: [
-        createMessage({ text: "Hello", author: "human", creationTime: 1715335800000000 }),
-        createMessage({ text: "Hi there!", author: "bot", creationTime: 1715335860000000 }),
-        createMessage({ text: "New topic", author: "human", creationTime: 1715335920000000 }),
-        createMessage({ text: "Okay, what about it?", author: "bot", creationTime: 1715335980000000 }),
+    const data = poeData(
+      "poe-linear-test",
+      [
+        userTurn("Hello", 1715335800000000),
+        botTurn("Hi there!", 1715335860000000),
+        userTurn("New topic", 1715335920000000),
+        botTurn("Okay, what about it?", 1715335980000000),
       ],
-    };
+      { title: "Poe Linear Chat", botName: "TesterBot" },
+    );
 
     const chats = await transformPoeToHaevn(data);
 
@@ -201,22 +234,39 @@ describe("poe_transformer", () => {
     expect(root.childrenIds).toHaveLength(1);
   });
 
+  it("reads each turn's author from authorUser and bot: the user's turn is a request, the bot's a response", async () => {
+    const data = poeData("poe-roles", [
+      userTurn("Synthetic question", 1715335800000000),
+      botTurn("Synthetic answer", 1715335860000000),
+    ]);
+
+    const [chat] = await transformPoeToHaevn(data);
+    const all = Object.values(chat.messages);
+    const question = all.find((m) => !m.parentId);
+    expect(question).toBeDefined();
+    expect(question?.message[0].kind).toBe("request");
+    if (question?.message[0].kind === "request") {
+      expect(question.message[0].parts[0]).toMatchObject({ content: "Synthetic question" });
+    }
+
+    const answer = all.find((m) => m.parentId === question?.id);
+    expect(answer?.message[0].kind).toBe("response");
+    if (answer?.message[0].kind === "response") {
+      expect(answer.message[0].parts).toEqual([
+        expect.objectContaining({ part_kind: "text", content: "Synthetic answer" }),
+      ]);
+    }
+  });
+
   it("handles chat breaks as multiple roots", async () => {
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-break-test",
-      title: "Poe Chat with Break",
-      botName: "TesterBot",
-      extractedAt: "2024-05-10T10:00:00.000Z",
-      messages: [
-        createMessage({ text: "Hello", author: "human", creationTime: 1715335800000000 }),
-        createMessage({ text: "Hi there!", author: "bot", creationTime: 1715335860000000 }),
-        // Chat break - this becomes a marker for new root
-        createMessage({ text: "", author: "chat_break", creationTime: 1715335920000000 }),
-        createMessage({ text: "New topic", author: "human", creationTime: 1715335980000000 }),
-        createMessage({ text: "Okay, what about it?", author: "bot", creationTime: 1715336040000000 }),
-      ],
-    };
+    const data = poeData("poe-break-test", [
+      userTurn("Hello", 1715335800000000),
+      botTurn("Hi there!", 1715335860000000),
+      // Context-clear marker: a user turn with no text and no attachment
+      userTurn("", 1715335920000000),
+      userTurn("New topic", 1715335980000000),
+      botTurn("Okay, what about it?", 1715336040000000),
+    ], { title: "Poe Chat with Break", botName: "TesterBot" });
 
     const chats = await transformPoeToHaevn(data);
 
@@ -225,7 +275,7 @@ describe("poe_transformer", () => {
     const chat = chats[0];
     expect(chat.id).toBe("poe-break-test");
 
-    // 4 real messages (chat_break filtered out)
+    // 4 real messages (the marker is filtered out)
     expect(Object.values(chat.messages)).toHaveLength(4);
 
     // Two roots (messages without parentId)
@@ -250,6 +300,60 @@ describe("poe_transformer", () => {
     expect(root2?.childrenIds).toHaveLength(1);
   });
 
+  it("does not render a context-clear marker as an empty prompt", async () => {
+    const data = poeData("poe-marker", [
+      userTurn("Question", 1715335800000000),
+      botTurn("Answer", 1715335860000000),
+      userTurn("", 1715335920000000),
+    ]);
+
+    const [chat] = await transformPoeToHaevn(data);
+    const all = Object.values(chat.messages);
+    expect(all).toHaveLength(2);
+    for (const m of all) {
+      if (m.message[0].kind === "request") {
+        expect(m.message[0].parts[0]).not.toMatchObject({ content: "" });
+      }
+    }
+  });
+
+  it("keeps a bot turn with no text as a failed reply, not as a chat break", async () => {
+    const data = poeData("poe-failed", [
+      userTurn("Question", 1715335800000000),
+      botTurn("", 1715335860000000, {
+        state: "error_insufficient_fund",
+        messageStateText: "Synthetic reason: the account has no credit left.",
+      }),
+      userTurn("Follow-up", 1715335920000000),
+    ]);
+
+    const [chat] = await transformPoeToHaevn(data);
+    const all = Object.values(chat.messages);
+    // Still one chain: the failed reply is not a break
+    expect(all.filter((m) => !m.parentId)).toHaveLength(1);
+    expect(all).toHaveLength(3);
+  });
+
+  it("keeps the reason of a failed reply as a text part", async () => {
+    const reason = "Synthetic reason: the account has no credit left.";
+    const data = poeData("poe-failed-part", [
+      userTurn("Question", 1715335800000000),
+      botTurn("", 1715335860000000, {
+        state: "error_insufficient_fund",
+        messageStateText: reason,
+      }),
+    ]);
+
+    const [chat] = await transformPoeToHaevn(data);
+    const reply = Object.values(chat.messages).find((m) => m.message[0].kind === "response");
+    expect(reply?.message[0].kind).toBe("response");
+    if (reply?.message[0].kind === "response") {
+      expect(reply.message[0].parts).toEqual([
+        expect.objectContaining({ part_kind: "text", content: reason }),
+      ]);
+    }
+  });
+
   it("extracts video attachments as video-url", async () => {
     const videoUrl = "https://pfst.cf2.poecdn.net/base/video/some-video.mp4";
 
@@ -269,21 +373,15 @@ describe("poe_transformer", () => {
       }) as any;
     });
 
-    const data: PoeConversationData = {
-      chatId: "Q2hhdDoxMjM=",
-      chatCode: "poe-video-test",
-      title: "Poe Chat with Video",
-      botName: "VideoBot",
-      extractedAt: "2024-05-11T12:00:00.000Z",
-      messages: [
-        createMessage({
-          text: "Here is the video you requested.",
-          author: "bot",
-          creationTime: 1715428740000000,
+    const data = poeData(
+      "poe-video-test",
+      [
+        botTurn("Here is the video you requested.", 1715428740000000, {
           attachments: [createAttachment(videoUrl, "video/mp4")],
         }),
       ],
-    };
+      { title: "Poe Chat with Video", botName: "VideoBot" },
+    );
 
     const chats = await transformPoeToHaevn(data);
     expect(chats).toHaveLength(1);
