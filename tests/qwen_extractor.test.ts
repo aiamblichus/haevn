@@ -115,23 +115,34 @@ describe("Qwen's list and chat fetch (HVN-115)", () => {
     expect(classifyFailure(err.message)).toBe("not-signed-in");
   });
 
-  it("a signed-in user whose chat list request fails is a failure, not signed out", async () => {
+  it("a rejected session token on the chat list is reported as signed out, in its own words", async () => {
     stubToken(SYNTHETIC_TOKEN);
     fetchMock.mockResolvedValueOnce(
       answer({ success: false, request_id: "r5", data: { code: "Unauthorized" } }),
     );
 
     const err = await rejectionOf(extractQwenChatIds());
-    expect(classifyFailure(err.message)).toBe("other");
+    expect(err.message).toBe("Not signed in to Qwen: the session token was rejected");
+    expect(classifyFailure(err.message)).toBe("not-signed-in");
   });
 
-  it("a signed-in user whose chat fetch fails is a failure, not signed out", async () => {
+  it("a rejected session token on a chat fetch is reported as signed out too", async () => {
     stubToken(SYNTHETIC_TOKEN);
     fetchMock.mockResolvedValueOnce(
       answer({ success: false, request_id: "r6", data: { code: "Unauthorized" } }),
     );
 
     const err = await rejectionOf(fetchQwenConversation(SYNTHETIC_CHAT_ID));
+    expect(classifyFailure(err.message)).toBe("not-signed-in");
+  });
+
+  it("with a token, any code other than Unauthorized is a failure, not signed out", async () => {
+    stubToken(SYNTHETIC_TOKEN);
+    fetchMock.mockResolvedValueOnce(
+      answer({ success: false, request_id: "r8", data: { code: "InternalError" } }),
+    );
+
+    const err = await rejectionOf(extractQwenChatIds());
     expect(classifyFailure(err.message)).toBe("other");
   });
 
