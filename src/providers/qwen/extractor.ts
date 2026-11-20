@@ -54,10 +54,10 @@ function qwenHeaders(token: string | null): Record<string, string> {
 }
 
 /**
- * The error for an answer with success=false. With no session token, an Unauthorized answer means
- * the browser is not signed in, and the message says so in words the health check reads as "not
- * signed in". With a token, the request of a signed-in user failed: the message must not read as a
- * sign-in problem, or the health check reports a signed-in user as signed out (HVN-115).
+ * The error for an answer with success=false. An Unauthorized answer means the browser is signed
+ * out: with no session token, that is the normal case; with one, the token has expired or been
+ * revoked, so the session is over (HVN-115). Both messages say so in words the health check reads
+ * as "not signed in". Any other code is a failure of the request.
  */
 function qwenRejection(
   what: string,
@@ -65,9 +65,11 @@ function qwenRejection(
   token: string | null,
 ): Error {
   const code = data?.code;
-  if (token === null && code === "Unauthorized") {
+  if (code === "Unauthorized") {
     return new Error(
-      `Not signed in to Qwen: ${what} was refused, and the browser holds no session token`,
+      token === null
+        ? `Not signed in to Qwen: ${what} was refused, and the browser holds no session token`
+        : "Not signed in to Qwen: the session token was rejected",
     );
   }
   log.warn(`[Qwen] ${what} answered success=false`, { code });
