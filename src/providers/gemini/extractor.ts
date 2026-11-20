@@ -830,6 +830,27 @@ async function expandAllThinkingBlocks(): Promise<void> {
   }
 }
 
+/** A conversation id without its "c_" prefix, or null when the text is not one. */
+function bareConversationId(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const id = raw.startsWith("c_") ? raw.slice(2) : raw;
+  return /^[A-Za-z0-9_-]{8,}$/.test(id) ? id : null;
+}
+
+/**
+ * The chat id of one sidebar entry (HVN-116). Gemini puts it on the entry as data-conversation-id
+ * ("c_" and the id), and in the /app/<id> link inside the entry. It no longer appears in jslog.
+ * Null when neither gives a valid id.
+ */
+export function geminiChatIdOf(
+  entry: Pick<Element, "getAttribute" | "querySelector">,
+): string | null {
+  const fromAttribute = bareConversationId(entry.getAttribute("data-conversation-id"));
+  if (fromAttribute) return fromAttribute;
+  const href = entry.querySelector("a[href]")?.getAttribute("href");
+  return bareConversationId(href?.match(/\/app\/([A-Za-z0-9_-]+)(?:[/?#]|$)/)?.[1]);
+}
+
 export async function extractGeminiChatIds(): Promise<string[]> {
   log.info("[Extractor] Starting chat ID extraction process...");
 
@@ -916,80 +937,22 @@ export async function extractGeminiChatIds(): Promise<string[]> {
   log.info("[Extractor] Starting patient scroll loop...");
 
   while (attempts < maxAttempts) {
-    // Extract any visible conversation entries for IDs embedded in jslog
+    // Read the chat id of each visible sidebar entry (HVN-116)
     // Use deep selector to find elements in shadow DOMs
     const entries = querySelectorAllDeep('[data-test-id="conversation"]');
     log.debug(`[Extractor] Attempt ${attempts + 1}: Found ${entries.length} conversation entries`);
 
     let newIdsThisIteration = 0;
     entries.forEach((entry, index) => {
-      const jslog = entry.getAttribute("jslog") || "";
-      log.debug(
-        `[Extractor] Entry ${index + 1}: jslog="${jslog.substring(0, 100)}${
-          jslog.length > 100 ? "..." : ""
-        }"`,
-      );
-
-      // Extract chat ID from jslog
-      // Chat IDs appear in BardVeMetadataKey array like: ["c_ecf1933591324c9...",null,0,111]
-      // We need to avoid matching "c_click" from "generic_click"
-      // Strategy: First try to find ID in BardVeMetadataKey context, then fallback to general search
-      // IMPORTANT: Strip 'c_' prefix immediately - real IDs never have the prefix
-      let foundId = false;
-      const falsePositives = new Set(["c_click", "c_track", "c_generic", "c_action"]);
-
-      // Try to find ID in BardVeMetadataKey array context (more reliable)
-      // Pattern: BardVeMetadataKey:[...,[\"c_...\",...]]
-      // Look for ["c_ pattern after BardVeMetadataKey
-      const bardIndex = jslog.indexOf("BardVeMetadataKey:");
-      if (bardIndex !== -1) {
-        const afterBard = jslog.substring(bardIndex);
-        // More robust regex: require c_ prefix, allow underscores in ID
-        const arrayMatch = afterBard.match(/\["c_([a-zA-Z0-9_]{8,})"/);
-        if (arrayMatch?.[1]) {
-          const id = arrayMatch[1]; // ID without c_ prefix
-          const rawId = `c_${id}`; // Reconstruct for validation
-          if (id.length >= 8 && !falsePositives.has(rawId)) {
-            const wasNew = !chatIds.has(id);
-            chatIds.add(id);
-            if (wasNew) {
-              newIdsThisIteration++;
-              log.debug(`[Extractor] ✓ Extracted new ID from BardVeMetadataKey: ${id}`);
-              foundId = true;
-            } else {
-              log.debug(`[Extractor] - Skipped duplicate ID: ${id}`);
-              foundId = true;
-            }
-          }
-        }
+      const id = geminiChatIdOf(entry);
+      if (!id) {
+        log.debug(`[Extractor] ✗ No chat ID on sidebar entry ${index + 1}`);
+        return;
       }
-
-      // Fallback: general pattern matching if BardVeMetadataKey didn't work
-      if (!foundId) {
-        // More robust pattern: c_ followed by alphanumeric + underscores
-        const matches = jslog.matchAll(/c_([a-zA-Z0-9_]{8,})/g);
-        for (const match of matches) {
-          const id = match[1]; // ID without c_ prefix
-          const rawId = `c_${id}`;
-          // Filter out known false positives and require minimum reasonable length
-          if (id.length >= 8 && !falsePositives.has(rawId)) {
-            const wasNew = !chatIds.has(id);
-            chatIds.add(id);
-            if (wasNew) {
-              newIdsThisIteration++;
-              log.debug(`[Extractor] ✓ Extracted new ID: ${id}`);
-              foundId = true;
-            } else {
-              log.debug(`[Extractor] - Skipped duplicate ID: ${id}`);
-              foundId = true;
-            }
-            break; // Take the first valid match
-          }
-        }
-      }
-
-      if (!foundId) {
-        log.debug(`[Extractor] ✗ No valid chat ID found in jslog for entry ${index + 1}`);
+      if (!chatIds.has(id)) {
+        chatIds.add(id);
+        newIdsThisIteration++;
+        log.debug(`[Extractor] ✓ Extracted new ID: ${id}`);
       }
     });
 
@@ -1060,44 +1023,10 @@ export async function extractGeminiChatIds(): Promise<string[]> {
     log.info("[Extractor] Performing final scan of all conversation entries...");
     const finalEntries = querySelectorAllDeep('[data-test-id="conversation"]');
     log.debug(`[Extractor] Final scan found ${finalEntries.length} conversation entries`);
-    finalEntries.forEach((entry, index) => {
-      const jslog = entry.getAttribute("jslog") || "";
-      log.debug(`[Extractor] Final entry ${index + 1}: jslog="${jslog}"`);
-      // Use the same improved extraction logic with normalization
-      const falsePositives = new Set(["c_click", "c_track", "c_generic"]);
-
-      // Try BardVeMetadataKey context first
-      // Pattern: BardVeMetadataKey:[...,["c_...",...]]
-      const bardIndex = jslog.indexOf("BardVeMetadataKey:");
-      if (bardIndex !== -1) {
-        const afterBard = jslog.substring(bardIndex);
-        const arrayMatch = afterBard.match(/\["([c_][a-zA-Z0-9]{8,})"/);
-        if (arrayMatch?.[1]) {
-          const rawId = arrayMatch[1];
-          // Strip 'c_' prefix to get the real ID
-          const id = rawId.startsWith("c_") ? rawId.substring(2) : rawId;
-          if (id.length >= 8 && !falsePositives.has(rawId)) {
-            chatIds.add(id);
-            log.debug(
-              `[Extractor] Final scan extracted from BardVeMetadataKey: ${id} (normalized from ${rawId})`,
-            );
-          }
-        }
-      } else {
-        // Fallback to general pattern
-        const matches = jslog.matchAll(/c_[a-zA-Z0-9]{8,}/g);
-        for (const match of matches) {
-          const rawId = match[0];
-          // Strip 'c_' prefix to get the real ID
-          const id = rawId.startsWith("c_") ? rawId.substring(2) : rawId;
-          if (id.length >= 8 && !falsePositives.has(rawId)) {
-            chatIds.add(id);
-            log.debug(`[Extractor] Final scan extracted: ${id} (normalized from ${rawId})`);
-            break; // Take the first valid match
-          }
-        }
-      }
-    });
+    for (const entry of finalEntries) {
+      const id = geminiChatIdOf(entry);
+      if (id) chatIds.add(id);
+    }
     const finalFinalIds = Array.from(chatIds);
     log.info(`[Extractor] After final scan: ${finalFinalIds.length} total IDs`);
     return finalFinalIds;
