@@ -10,7 +10,7 @@ import type {
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
-import type { OpenWebUIMessage, OpenWebUIRawExtraction } from "./model";
+import type { OpenWebUIMessage, OpenWebUIOutputItem, OpenWebUIRawExtraction } from "./model";
 
 function toMs(value?: number): number | undefined {
   if (value === undefined || value === null) return undefined;
@@ -52,6 +52,29 @@ function extractThinkingParts(content: string): {
   }
   cleaned = cleaned.replace(pattern, "").trim();
   return { parts, cleaned };
+}
+
+/**
+ * Reasoning kept in a message's `output[]` (Open WebUI 0.12 and later, HVN-114): items of type
+ * "reasoning" whose text is in `content[].text` or, failing that, `reasoning_details[].text`.
+ * One thinking part per item; the two fields are alternatives, never added together.
+ */
+function extractOutputReasoning(output: OpenWebUIMessage["output"]): ThinkingPart[] {
+  if (!Array.isArray(output)) return [];
+  const textOf = (blocks: OpenWebUIOutputItem["content"]): string =>
+    (Array.isArray(blocks) ? blocks : [])
+      .map((b) => (typeof b?.text === "string" ? b.text.trim() : ""))
+      .filter((t) => t.length > 0)
+      .join("\n\n");
+  const parts: ThinkingPart[] = [];
+  for (const item of output) {
+    if (item?.type !== "reasoning") continue;
+    const text = textOf(item.content) || textOf(item.reasoning_details);
+    if (text) {
+      parts.push({ part_kind: "thinking", content: text, id: `thinking_${parts.length + 1}` });
+    }
+  }
+  return parts;
 }
 
 // Use OpenWebUIRawExtraction from model.ts instead of local interface
@@ -148,6 +171,7 @@ export function transformOpenWebUIToHaevn(raw: OpenWebUIRawExtraction): HAEVN.Ch
     const modelName = getModelName(msg.models, chatModels);
 
     let modelMessage: ModelRequest | ModelResponse;
+    let failed = false;
     const messageTimestamp = toIsoFromSeconds(msg.timestamp);
 
     if (role === "user") {
@@ -169,11 +193,19 @@ export function transformOpenWebUIToHaevn(raw: OpenWebUIRawExtraction): HAEVN.Ch
         ],
       } as ModelRequest;
     } else {
-      const { parts: reasoning, cleaned } = extractThinkingParts(msg.content || "");
+      // An older message keeps its reasoning in a <details> block inside `content`; a newer one in
+      // `output[]`, with `content` the answer alone. Some carry both, the same reasoning twice:
+      // the structured form wins, and the <details> block is still cut out of the answer.
+      const { parts: detailsReasoning, cleaned } = extractThinkingParts(msg.content || "");
+      const outputReasoning = extractOutputReasoning(msg.output);
+      const reasoning = outputReasoning.length > 0 ? outputReasoning : detailsReasoning;
       const respParts: ModelResponsePart[] = [];
       if (reasoning.length) respParts.push(...reasoning);
       if (cleaned) respParts.push({ part_kind: "text", content: cleaned } as TextPart);
-      if (respParts.length === 0) respParts.push({ part_kind: "text", content: "" } as TextPart);
+      // A failed generation has `content: ""` and its reason in `error.content`.
+      const errorText = typeof msg.error?.content === "string" ? msg.error.content.trim() : "";
+      if (errorText) respParts.push({ part_kind: "text", content: errorText } as TextPart);
+      failed = errorText.length > 0;
       modelMessage = {
         kind: "response",
         parts: respParts,
@@ -188,7 +220,8 @@ export function transformOpenWebUIToHaevn(raw: OpenWebUIRawExtraction): HAEVN.Ch
       childrenIds: [],
       message: [modelMessage],
       model: modelName,
-      done: true,
+      done: msg.done !== false,
+      ...(failed ? { error: true } : {}),
       timestamp: toMs(msg.timestamp) || Date.now(),
       chatId: chatId,
     };

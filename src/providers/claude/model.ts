@@ -92,8 +92,16 @@ export interface ThinkingContentPart extends BaseContentPart {
   type: "thinking";
   /** The detailed description of the AI's internal thought process. */
   thinking: string;
-  /** A list of concise summaries derived from the `thinking` process, often used for UI display. */
-  summaries: Array<{
+  /**
+   * True when Claude withholds the reasoning: `thinking` is then an empty string and only
+   * `summaries` carry it. Absent on older payloads.
+   */
+  thinking_hidden?: boolean;
+  /**
+   * A list of concise summaries (1 to 5) of the `thinking` process. For a hidden block these are
+   * the only record of the reasoning. Absent on older payloads.
+   */
+  summaries?: Array<{
     /** A short summary of a specific point in the AI's thought process. */
     summary: string;
   }>;

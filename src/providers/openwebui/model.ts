@@ -8,6 +8,27 @@ export interface OpenWebUIMessage {
   id?: string; // not always present in docs; we will synthesize if absent
   parentId?: string | null;
   models?: string[]; // model names used for this message
+  /**
+   * Structured items of an assistant message (Open WebUI 0.12 and later): reasoning items first,
+   * then the message item. `content` is then the answer alone. Absent on older messages, which
+   * keep their reasoning in `<details type="reasoning">` inside `content`. Other item types
+   * (tool calls) are not mapped.
+   */
+  output?: OpenWebUIOutputItem[];
+  /** Set on a failed generation, whose `content` is empty. */
+  error?: { content?: string };
+  /** False while a message is still generating or was cut off. */
+  done?: boolean;
+}
+
+export interface OpenWebUIOutputItem {
+  type: string; // "reasoning" | "message" | ...
+  /** Reasoning text blocks of a "reasoning" item. */
+  content?: Array<{ type?: string; text?: string }>;
+  /** The same reasoning under another name; read only when `content` has no text. */
+  reasoning_details?: Array<{ type?: string; text?: string }>;
+  status?: string; // "completed" | "incomplete"
+  [key: string]: unknown;
 }
 
 export interface OpenWebUIHistory {
