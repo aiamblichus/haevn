@@ -338,12 +338,14 @@ export type BackgroundRequest =
   | { action: "getMetadataQueueStatus" }
   | { action: "getMetadataQueueItem"; chatId: string }
   | { action: "resetMetadataQueueItem"; chatId: string }
+  | { action: "resetAllFailedMetadata" }
   | { action: "rebuildAllMetadata" }
   | { action: "getChatPreview"; chatId: string }
   | { action: "getStarmapConfig" }
   | { action: "setStarmapConfig"; config: Partial<StarmapConfig> }
   | { action: "getStarmapEmbeddingQueueStatus" }
   | { action: "rebuildAllStarmapEmbeddings" }
+  | { action: "resetAllFailedEmbeddings" }
   | { action: "getStarmapData" };
 
 // ======================
