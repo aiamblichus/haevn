@@ -53,6 +53,32 @@ describe("qwen_transformer", () => {
     });
   });
 
+  it("keeps a failed generation's error as a text part, since the content is empty (HVN-115)", async () => {
+    const chat = await transformQwenToHaevn(
+      chatData([
+        message({
+          content: "",
+          error: { code: "SyntheticCode", details: "Synthetic details of the failure." },
+        }),
+        message({ id: "m2", content: "", error: { code: "SyntheticOnlyCode" }, parentId: "m1" }),
+      ]),
+    );
+
+    expect(chat.messages.m1.message[0]).toMatchObject({
+      kind: "response",
+      parts: [
+        {
+          part_kind: "text",
+          content: "Generation failed (SyntheticCode): Synthetic details of the failure.",
+        },
+      ],
+    });
+    expect(chat.messages.m2.message[0]).toMatchObject({
+      kind: "response",
+      parts: [{ part_kind: "text", content: "Generation failed (SyntheticOnlyCode)" }],
+    });
+  });
+
   it("leaves info unset when Qwen sent none", async () => {
     const chat = await transformQwenToHaevn(chatData([message({ info: null })]));
 
