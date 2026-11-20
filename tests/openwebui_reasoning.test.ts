@@ -97,6 +97,17 @@ describe("openwebui transformer: reasoning in output[]", () => {
     expect(parts[1]).toMatchObject({ content: "the answer" });
   });
 
+  it("keeps the output[] reasoning when the two forms differ", () => {
+    const { parts } = convert({
+      content:
+        '<details type="reasoning" done="true">\n<summary>Thought</summary>\n> rendered copy\n</details>\nthe answer',
+      output: [reasoningItem({ content: [{ text: "structured thought" }] })],
+    });
+    expect(parts.filter((p) => p.part_kind === "thinking")).toEqual([
+      expect.objectContaining({ content: "structured thought" }),
+    ]);
+  });
+
   it("still reads an older message that has only a <details> block", () => {
     const { parts } = convert({
       content:
