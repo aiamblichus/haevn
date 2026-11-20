@@ -188,6 +188,11 @@ export interface MetadataAIConfig {
   /** Queue all chats without metadata on service worker startup. */
   indexMissing: boolean;
   categories: CategoryConfig[];
+  /**
+   * Fields merged into each chat-completion request after the defaults, for a host's own switches
+   * (a thinking mode, say). `model` and `messages` are never taken from here. Never logged.
+   */
+  extraRequestParams: Record<string, unknown>;
 }
 
 const METADATA_AI_DEFAULTS: MetadataAIConfig = {
@@ -199,6 +204,7 @@ const METADATA_AI_DEFAULTS: MetadataAIConfig = {
   autoGenerate: false,
   indexMissing: false,
   categories: [],
+  extraRequestParams: {},
 };
 
 export async function getMetadataAIConfig(): Promise<MetadataAIConfig> {

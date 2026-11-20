@@ -13,7 +13,7 @@ import type {
 } from "./db";
 import { getDB } from "./db";
 import * as MetadataRepository from "./metadataRepository";
-import type { CategoryConfig } from "./settingsService";
+import type { CategoryConfig, MetadataAIConfig, StarmapConfig } from "./settingsService";
 import { getMetadataAIConfig, getStarmapConfig } from "./settingsService";
 
 export const METADATA_PROCESS_ALARM = "metadataQueueProcessAlarm";
@@ -25,7 +25,7 @@ const EMBEDDING_QUEUE_PERIOD_MINUTES = 5;
 const METADATA_MAX_RETRIES = 3;
 const EMBEDDING_MAX_RETRIES = 3;
 const EMBEDDING_BATCH_SIZE = 10;
-const METADATA_MAX_COMPLETION_TOKENS = 2000;
+const METADATA_MAX_COMPLETION_TOKENS = 5000;
 const METADATA_MAX_INPUT_TOKENS = 5000;
 const METADATA_EST_CHARS_PER_TOKEN = 4;
 const METADATA_MAX_PROMPT_CHARS = METADATA_MAX_INPUT_TOKENS * METADATA_EST_CHARS_PER_TOKEN;
@@ -417,6 +417,52 @@ export async function resetFailedQueueItem(chatId: string): Promise<void> {
 }
 
 /**
+ * Set every terminally failed metadata queue item back to pending, with its retries and error
+ * cleared, so that the queue takes it again. Pending and processing items are not touched. This
+ * is behind the Retry button and the reset on an endpoint change. Returns how many were reset.
+ */
+export async function resetAllFailed(): Promise<number> {
+  const now = Date.now();
+  const count = await getDB()
+    .metadataQueue.where("status")
+    .equals("failed")
+    .modify({ status: "pending", retries: 0, error: undefined, addedAt: now, lastAttemptAt: now });
+  if (count > 0) {
+    log.info(`[MetadataService] Reset ${count} failed metadata queue items to pending`);
+    await scheduleProcessTick();
+  }
+  return count;
+}
+
+/**
+ * Whether a metadata config save changed where a chat is sent: the URL, the model or the extra
+ * request parameters. Compared as the requests use them, so a trailing slash, a stray space or a
+ * reordered JSON object is not a change.
+ */
+export function metadataEndpointChanged(
+  before: Pick<MetadataAIConfig, "url" | "model" | "extraRequestParams">,
+  after: Pick<MetadataAIConfig, "url" | "model" | "extraRequestParams">,
+): boolean {
+  return (
+    normalizeBaseUrl(before.url) !== normalizeBaseUrl(after.url) ||
+    before.model.trim() !== after.model.trim() ||
+    objectHash(effectiveExtraParams(before.extraRequestParams)) !==
+      objectHash(effectiveExtraParams(after.extraRequestParams))
+  );
+}
+
+/** Whether a Starmap save changed the embedding endpoint: its URL or its model. */
+export function embeddingEndpointChanged(
+  before: Pick<StarmapConfig, "embeddingUrl" | "embeddingModel">,
+  after: Pick<StarmapConfig, "embeddingUrl" | "embeddingModel">,
+): boolean {
+  return (
+    normalizeBaseUrl(before.embeddingUrl || "") !== normalizeBaseUrl(after.embeddingUrl || "") ||
+    (before.embeddingModel || "").trim() !== (after.embeddingModel || "").trim()
+  );
+}
+
+/**
  * Returns current queue counts.
  */
 export async function getQueueStatus(): Promise<MetadataQueueStatus> {
@@ -730,6 +776,23 @@ export async function resetFailedEmbeddingQueueItem(chatId: string): Promise<voi
   await scheduleEmbeddingProcessTick();
 }
 
+/**
+ * The embedding counterpart of `resetAllFailed`: every failed embedding item goes back to
+ * pending. Returns how many were reset.
+ */
+export async function resetAllFailedEmbeddings(): Promise<number> {
+  const now = Date.now();
+  const count = await getDB()
+    .embeddingQueue.where("status")
+    .equals("failed")
+    .modify({ status: "pending", retries: 0, error: undefined, addedAt: now, lastAttemptAt: now });
+  if (count > 0) {
+    log.info(`[MetadataService] Reset ${count} failed embedding queue items to pending`);
+    await scheduleEmbeddingProcessTick();
+  }
+  return count;
+}
+
 export async function rebuildAllEmbeddings(): Promise<number> {
   const db = getDB();
   await db.chatEmbeddings.clear();
@@ -818,8 +881,15 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
     );
   }
 
-  const rawResponse = await callLLM(config.url, config.apiKey, config.model, prompt);
-  const result = parseResponse(rawResponse, schema);
+  const rawResponse = await callLLM(
+    config.url,
+    config.apiKey,
+    config.model,
+    prompt,
+    config.extraRequestParams,
+  );
+  // Some local models write their reasoning before the answer; it is not part of the JSON.
+  const result = parseResponse(stripReasoningBlocks(rawResponse), schema);
 
   if (!result.success) {
     log.warn("[MetadataService] Parse diagnostics", {
@@ -1340,18 +1410,70 @@ async function callEmbeddingLLMBatch(
   return vectors;
 }
 
+/** The defaults of one metadata request. The extra request parameters are merged over them. */
+function defaultChatCompletionBody(model: string, prompt: string): Record<string, unknown> {
+  return {
+    model: model || "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: METADATA_MAX_COMPLETION_TOKENS,
+  };
+}
+
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The extra request parameters that reach a request: the object's own keys, without `model` and
+ * `messages`, which the chat's request sets and nothing else may replace.
+ */
+export function effectiveExtraParams(extra: unknown): Record<string, unknown> {
+  if (!isJsonObject(extra)) return {};
+  const { model: _model, messages: _messages, ...rest } = extra;
+  return rest;
+}
+
+/** The body of one metadata request: the defaults, then the extra parameters over them. */
+export function buildChatCompletionBody(
+  model: string,
+  prompt: string,
+  extra: unknown,
+): Record<string, unknown> {
+  return { ...defaultChatCompletionBody(model, prompt), ...effectiveExtraParams(extra) };
+}
+
+const LEADING_REASONING_BLOCK = /^\s*<(think|thinking)>[\s\S]*?<\/\1>\s*/i;
+
+/**
+ * Removes the reasoning that some local models write before their answer: a `<think>` or
+ * `<thinking>` block at the start of the reply, and the whitespace after it. Leading blocks are
+ * all removed. A block later in the reply is left as it is.
+ */
+export function stripReasoningBlocks(reply: string): string {
+  let out = reply;
+  let match = LEADING_REASONING_BLOCK.exec(out);
+  while (match) {
+    out = out.slice(match[0].length);
+    match = LEADING_REASONING_BLOCK.exec(out);
+  }
+  return out;
+}
+
 async function callLLM(
   url: string,
   apiKey: string,
   model: string,
   prompt: string,
+  extraRequestParams: unknown,
 ): Promise<string> {
   const endpoint = `${url.replace(/\/$/, "")}/chat/completions`;
-  const requestBody = {
-    model: model || "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.3,
-    max_tokens: METADATA_MAX_COMPLETION_TOKENS,
+  const requestBody = buildChatCompletionBody(model, prompt, extraRequestParams);
+  // The extra parameters can hold anything the person typed, so the log names them and hides them.
+  const extraParamKeys = Object.keys(effectiveExtraParams(extraRequestParams));
+  const loggedBody = {
+    ...requestBody,
+    ...Object.fromEntries(extraParamKeys.map((key) => [key, "[REDACTED]"])),
   };
   const requestHeaders = {
     "Content-Type": "application/json",
@@ -1364,7 +1486,7 @@ async function callLLM(
       ...requestHeaders,
       ...(apiKey ? { Authorization: "Bearer [REDACTED]" } : {}),
     },
-    body: requestBody,
+    body: loggedBody,
     promptChars: prompt.length,
     estimatedPromptTokens: Math.round(prompt.length / METADATA_EST_CHARS_PER_TOKEN),
   });

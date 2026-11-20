@@ -94,11 +94,13 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
     metadataHandlers.handleGetStarmapEmbeddingQueueStatus as HandlerFunction,
   rebuildAllStarmapEmbeddings:
     metadataHandlers.handleRebuildAllStarmapEmbeddings as HandlerFunction,
+  resetAllFailedEmbeddings: metadataHandlers.handleResetAllFailedEmbeddings as HandlerFunction,
   getStarmapData: metadataHandlers.handleGetStarmapData as HandlerFunction,
   queueMissingMetadata: metadataHandlers.handleQueueMissingMetadata as HandlerFunction,
   getMetadataQueueStatus: metadataHandlers.handleGetMetadataQueueStatus as HandlerFunction,
   getMetadataQueueItem: metadataHandlers.handleGetMetadataQueueItem as HandlerFunction,
   resetMetadataQueueItem: metadataHandlers.handleResetMetadataQueueItem as HandlerFunction,
+  resetAllFailedMetadata: metadataHandlers.handleResetAllFailedMetadata as HandlerFunction,
   rebuildAllMetadata: metadataHandlers.handleRebuildAllMetadata as HandlerFunction,
   getChatPreview: metadataHandlers.handleGetChatPreview as HandlerFunction,
 };

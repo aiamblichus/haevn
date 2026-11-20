@@ -1,13 +1,18 @@
 import { ChatRepository } from "../../services/chatRepository";
 import * as MetadataRepository from "../../services/metadataRepository";
 import {
+  embeddingEndpointChanged,
   enqueueAllMissing,
   generateOnRequest,
   getEmbeddingQueueStatus,
   getQueueItem,
   getQueueStatus,
+  isJsonObject,
+  metadataEndpointChanged,
   pauseEmbeddingQueue,
   rebuildAllEmbeddings,
+  resetAllFailed,
+  resetAllFailedEmbeddings,
   resetFailedQueueItem,
   setManualMetadata,
   syncMetadataQueueAlarms,
@@ -92,9 +97,24 @@ export async function handleSetMetadataAIConfig(
   sendResponse: (response: BackgroundResponse) => void,
 ): Promise<void> {
   try {
+    // The parameters are validated here as well as in the options page, so that no other caller
+    // can store a value the request cannot use. The message names no value.
+    if (
+      message.config.extraRequestParams !== undefined &&
+      !isJsonObject(message.config.extraRequestParams)
+    ) {
+      sendResponse({ success: false, error: "Extra request parameters must be a JSON object" });
+      return;
+    }
+    const before = await getMetadataAIConfig();
     await setMetadataAIConfig(message.config);
-    await syncMetadataQueueAlarms();
     const nextConfig = await getMetadataAIConfig();
+    // A failure under the old endpoint says little about the new one, so only an actual change of
+    // the URL, the model or the extra parameters resets the failed items.
+    if (metadataEndpointChanged(before, nextConfig)) {
+      await resetAllFailed();
+    }
+    await syncMetadataQueueAlarms();
     if (nextConfig.enabled && nextConfig.indexMissing) {
       await enqueueAllMissing();
     }
@@ -132,9 +152,14 @@ export async function handleSetStarmapConfig(
       return;
     }
 
+    const before = await getStarmapConfig();
     await setStarmapConfig(message.config);
 
     const nextStarmapConfig = await getStarmapConfig();
+    // Only an actual change of the embedding URL or model resets the failed items
+    if (embeddingEndpointChanged(before, nextStarmapConfig)) {
+      await resetAllFailedEmbeddings();
+    }
     if (!nextStarmapConfig.enabled || !nextStarmapConfig.embeddingsEnabled) {
       await pauseEmbeddingQueue();
     }
@@ -282,6 +307,32 @@ export async function handleResetMetadataQueueItem(
     sendResponse({ success: true });
   } catch (err) {
     log.error("[MetadataHandlers] resetMetadataQueueItem failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleResetAllFailedMetadata(
+  _message: Extract<BackgroundRequest, { action: "resetAllFailedMetadata" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const reset = await resetAllFailed();
+    sendResponse({ success: true, data: { reset } });
+  } catch (err) {
+    log.error("[MetadataHandlers] resetAllFailedMetadata failed", err);
+    sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleResetAllFailedEmbeddings(
+  _message: Extract<BackgroundRequest, { action: "resetAllFailedEmbeddings" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const reset = await resetAllFailedEmbeddings();
+    sendResponse({ success: true, data: { reset } });
+  } catch (err) {
+    log.error("[MetadataHandlers] resetAllFailedEmbeddings failed", err);
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

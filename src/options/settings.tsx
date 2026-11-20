@@ -360,7 +360,37 @@ const DEFAULT_CONFIG: MetadataAIConfig = {
   autoGenerate: false,
   indexMissing: false,
   categories: [],
+  extraRequestParams: {},
 };
+
+// Measured on LM Studio's google/gemma-4-e4b: this turns its thinking off (see HVN-118).
+const EXTRA_PARAMS_EXAMPLE = '{"reasoning_effort": "none"}';
+
+type ExtraParamsParse = { ok: true; value: Record<string, unknown> } | { ok: false; error: string };
+
+/** The extra request parameters as the field shows them: empty when there are none. */
+function formatExtraRequestParams(params: Record<string, unknown> | undefined): string {
+  return params && Object.keys(params).length > 0 ? JSON.stringify(params) : "";
+}
+
+/**
+ * Reads the field; empty means none. An error never repeats what was typed: the field can hold
+ * anything, so the value is not shown back.
+ */
+function parseExtraRequestParams(text: string): ExtraParamsParse {
+  const trimmed = text.trim();
+  if (trimmed === "") return { ok: true, value: {} };
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { ok: false, error: "Not valid JSON. Enter a JSON object, or leave the field empty." };
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { ok: false, error: "Must be a JSON object, with its keys in double quotes." };
+  }
+  return { ok: true, value: value as Record<string, unknown> };
+}
 
 interface QueueStatus {
   pending: number;
@@ -380,12 +410,19 @@ const AIMetadataSettingsCard = () => {
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const pendingEnableRef = useRef(false);
+  const [extraParamsText, setExtraParamsText] = useState("");
+  const [extraParamsError, setExtraParamsError] = useState<string | null>(null);
+  const [retryingMetadata, setRetryingMetadata] = useState(false);
 
   useEffect(() => {
     chrome.runtime
       .sendMessage({ action: "getMetadataAIConfig" })
       .then((res) => {
-        if (res.success) setConfig(res.data as MetadataAIConfig);
+        if (res.success) {
+          const loaded = res.data as MetadataAIConfig;
+          setConfig(loaded);
+          setExtraParamsText(formatExtraRequestParams(loaded.extraRequestParams));
+        }
       })
       .catch((err) => log.error("[Settings] Failed to load metadata AI config:", err))
       .finally(() => setLoading(false));
@@ -456,6 +493,30 @@ const AIMetadataSettingsCard = () => {
       // ignore
     } finally {
       setRebuilding(false);
+    }
+  };
+
+  const saveExtraRequestParams = () => {
+    const parsed = parseExtraRequestParams(extraParamsText);
+    if (!parsed.ok) {
+      setExtraParamsError(parsed.error);
+      return;
+    }
+    setExtraParamsError(null);
+    save({ extraRequestParams: parsed.value });
+  };
+
+  const handleRetryFailed = async () => {
+    setRetryingMetadata(true);
+    setError(null);
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "resetAllFailedMetadata" });
+      if (!res.success) throw new Error(res.error ?? "Retry failed");
+      await loadQueueStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retry failed");
+    } finally {
+      setRetryingMetadata(false);
     }
   };
 
@@ -607,6 +668,35 @@ const AIMetadataSettingsCard = () => {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="metaExtraParams">Extra request parameters (JSON)</Label>
+                <Input
+                  id="metaExtraParams"
+                  type="text"
+                  placeholder={EXTRA_PARAMS_EXAMPLE}
+                  value={extraParamsText}
+                  aria-invalid={extraParamsError !== null}
+                  onChange={(e) => {
+                    setExtraParamsText((e.target as HTMLInputElement).value);
+                    setExtraParamsError(null);
+                  }}
+                  onBlur={saveExtraRequestParams}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A JSON object sent with every request, after the defaults. To turn off thinking on
+                  LM Studio&apos;s google/gemma-4-e4b, use{" "}
+                  <code className="bg-muted px-1 rounded">{EXTRA_PARAMS_EXAMPLE}</code>. Hosts name
+                  their switches differently, so check the host&apos;s docs.{" "}
+                  <code className="bg-muted px-1 rounded">model</code> and{" "}
+                  <code className="bg-muted px-1 rounded">messages</code> are ignored.
+                </p>
+                {extraParamsError && (
+                  <p role="alert" className="text-sm text-destructive">
+                    {extraParamsError}
+                  </p>
+                )}
+              </div>
+
               <div className="flex items-center gap-3">
                 <Checkbox
                   id="metaAutoGenerate"
@@ -637,12 +727,24 @@ const AIMetadataSettingsCard = () => {
                 </Label>
               </div>
 
-              {/* Queue status + rebuild */}
+              {/* Queue status, retry failed, rebuild */}
               <div className="rounded-md border px-3 py-2.5 bg-muted/30">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-xs text-muted-foreground">
-                    {queueStatus === null ? "Loading…" : formatQueueStatus(queueStatus)}
-                  </p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-xs text-muted-foreground">
+                      {queueStatus === null ? "Loading…" : formatQueueStatus(queueStatus)}
+                    </p>
+                    {queueStatus !== null && queueStatus.failed > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRetryFailed}
+                        disabled={retryingMetadata}
+                      >
+                        {retryingMetadata ? "Retrying…" : "Retry failed"}
+                      </Button>
+                    )}
+                  </div>
                   <Button
                     variant="destructive"
                     size="sm"
@@ -754,6 +856,7 @@ const StarmapSettingsCard = () => {
   const [error, setError] = useState<string | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [rebuilding, setRebuilding] = useState(false);
+  const [retryingEmbeddings, setRetryingEmbeddings] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -824,6 +927,20 @@ const StarmapSettingsCard = () => {
     }, 4000);
     return () => clearInterval(interval);
   }, [config.enabled, config.embeddingsEnabled, loadQueueStatus]);
+
+  const handleRetryFailedEmbeddings = async () => {
+    setRetryingEmbeddings(true);
+    setError(null);
+    try {
+      const res = await chrome.runtime.sendMessage({ action: "resetAllFailedEmbeddings" });
+      if (!res.success) throw new Error(res.error ?? "Retry failed");
+      await loadQueueStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Retry failed");
+    } finally {
+      setRetryingEmbeddings(false);
+    }
+  };
 
   const handleRebuildEmbeddings = async () => {
     setRebuilding(true);
@@ -933,9 +1050,21 @@ const StarmapSettingsCard = () => {
 
             <div className="rounded-md border px-3 py-2.5 bg-muted/30">
               <div className="flex items-center justify-between gap-3 flex-wrap">
-                <p className="text-xs text-muted-foreground">
-                  {queueStatus === null ? "Idle" : formatQueueStatus(queueStatus)}
-                </p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <p className="text-xs text-muted-foreground">
+                    {queueStatus === null ? "Idle" : formatQueueStatus(queueStatus)}
+                  </p>
+                  {queueStatus !== null && queueStatus.failed > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRetryFailedEmbeddings}
+                      disabled={retryingEmbeddings}
+                    >
+                      {retryingEmbeddings ? "Retrying…" : "Retry failed"}
+                    </Button>
+                  )}
+                </div>
                 <Button
                   variant="outline"
                   size="sm"
