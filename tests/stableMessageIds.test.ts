@@ -14,14 +14,15 @@ import { FakeOpfs } from "./helpers/fakeOpfs";
 
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function poeMessage(id: string, author: string, creationTime: number, text: string): Message {
+function poeMessage(id: string, role: "user" | "bot", creationTime: number, text: string): Message {
   return {
     id,
     messageId: creationTime,
     messageCode: `code-${id}`,
-    author,
+    authorUser:
+      role === "user" ? { uid: 1, id: "user-1", fullName: "Synthetic User", handle: "user" } : null,
     bot:
-      author === "human"
+      role === "user"
         ? null
         : {
             botId: 1,
@@ -93,7 +94,7 @@ describe("Poe message ids", () => {
   it("come from the id Poe gives the message: the same on every transform", async () => {
     const make = () =>
       poeChat([
-        poeMessage("TWVzc2FnZTox", "human", 1714557480000000, "hello"),
+        poeMessage("TWVzc2FnZTox", "user", 1714557480000000, "hello"),
         poeMessage("TWVzc2FnZToy", "bot", 1714557540000000, "hi"),
       ]);
     const first = await transformPoeToHaevn(make());
@@ -105,11 +106,11 @@ describe("Poe message ids", () => {
 
   it("do not depend on the text or on where the message was fetched from", async () => {
     const before = await transformPoeToHaevn(
-      poeChat([poeMessage("TWVzc2FnZTox", "human", 1714557480000000, "draft")]),
+      poeChat([poeMessage("TWVzc2FnZTox", "user", 1714557480000000, "draft")]),
     );
     const after = await transformPoeToHaevn(
       poeChat([
-        poeMessage("TWVzc2FnZTox", "human", 1714557480000000, "edited"),
+        poeMessage("TWVzc2FnZTox", "user", 1714557480000000, "edited"),
         poeMessage("TWVzc2FnZToy", "bot", 1714557540000000, "a new reply"),
       ]),
     );
@@ -118,7 +119,7 @@ describe("Poe message ids", () => {
 
   it("stay distinct for two identical messages that Poe gave no id", async () => {
     const bare = (time: number) => {
-      const msg = poeMessage("", "human", time, "same words");
+      const msg = poeMessage("", "user", time, "same words");
       msg.messageId = undefined as unknown as number;
       msg.messageCode = "";
       return msg;
@@ -137,7 +138,7 @@ describe("Poe message ids", () => {
       seen.push(options.messageId);
       return assets.map((a) => ({ kind: "image-url", url: a.url })) as never;
     });
-    const msg = poeMessage("TWVzc2FnZTox", "human", 1714557480000000, "look");
+    const msg = poeMessage("TWVzc2FnZTox", "user", 1714557480000000, "look");
     msg.attachments = [
       {
         id: "att",

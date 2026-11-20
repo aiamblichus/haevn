@@ -64,8 +64,20 @@ export interface PoeUser extends Node {
   isDeleted?: boolean;
 }
 
+/** The person who wrote a user turn. */
+export interface MessageAuthor {
+  uid: number;
+  id: string;
+  fullName: string;
+  handle?: string;
+}
+
 export interface Message extends Node {
-  author: "human" | "chat_break" | string;
+  /**
+   * Who wrote the message. A user turn has `authorUser` set and `bot` null; a bot turn the reverse.
+   * Poe no longer sends an `author` field (HVN-112).
+   */
+  authorUser: MessageAuthor | null;
   isChatAnnouncement: boolean;
   id: string;
   bot: Bot | null;

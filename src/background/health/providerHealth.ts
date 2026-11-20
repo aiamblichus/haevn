@@ -210,8 +210,10 @@ function errorText(err: unknown): string {
 
 export type FailureKind = "not-signed-in" | "unreachable" | "other";
 
+// "success=false" is not a sign-in by itself: Qwen sends it for a signed-in user's failed request
+// too (HVN-115). An extractor that means "signed out" says so in words, as Qwen's does.
 const SIGN_IN_MESSAGE =
-  /\b40[13]\b|organizationId|log(?:ged)?[ -]?in|sign(?:ed)?[ -]?in|unauthori[sz]ed|not authenticated|authenticat|valid .{0,20}tokens?|access token|auth token|API returned success=false/i;
+  /\b40[13]\b|organizationId|log(?:ged)?[ -]?in|sign(?:ed)?[ -]?in|unauthori[sz]ed|not authenticated|authenticat|valid .{0,20}tokens?|access token|auth token/i;
 const NETWORK_MESSAGE =
   /failed to fetch\s*$|networkerror|network error|net::|ERR_[A-Z_]+|timed out|timeout: tab|is not accessible|ECONNREFUSED|ENOTFOUND/i;
 const SIGN_IN_HOSTS = /^(?:accounts\.google\.com|auth\.openai\.com|login\.[^/]+|auth\.[^/]+)$/i;

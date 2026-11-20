@@ -2,7 +2,13 @@ import { log } from "../../utils/logger";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import { detectPlatform } from "../shared/platformDetector";
 import { generateFallbackId } from "../shared_utils";
-import type { QwenChatListResponse, QwenChatResponse } from "./model";
+import type {
+  QwenChatData,
+  QwenChatListResponse,
+  QwenChatResponse,
+  QwenFailureData,
+  QwenFailureResponse,
+} from "./model";
 
 // Platform Detection
 export function isQwenPlatform(): boolean {
@@ -24,16 +30,58 @@ export function extractQwenConversationId(): string {
   }
 }
 
+/**
+ * The session token Qwen keeps in the page's localStorage. The API answers Unauthorized to a request
+ * that carries only cookies, so the token goes with each request as a bearer (HVN-115). It is never
+ * logged and never put in an error. Null when the page holds none.
+ */
+function qwenSessionToken(): string | null {
+  try {
+    const token = localStorage.getItem("token");
+    return token ? token : null;
+  } catch (err) {
+    log.warn("[Qwen] Could not read the session token from localStorage:", err);
+    return null;
+  }
+}
+
+function qwenHeaders(token: string | null): Record<string, string> {
+  return {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+/**
+ * The error for an answer with success=false. With no session token, an Unauthorized answer means
+ * the browser is not signed in, and the message says so in words the health check reads as "not
+ * signed in". With a token, the request of a signed-in user failed: the message must not read as a
+ * sign-in problem, or the health check reports a signed-in user as signed out (HVN-115).
+ */
+function qwenRejection(
+  what: string,
+  data: QwenFailureData | null | undefined,
+  token: string | null,
+): Error {
+  const code = data?.code;
+  if (token === null && code === "Unauthorized") {
+    return new Error(
+      `Not signed in to Qwen: ${what} was refused, and the browser holds no session token`,
+    );
+  }
+  log.warn(`[Qwen] ${what} answered success=false`, { code });
+  return new Error(`Qwen answered success=false for ${what}`);
+}
+
 // Fetch full conversation JSON via Qwen API
-export async function fetchQwenConversation(chatId: string): Promise<QwenChatResponse["data"]> {
+export async function fetchQwenConversation(chatId: string): Promise<QwenChatData> {
   const apiUrl = `https://chat.qwen.ai/api/v2/chats/${chatId}`;
+  const token = qwenSessionToken();
   const response = await fetchWithTimeout(apiUrl, {
     method: "GET",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: qwenHeaders(token),
     timeoutMs: 30000,
   });
   if (!response.ok) {
@@ -41,9 +89,9 @@ export async function fetchQwenConversation(chatId: string): Promise<QwenChatRes
       `Failed to fetch conversation ${chatId}: ${response.status} ${response.statusText}`,
     );
   }
-  const data = (await response.json()) as QwenChatResponse;
+  const data = (await response.json()) as QwenChatResponse | QwenFailureResponse;
   if (!data.success) {
-    throw new Error(`API returned success=false for conversation ${chatId}`);
+    throw qwenRejection(`conversation ${chatId}`, data.data, token);
   }
   return data.data;
 }
@@ -65,13 +113,11 @@ export async function extractQwenConversationData(
 
 export async function extractQwenChatIds(): Promise<string[]> {
   const apiUrl = "https://chat.qwen.ai/api/v2/chats/";
+  const token = qwenSessionToken();
   const response = await fetchWithTimeout(apiUrl, {
     method: "GET",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: qwenHeaders(token),
     timeoutMs: 30000,
   });
 
@@ -79,9 +125,9 @@ export async function extractQwenChatIds(): Promise<string[]> {
     throw new Error(`Failed to fetch chat list: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as QwenChatListResponse;
+  const data = (await response.json()) as QwenChatListResponse | QwenFailureResponse;
   if (!data.success) {
-    throw new Error("API returned success=false for chat list");
+    throw qwenRejection("the chat list", data.data, token);
   }
 
   return data.data.map((chat) => chat.id);

@@ -293,10 +293,13 @@ export function chatgptRaw(s: Sentinels) {
   };
 }
 
-/** A Poe message, as the GraphQL API returns it (creationTime in microseconds). */
+/**
+ * A Poe message, as the GraphQL API returns it (creationTime in microseconds). A user turn carries
+ * `authorUser` and no `bot`; a bot turn the reverse. There is no `author` field (HVN-112).
+ */
 export function poeMessage(
   id: string,
-  author: string,
+  role: "user" | "bot",
   text: string,
   at: number,
   attachments: unknown[] = [],
@@ -306,9 +309,12 @@ export function poeMessage(
     id: `msg-${id}`,
     messageId: creationTime,
     messageCode: `code-${id}`,
-    author,
+    authorUser:
+      role === "user"
+        ? { uid: 1001, id: "user-1001", fullName: "Synthetic User", handle: "synthetic-user" }
+        : null,
     bot:
-      author === "human"
+      role === "user"
         ? null
         : {
             botId: 456,
@@ -344,7 +350,7 @@ export function poeRaw(s: Sentinels, extra: { attachments?: unknown[] } = {}) {
     botName: "Claude-in-Poe",
     extractedAt: iso(20),
     messages: [
-      poeMessage("1", "human", s.user, 1000, extra.attachments),
+      poeMessage("1", "user", s.user, 1000, extra.attachments),
       poeMessage("2", "bot", s.model, 5000),
     ],
   };

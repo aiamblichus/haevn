@@ -195,8 +195,11 @@ describe("providerHealth: not signed in, and unreachable, are rows", () => {
       (s) => (s.ids = new Error("Failed to fetch chat list: 403 Forbidden")),
     ],
     [
-      "qwen: a signed-out account answers success=false",
-      (s) => (s.ids = new Error("API returned success=false for chat list")),
+      "qwen: a signed-out account, with no session token, is refused the list",
+      (s) =>
+        (s.ids = new Error(
+          "Not signed in to Qwen: the chat list was refused, and the browser holds no session token",
+        )),
     ],
     [
       "poe: no tokens",
@@ -292,6 +295,15 @@ describe("providerHealth: not signed in, and unreachable, are rows", () => {
     );
     const report = await runProviderHealth({}, deps(probe));
     expect(row(report, "qwen").status).toBe("fail");
+    expect(row(report, "qwen").findings.map((f) => f.code)).toEqual(["list.failed"]);
+  });
+
+  it("a success=false answer on the list is a failure, not signed out, whoever sent it (HVN-115)", async () => {
+    const probe = new FakeProbe();
+    probe.script("qwen", (s) => (s.ids = new Error("API returned success=false for chat list")));
+    const report = await runProviderHealth({}, deps(probe));
+    expect(row(report, "qwen").status).toBe("fail");
+    expect(row(report, "qwen").signedIn).not.toBe(false);
     expect(row(report, "qwen").findings.map((f) => f.code)).toEqual(["list.failed"]);
   });
 

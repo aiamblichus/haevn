@@ -15,7 +15,13 @@ import { log } from "../../utils/logger";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
 import type { TransformOptions } from "../interfaces";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
-import type { QwenChatData, QwenContentListItem, QwenFile, QwenMessage } from "./model";
+import type {
+  QwenChatData,
+  QwenContentListItem,
+  QwenFile,
+  QwenMessage,
+  QwenMessageError,
+} from "./model";
 
 /**
  * Extract reasoning content from message content or reasoning_content field
@@ -173,6 +179,19 @@ function convertContentListItems(
 }
 
 /**
+ * The text of a failed generation's error: its code and details on one line (HVN-115). Null when
+ * the message carries no error.
+ */
+function generationErrorText(error: QwenMessageError | null | undefined): string | null {
+  const code = error?.code?.trim();
+  const details = error?.details?.trim();
+  if (code && details) return `Generation failed (${code}): ${details}`;
+  if (code) return `Generation failed (${code})`;
+  if (details) return `Generation failed: ${details}`;
+  return null;
+}
+
+/**
  * Convert Qwen message to HAEVN ChatMessage
  */
 function convertQwenMessage(
@@ -222,6 +241,15 @@ function convertQwenMessage(
           content: cleanContent,
         } as TextPart);
       }
+    }
+
+    // A failed generation has no content, and Qwen says why in `error` (HVN-115): keep the reason.
+    const failure = generationErrorText(qwenMsg.error);
+    if (failure) {
+      contentParts.push({
+        part_kind: "text",
+        content: failure,
+      } as TextPart);
     }
 
     modelMessage = {

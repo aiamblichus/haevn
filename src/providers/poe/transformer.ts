@@ -56,7 +56,7 @@ async function createChat(poeData: PoeConversationData, options?: TransformOptio
   const realMessages: Message[] = [];
   for (let i = 0; i < sorted.length; i++) {
     const msg = sorted[i];
-    if (msg.author === "chat_break") {
+    if (isChatBreakMarker(msg)) {
       // Next real message becomes a new root
       newRootIndices.add(realMessages.length);
     } else {
@@ -86,7 +86,7 @@ async function createChat(poeData: PoeConversationData, options?: TransformOptio
   for (let i = 0; i < realMessages.length; i++) {
     const msg = realMessages[i];
     const messageId = messageIds[i];
-    const isAssistant = msg.author !== "human";
+    const isAssistant = !isUserMessage(msg);
 
     // Poe sometimes carries image URLs in markdown text even when `attachments` is empty.
     // We parse those URLs so image-only replies still survive provider schema changes.
@@ -195,7 +195,7 @@ async function createChat(poeData: PoeConversationData, options?: TransformOptio
   // Build message tree
   const { messages: haevnMessages } = buildMessageTree(treeNodes, (node) => {
     const { message, attachmentContent, inlineUrls } = node.data;
-    const isUser = message.author === "human";
+    const isUser = isUserMessage(message);
     const botName = message.bot?.displayName || poeData.botName;
 
     let modelMessage: ModelRequest | ModelResponse;
@@ -286,6 +286,14 @@ function createAssistantMessage(
     }
   }
 
+  // A failed reply has no text, and Poe says why in messageStateText (HVN-112): keep the reason.
+  if (parts.length === 0 && message.messageStateText?.trim()) {
+    parts.push({
+      part_kind: "text",
+      content: message.messageStateText.trim(),
+    } as TextPart);
+  }
+
   // Add media attachments
   for (const content of attachmentContent) {
     if (typeof content === "string") continue;
@@ -328,6 +336,24 @@ function createAssistantMessage(
 // ============================================================================
 
 /**
+ * Whether the user wrote the message. Poe marks a user turn by `authorUser` and a bot turn by
+ * `bot` (HVN-112); there is no `author` field to read.
+ */
+function isUserMessage(msg: Message): boolean {
+  return msg.authorUser != null;
+}
+
+/**
+ * Whether a message is Poe's context-clear marker: a user turn with no text and no attachment.
+ * Poe used to send it as `author: "chat_break"`. It is not a prompt, so it is not rendered as one;
+ * the next real message starts a new root, as the chat_break did, so the break survives in the
+ * tree (HVN-112). Only a user turn counts: an empty bot turn is a failed reply, and it stays.
+ */
+function isChatBreakMarker(msg: Message): boolean {
+  return isUserMessage(msg) && (msg.text || "").trim() === "" && msg.attachments.length === 0;
+}
+
+/**
  * What names a Poe message across syncs: the id Poe gives it, or failing that its numeric id or
  * its code. Only a message with none of the three falls back to its place in the conversation.
  */
@@ -335,7 +361,8 @@ function poeMessageSeed(msg: Message, position: number): string {
   if (msg.id) return `id:${msg.id}`;
   if (typeof msg.messageId === "number") return `mid:${msg.messageId}`;
   if (msg.messageCode) return `code:${msg.messageCode}`;
-  return `pos:${position}:${msg.author}:${msg.creationTime}`;
+  const role = isUserMessage(msg) ? "user" : "bot";
+  return `pos:${position}:${role}:${msg.creationTime}`;
 }
 
 /**

@@ -11,9 +11,21 @@ export interface QwenChatListItem {
 }
 
 export interface QwenChatListResponse {
-  success: boolean;
+  success: true;
   request_id: string;
   data: QwenChatListItem[];
+}
+
+/** What Qwen sends with success=false: no data, and a code saying why (HVN-115). */
+export interface QwenFailureData {
+  code?: string;
+  details?: string;
+}
+
+export interface QwenFailureResponse {
+  success: false;
+  request_id?: string;
+  data?: QwenFailureData | null;
 }
 
 export interface QwenFile {
@@ -68,6 +80,11 @@ export interface QwenContentListItem {
   usage?: Record<string, unknown>;
 }
 
+export interface QwenMessageError {
+  code?: string;
+  details?: string;
+}
+
 export interface QwenMessage {
   id: string;
   role: "user" | "assistant";
@@ -90,7 +107,8 @@ export interface QwenMessage {
   content_list?: QwenContentListItem[] | null;
   is_stop?: boolean;
   edited?: boolean;
-  error?: string | null;
+  /** Set on a failed generation: the content is empty and the error says why (HVN-115). */
+  error?: QwenMessageError | null;
   meta?: Record<string, unknown>;
   extra?: {
     meta?: {
@@ -152,7 +170,7 @@ export interface QwenChatData {
 }
 
 export interface QwenChatResponse {
-  success: boolean;
+  success: true;
   request_id: string;
   data: QwenChatData;
 }
