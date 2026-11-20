@@ -41,6 +41,11 @@ describe("geminiChatIdOf (HVN-116)", () => {
     expect(geminiChatIdOf(sidebarEntry({}))).toBeNull();
   });
 
+  it("does not take a link that is not a chat id, such as /app/settings", () => {
+    expect(geminiChatIdOf(sidebarEntry({}, "/app/settings"))).toBeNull();
+    expect(geminiChatIdOf(sidebarEntry({}, "/app/0123456789abcde"))).toBeNull();
+  });
+
   it("does not read the id from the old jslog attribute", () => {
     const entry = sidebarEntry({
       jslog: 'BardVeMetadataKey:[["c_0123456789abcdef", null, 0]]',
@@ -81,4 +86,48 @@ describe("extractGeminiChatIds lists the sidebar (HVN-116)", () => {
     await vi.runAllTimersAsync();
     await expect(pending).resolves.toEqual(["0123456789abcdef", "fedcba9876543210"]);
   });
+
+  it("throws when the sidebar has entries and none carries an id, rather than returning []", async () => {
+    vi.useFakeTimers();
+    stubSidebar([sidebarEntry({}), sidebarEntry({ jslog: "c_0123456789abcdef" })]);
+    const outcome = extractGeminiChatIds().then(
+      () => null,
+      (err: unknown) => err,
+    );
+    await vi.runAllTimersAsync();
+    const err = await outcome;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/2 chat entries but none carries a chat id/);
+  });
+
+  it("throws when the sidebar's scroll container is missing, rather than returning []", async () => {
+    stubSidebar([], { withScroller: false });
+    const outcome = extractGeminiChatIds().then(
+      () => null,
+      (err: unknown) => err,
+    );
+    const err = await outcome;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/scroll container/);
+  });
 });
+
+/** A fake document: a sidebar holding these entries, with its scroller unless told otherwise. */
+function stubSidebar(entries: Entry[], options: { withScroller?: boolean } = {}): void {
+  const scroller = {
+    tagName: "INFINITE-SCROLLER",
+    className: "",
+    id: "",
+    scrollHeight: 0,
+    scrollTop: 0,
+    querySelector: () => entries[0] ?? null,
+  };
+  vi.stubGlobal("document", {
+    querySelectorAll: (selector: string) => {
+      if (selector === "infinite-scroller") return options.withScroller === false ? [] : [scroller];
+      if (selector === '[data-test-id="conversation"]') return entries;
+      return [];
+    },
+    querySelector: () => null,
+  });
+}

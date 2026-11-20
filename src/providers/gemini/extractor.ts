@@ -830,11 +830,17 @@ async function expandAllThinkingBlocks(): Promise<void> {
   }
 }
 
+/**
+ * Gemini's chat ids are 16 characters once the "c_" prefix of the attribute is removed (HVN-116).
+ * Anything else is not an id: a link to /app/settings is not one.
+ */
+const GEMINI_CHAT_ID = /^[A-Za-z0-9_-]{16}$/;
+
 /** A conversation id without its "c_" prefix, or null when the text is not one. */
 function bareConversationId(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const id = raw.startsWith("c_") ? raw.slice(2) : raw;
-  return /^[A-Za-z0-9_-]{8,}$/.test(id) ? id : null;
+  return GEMINI_CHAT_ID.test(id) ? id : null;
 }
 
 /**
@@ -893,7 +899,10 @@ export async function extractGeminiChatIds(): Promise<string[]> {
 
   if (!scrollContainer) {
     log.error("[Extractor] Could not find the scrollable container.");
-    return [];
+    // Not an empty list: a missing sidebar must not look like an account with no chats (HVN-116).
+    throw new Error(
+      "Gemini's chat list: the sidebar scroll container (infinite-scroller) was not found",
+    );
   }
   log.info(
     "[Extractor] Using scroll container:",
@@ -927,6 +936,8 @@ export async function extractGeminiChatIds(): Promise<string[]> {
   };
 
   const chatIds = new Set<string>();
+  // The most sidebar entries any pass saw: entries with no readable id are an error, not a list.
+  let entriesSeen = 0;
   let lastIdCount = 0;
   let attempts = 0;
   let noNewIdsAttempts = 0;
@@ -940,6 +951,7 @@ export async function extractGeminiChatIds(): Promise<string[]> {
     // Read the chat id of each visible sidebar entry (HVN-116)
     // Use deep selector to find elements in shadow DOMs
     const entries = querySelectorAllDeep('[data-test-id="conversation"]');
+    entriesSeen = Math.max(entriesSeen, entries.length);
     log.debug(`[Extractor] Attempt ${attempts + 1}: Found ${entries.length} conversation entries`);
 
     let newIdsThisIteration = 0;
@@ -1029,6 +1041,13 @@ export async function extractGeminiChatIds(): Promise<string[]> {
     }
     const finalFinalIds = Array.from(chatIds);
     log.info(`[Extractor] After final scan: ${finalFinalIds.length} total IDs`);
+    const sidebarEntries = Math.max(entriesSeen, finalEntries.length);
+    if (finalFinalIds.length === 0 && sidebarEntries > 0) {
+      // Entries are there and none gave an id: the attribute or the link has moved (HVN-116).
+      throw new Error(
+        `Gemini's chat list: the sidebar has ${sidebarEntries} chat entries but none carries a chat id`,
+      );
+    }
     return finalFinalIds;
   }
 
