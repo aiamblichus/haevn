@@ -615,6 +615,9 @@ describe("an ender never cleans up a run that is not the one it was ending", () 
     expect(await getActiveOperation()).toBe("bulkSync");
     expect(closedTabs).toEqual([5]); // its own tab is still closed
     expect(sentActions()).not.toContain("bulkSyncCanceled");
+    // nor does it reset the later run's worker or clear its alarm (Gauge F9)
+    expect(workerRequests).toEqual([]);
+    expect(chrome.alarms.clear).not.toHaveBeenCalled();
   });
 
   it("a Stop's cleanup keeps the lock until the state is wiped, so no run starts inside it", async () => {
@@ -679,6 +682,24 @@ describe("an ender never cleans up a run that is not the one it was ending", () 
     await start;
     expect(await getActiveOperation()).toBe("idle");
     expect(await getBulkSyncState()).toBeNull();
+  });
+
+  it("an early completion has wiped the state before it says complete", async () => {
+    const { SyncService } = await import("../src/services/syncService");
+    vi.mocked(SyncService.batchCheckExistingChats).mockResolvedValueOnce(new Set(["a"]));
+    let stateAtComplete: Promise<unknown> | undefined;
+    vi.mocked(safeSendMessage).mockImplementation((m: { action: string }) => {
+      if (m.action === "bulkSyncComplete") stateAtComplete = getBulkSyncState();
+    });
+    const { start } = await startAndWaitForChatList();
+
+    answerChatList(TAB, ["a"]); // every chat is already synced
+    await start;
+
+    expect(stateAtComplete).toBeDefined();
+    // a page that re-reads the state on "complete" must not find a discovering run
+    expect(await stateAtComplete).toBeNull();
+    expect(closedTabs).toContain(TAB);
   });
 });
 

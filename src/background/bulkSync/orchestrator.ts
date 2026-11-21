@@ -360,6 +360,12 @@ export async function startBulkSync(
 
         log.info(`[Bulk Sync] ${status}`);
 
+        // The tab and the state go before the message: a page that re-reads the state when it hears
+        // "complete" must find no run (Gauge F8, HVN-126). The lock goes last, in the finally below,
+        // so no new run starts while the old state is still there to be wiped.
+        await removeextractionTabBestEffort(extractionTabId, "early completion cleanup");
+        await setBulkSyncState(null);
+
         // Send completion message directly as we haven't started processing
         safeSendMessage({
           action: "bulkSyncComplete",
@@ -371,13 +377,6 @@ export async function startBulkSync(
           successCount: 0,
           totalCount: chatIds.length,
         });
-
-        // Cleanup
-        await removeextractionTabBestEffort(extractionTabId, "early completion cleanup");
-
-        // The state goes first and the lock last (the finally below), so no new run starts while
-        // the old state is still there to be wiped
-        await setBulkSyncState(null);
 
         // Finish indexing since we're done
         try {
