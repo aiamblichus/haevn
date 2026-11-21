@@ -21,10 +21,11 @@ import { log } from "../src/utils/logger";
 
 const TAB = 42;
 
-const { workerRequests } = vi.hoisted(() => ({ workerRequests: [] as { type: string }[] }));
+type WorkerRequest = { type: string; data?: { chatId: string; runId: string } };
+const { workerRequests } = vi.hoisted(() => ({ workerRequests: [] as WorkerRequest[] }));
 
 vi.mock("../src/utils/workerApi", () => ({
-  sendWorkerRequest: vi.fn(async (_worker: string, message: { type: string }) => {
+  sendWorkerRequest: vi.fn(async (_worker: string, message: WorkerRequest) => {
     workerRequests.push(message);
     return undefined;
   }),
@@ -83,10 +84,13 @@ function runningState(chatIds: string[]): BulkSyncState {
   };
 }
 
+// The worker echoes the run id of the request it is answering (HVN-127)
 function report(chatId: string, success = true) {
+  const request = workerRequests.findLast((m) => m.type === "sync" && m.data?.chatId === chatId);
   return handleWorkerMessage({
     type: "progress",
     chatId,
+    runId: request?.data?.runId,
     success,
     savedIds: success ? [chatId] : undefined,
     error: success ? undefined : "boom",
