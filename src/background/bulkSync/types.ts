@@ -13,8 +13,9 @@ export interface BulkSyncProgress {
 }
 
 export interface BulkSyncState {
-  // Add a status field to be more explicit
-  status: "running" | "paused" | "complete" | "error" | "cancelled";
+  // "discovering" is a run that holds the lock and is still looking for its chats: no chat ids yet,
+  // `total` 0 (HVN-126). It is not resumable and is never written by the tick.
+  status: "discovering" | "running" | "paused" | "complete" | "error" | "cancelled";
   provider: string;
   tabId: number; // Legacy, kept for backward compatibility
   extractionTabId: number | null; // Tab used for extraction chat IDs and individual chats
