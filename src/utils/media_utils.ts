@@ -173,7 +173,11 @@ export interface ProcessExternalAssetsOptions {
   timeoutMs?: number;
   /** Overall timeout for the entire operation (fetch + arrayBuffer) in milliseconds (default: 15000) */
   overallTimeoutMs?: number;
-  /** Number of retries for each fetch request (default: 3) */
+  /**
+   * Number of retries for each fetch request (default: 1). Kept low because the download races
+   * overallTimeoutMs and cannot cancel fetchWithTimeout: a 429/503 backoff would outlive the race
+   * and keep hitting a throttled host (HVN-120).
+   */
   retries?: number;
   /** Delay between retries in milliseconds (default: 3000) */
   retryDelayMs?: number;
@@ -340,7 +344,7 @@ export async function processExternalAssets(
   const {
     timeoutMs = 10000,
     overallTimeoutMs = 15000,
-    retries = 3,
+    retries = 1,
     retryDelayMs = 3000,
     concurrency = 3,
     logPrefix = "[Media Utils]",

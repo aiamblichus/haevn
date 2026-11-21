@@ -299,20 +299,27 @@ function handleFetchConversation(
   message: { chatId?: string },
   sendResponse: (response: ContentScriptResponse) => void,
 ): void {
+  const { chatId } = message;
   (async () => {
     try {
-      const { chatId } = message;
       if (!chatId) {
         throw new Error("chatId is required");
       }
       const data = await fetchChatDataForPlatform(platformName, chatId);
       sendResponse({ success: true, data });
     } catch (err: unknown) {
-      log.error(`[HAEVN][Content] fetch${platformName}Conversation error:`, err);
-      sendResponse({
-        success: false,
-        error: (err as Error)?.message || "Failed to fetch conversation",
-      });
+      // The reason lists each attempt (fetchWithTimeout); the context says which chat, from which tab
+      const reason = (err as Error)?.message || "Failed to fetch conversation";
+      log.error(
+        `[HAEVN][Content] fetch${platformName}Conversation error: ${reason}`,
+        {
+          platform: platformName,
+          chatId,
+          visibilityState: document.visibilityState,
+        },
+        err,
+      );
+      sendResponse({ success: false, error: reason });
     }
   })();
 }

@@ -725,6 +725,23 @@ describe("classifyFailure and isSignInUrl", () => {
     expect(classifyFailure("Failed to fetch chat list: 500 Internal Server Error")).toBe("other");
     expect(classifyFailure("Cannot read properties of undefined")).toBe("other");
   });
+
+  it("judges a fetchWithTimeout failure by its own words, not by its attempt summary", () => {
+    const summary = (tries: string) =>
+      `[GET https://chatgpt.com/backend-api/conversation/abc: 4 attempts: ${tries}; total 9012ms; online]`;
+    expect(classifyFailure(`Failed to fetch ${summary("TypeError 2ms, TypeError 1ms")}`)).toBe(
+      "unreachable",
+    );
+    expect(classifyFailure(`Failed to fetch ${summary("HTTP 401 3ms, TypeError 1ms")}`)).toBe(
+      "unreachable",
+    );
+    expect(
+      classifyFailure(`Fetch timeout after 100ms ${summary("timed out 100ms, timed out 100ms")}`),
+    ).toBe("other");
+    expect(classifyFailure(`Failed to fetch ChatGPT conversation: 401 Unauthorized`)).toBe(
+      "not-signed-in",
+    );
+  });
 });
 
 describe("normalizeHealthOptions", () => {
