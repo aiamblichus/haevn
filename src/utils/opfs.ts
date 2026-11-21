@@ -125,7 +125,7 @@ export async function deleteFileFromOpfs(path: string): Promise<void> {
  *
  * @param path - Full file path (e.g., "media/chat123/msg456_0.jpg")
  * @param data - Data to write (Blob, ArrayBuffer, or Uint8Array)
- * @param useSyncHandle - Force sync handle usage (only in Workers, will throw in main thread)
+ * @param useSyncHandle - Try the sync handle even where the handle does not offer it (tests)
  * @returns The file path that was written
  */
 export async function writeFile(
@@ -155,15 +155,14 @@ export async function writeFile(
     buffer = uint8Array.buffer.slice(0);
   }
 
-  // Try sync handle (Web Worker context only)
-  // Check if we're in a Web Worker by checking if self is defined and not a Window
-  const isWorkerContext =
-    typeof self !== "undefined" &&
-    typeof Window === "undefined" &&
-    !("window" in self) &&
-    "importScripts" in self;
+  // Try the sync handle where it exists: dedicated Web Workers only. The extension's service worker
+  // looks like a worker (it has importScripts) but has no createSyncAccessHandle, so ask the handle
+  // itself rather than guess the context; asking and failing logged a warning per file.
+  const hasSyncHandle =
+    typeof (fileHandle as { createSyncAccessHandle?: unknown }).createSyncAccessHandle ===
+    "function";
 
-  if (useSyncHandle || isWorkerContext) {
+  if (hasSyncHandle || useSyncHandle) {
     let accessHandle: FileSystemSyncAccessHandle | undefined;
     try {
       accessHandle = await fileHandle.createSyncAccessHandle();

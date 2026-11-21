@@ -51,8 +51,28 @@ describe("writeFile with a sync access handle", () => {
   });
 });
 
+describe("choosing the sync handle", () => {
+  it("does not try it where the handle has none (the service worker), and says nothing", async () => {
+    // the service worker looks like a worker: it has importScripts
+    vi.stubGlobal("self", { importScripts: () => {} });
+    fs.failures.noSyncHandle = true;
+    await writeFile("media/c/a.png", bytes);
+    expect(fs.counts.syncOpened).toBe(0);
+    expect(fs.counts.writableClosed).toBe(1);
+    expect(fs.size("media/c/a.png")).toBe(5);
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("uses it wherever the handle offers it (a dedicated worker)", async () => {
+    await writeFile("media/c/a.png", bytes);
+    expect(fs.counts).toMatchObject({ syncOpened: 1, syncClosed: 1, writableClosed: 0 });
+    expect(fs.size("media/c/a.png")).toBe(5);
+  });
+});
+
 describe("writeFile on the async path", () => {
   it("aborts the writable when the write fails, and says why", async () => {
+    fs.failures.noSyncHandle = true;
     fs.failures.writableWriteThrows = true;
     await expect(writeFile("media/c/a.png", bytes)).rejects.toThrow();
     expect(fs.counts.writableAborted).toBe(1);
