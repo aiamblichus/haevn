@@ -570,7 +570,8 @@ export interface ChatList {
  */
 
 /**
- * Entry in the assets map for downloaded ChatGPT assets (images, etc.)
+ * Entry in the assets map for ChatGPT assets that arrive as bytes: the ZIP importer reads them out
+ * of the backup. A web sync does not use it (see ChatGPTAssetRef).
  */
 export interface ChatGPTAssetsMapEntry {
   dataBase64: string;
@@ -579,15 +580,35 @@ export interface ChatGPTAssetsMapEntry {
 }
 
 /**
- * Map of asset pointers to their downloaded binary data.
+ * Map of asset pointers to their binary data.
  */
 export type ChatGPTAssetsMap = Record<string, ChatGPTAssetsMapEntry>;
 
 /**
+ * Where to download one asset of a web sync: the signed URL stage 1 of the download returned
+ * (`/backend-api/files/download/<id>`). A reference is a few hundred bytes, so a chat with any
+ * number of images fits one message from the content script; the transformer downloads each asset
+ * on its own (HVN-123).
+ */
+export interface ChatGPTAssetRef {
+  downloadUrl: string;
+  /** The type ChatGPT declared, or guessed from the file name; a hint, the download's own type wins. */
+  contentType?: string;
+  filename?: string;
+}
+
+/**
+ * Map of asset pointers to where their bytes can be downloaded.
+ */
+export type ChatGPTAssetRefs = Record<string, ChatGPTAssetRef>;
+
+/**
  * Raw extraction result from ChatGPT extractor.
- * Contains the conversation data and any downloaded assets.
+ * Contains the conversation data and the assets, as bytes (`assets`, from a ZIP import) or as
+ * download references (`assetRefs`, from a web sync).
  */
 export interface ChatGPTRawExtraction {
   conversation: OpenAIConversation;
   assets: ChatGPTAssetsMap;
+  assetRefs?: ChatGPTAssetRefs;
 }

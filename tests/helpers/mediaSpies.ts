@@ -8,6 +8,7 @@ import * as network from "../../src/utils/network_utils";
 import { FakeOpfs } from "./fakeOpfs";
 import {
   aistudioRaw,
+  chatgptRaw,
   claudeRaw,
   geminiRaw,
   grokRaw,
@@ -30,6 +31,10 @@ export const WITH_MEDIA: Record<string, () => unknown> = {
           preview_url: "/api/files/f1/preview",
         },
       ],
+    }),
+  chatgpt: () =>
+    chatgptRaw(sentinels("m-chatgpt"), {
+      image: { pointer: "file-service://file-a", url: IMAGE },
     }),
   gemini: () =>
     geminiRaw(sentinels("m-gemini"), { files: [{ url: IMAGE, type: "image/png", name: "a.png" }] }),

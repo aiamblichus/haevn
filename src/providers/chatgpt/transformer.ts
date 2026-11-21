@@ -18,8 +18,11 @@ import type {
   UserPromptPart,
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
+import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
+import type { TransformOptions } from "../interfaces";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type {
+  ChatGPTAssetRef,
   ChatGPTAssetsMap,
   ChatGPTRawExtraction,
   OpenAIConversationNode,
@@ -89,9 +92,16 @@ function _stringifyContentAsText(msg: OpenAIMessage): string {
   }
 }
 
+/**
+ * What a web sync downloaded for one message: its image pointers, mapped to the stored file (or the
+ * URL fallback `processExternalAssets` returns for one that would not download).
+ */
+type DownloadedAssets = ReadonlyMap<string, UserContent>;
+
 function messagePartsFromContent(
   content: OpenAIMessageContent,
   assets: ChatGPTAssetsMap,
+  downloaded?: DownloadedAssets,
 ): {
   userParts?: UserContent | UserContent[];
   responseParts?: ModelResponsePart[];
@@ -133,6 +143,18 @@ function messagePartsFromContent(
             part_kind: "image-response",
             content: bin,
           } as ImageResponsePart);
+        } else if (downloaded?.has(p.asset_pointer)) {
+          const stored = downloaded.get(p.asset_pointer) as UserContent;
+          userContent.push(stored);
+          if (
+            typeof stored !== "string" &&
+            (stored.kind === "binary" || stored.kind === "image-url")
+          ) {
+            responseParts.push({
+              part_kind: "image-response",
+              content: stored,
+            } as ImageResponsePart);
+          }
         } else {
           // Asset not found - log warning and add a text placeholder
           log.warn(`[Transformer][ChatGPT] Missing asset for pointer: ${p.asset_pointer}`);
@@ -299,7 +321,10 @@ function messagePartsFromContent(
 
 // Use ChatGPTRawExtraction from model.ts instead of local interface
 
-export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
+export function transformOpenAIToHaevn(
+  raw: ChatGPTRawExtraction,
+  downloaded?: ReadonlyMap<string, DownloadedAssets>,
+): Chat {
   const { conversation, assets } = raw;
   const nodes: Record<string, OpenAIConversationNode> = conversation.mapping || {};
 
@@ -320,12 +345,7 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
       data: {
         node,
         msg,
-        conversationId:
-          ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
-            ? conversation.conversation_id
-            : null) ||
-          ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
-          node.id,
+        conversationId: conversationIdOf(raw) || node.id,
       },
     });
   }
@@ -392,7 +412,7 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
       } else {
         // Check if this tool message contains images (e.g. DALL-E generation)
         const { responseParts } = msg.content
-          ? messagePartsFromContent(msg.content, assets)
+          ? messagePartsFromContent(msg.content, assets, downloaded?.get(treeNode.id))
           : { responseParts: [] };
 
         const hasImages = responseParts?.some((p) => p.part_kind === "image-response");
@@ -422,7 +442,7 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
       }
     } else if (role === "user") {
       const { userParts } = msg.content
-        ? messagePartsFromContent(msg.content, assets)
+        ? messagePartsFromContent(msg.content, assets, downloaded?.get(treeNode.id))
         : { userParts: "" };
 
       let finalUserContent: string | UserContent[] = "";
@@ -482,7 +502,7 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
         } as ModelResponse;
       } else {
         const { responseParts } = msg.content
-          ? messagePartsFromContent(msg.content, assets)
+          ? messagePartsFromContent(msg.content, assets, downloaded?.get(treeNode.id))
           : { responseParts: [] };
         const parts = responseParts || [];
         // If metadata shows a tool invocation, prepend a tool-call part
@@ -536,12 +556,7 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
     };
   });
 
-  const convId =
-    ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
-      ? conversation.conversation_id
-      : null) ||
-    ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
-    "";
+  const convId = conversationIdOf(raw);
   const chat: Chat = {
     id: convId,
     source: "chatgpt",
@@ -563,4 +578,103 @@ export function transformOpenAIToHaevn(raw: ChatGPTRawExtraction): Chat {
   };
 
   return chat;
+}
+
+/** The id the chat is saved under, and the folder of its media in OPFS. */
+function conversationIdOf({ conversation }: ChatGPTRawExtraction): string {
+  return (
+    ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
+      ? conversation.conversation_id
+      : null) ||
+    ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
+    ""
+  );
+}
+
+/** A type hint for the download: ChatGPT's own when it is an image type, else a generic image. */
+function imageTypeOf(ref: ChatGPTAssetRef): string {
+  return ref.contentType?.toLowerCase().startsWith("image/") ? ref.contentType : "image/png";
+}
+
+/** How many messages download at once (each downloads its own images one by one). */
+const MESSAGE_DOWNLOADS = 3;
+
+/**
+ * Download the images of a web sync, one asset at a time, into OPFS (HVN-123). The extraction holds
+ * only references; fetching each here keeps every message between contexts to one asset, however
+ * many the chat has. `tabId` hands the fetch to the content script of the ChatGPT tab (page
+ * origin: the signed host answers the page's CORS), as for the other providers.
+ *
+ * Only the messages `messagePartsFromContent` renders images for are downloaded (`multimodal_text`),
+ * and a pointer without a reference stays out of the result, so the transform shows it as not found.
+ */
+async function downloadChatGPTAssets(
+  raw: ChatGPTRawExtraction,
+  tabId: number | undefined,
+  options: TransformOptions | undefined,
+): Promise<Map<string, DownloadedAssets>> {
+  const refs = raw.assetRefs ?? {};
+  const chatId = conversationIdOf(raw);
+
+  // `position` is the pointer's place among ALL the message's image pointers, resolved or not: it
+  // names the file in OPFS, so a pointer whose stage 1 failed cannot move the others into its slot.
+  const jobs: { nodeId: string; assets: { pointer: string; position: number }[] }[] = [];
+  for (const node of Object.values(raw.conversation.mapping || {})) {
+    const content = node.message?.content;
+    if (!content || !("content_type" in content) || content.content_type !== "multimodal_text") {
+      continue;
+    }
+    const pointers: string[] = [];
+    for (const part of content.parts) {
+      if (typeof part === "string" || part?.content_type !== "image_asset_pointer") continue;
+      if (!pointers.includes(part.asset_pointer)) pointers.push(part.asset_pointer);
+    }
+    const assets = pointers
+      .map((pointer, position) => ({ pointer, position }))
+      .filter(({ pointer }) => refs[pointer]);
+    if (assets.length > 0) jobs.push({ nodeId: node.id, assets });
+  }
+
+  const downloaded = new Map<string, DownloadedAssets>();
+  let next = 0;
+  async function worker() {
+    while (next < jobs.length) {
+      const { nodeId, assets: wanted } = jobs[next++];
+      const assets: UrlAsset[] = wanted.map(({ pointer, position }) => ({
+        url: refs[pointer].downloadUrl,
+        type: imageTypeOf(refs[pointer]),
+        name: refs[pointer].filename,
+        index: position,
+      }));
+      const content = await processExternalAssets(assets, {
+        logPrefix: "[ChatGPT Transformer]",
+        chatId,
+        messageId: nodeId,
+        concurrency: 1,
+        timeoutMs: 30000,
+        overallTimeoutMs: 40000,
+        // Today's fetch of the signed URL, unchanged: the page's default (cookies only to its own
+        // origin). "include" would make a cross-origin signed host fail the CORS check.
+        credentials: "same-origin",
+        tabId,
+        media: options?.media,
+      });
+      downloaded.set(nodeId, new Map(wanted.map(({ pointer }, i) => [pointer, content[i]])));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(MESSAGE_DOWNLOADS, jobs.length) }, worker));
+  return downloaded;
+}
+
+/**
+ * Convert a ChatGPT extraction to HAEVN format, downloading the images it references. The ZIP
+ * importer, whose images arrive as bytes, calls `transformOpenAIToHaevn` directly.
+ */
+export async function transformChatGPTExtractionToHaevn(
+  raw: ChatGPTRawExtraction,
+  tabId?: number,
+  options?: TransformOptions,
+): Promise<Chat> {
+  const downloaded = await downloadChatGPTAssets(raw, tabId, options);
+  return transformOpenAIToHaevn(raw, downloaded);
 }

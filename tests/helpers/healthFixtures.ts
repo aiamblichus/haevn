@@ -244,7 +244,11 @@ export function grokRaw(s: Sentinels, extra: { attachments?: unknown[] } = {}) {
   };
 }
 
-export function chatgptRaw(s: Sentinels) {
+/**
+ * `image` puts one image in the user's message, as a web sync extracts it: a pointer in the
+ * conversation and a reference to download it from (HVN-123).
+ */
+export function chatgptRaw(s: Sentinels, extra: { image?: { pointer: string; url: string } } = {}) {
   const seconds = T0 / 1000;
   const message = (id: string, role: string, text: string, at: number) => ({
     id,
@@ -271,7 +275,24 @@ export function chatgptRaw(s: Sentinels) {
         root: { id: "root", message: null, parent: null, children: ["n1"] },
         n1: {
           id: "n1",
-          message: message("n1", "user", s.user, 1),
+          message: extra.image
+            ? {
+                ...message("n1", "user", s.user, 1),
+                content: {
+                  content_type: "multimodal_text",
+                  parts: [
+                    {
+                      content_type: "image_asset_pointer",
+                      asset_pointer: extra.image.pointer,
+                      size_bytes: 10,
+                      width: 1,
+                      height: 1,
+                    },
+                    s.user,
+                  ],
+                },
+              }
+            : message("n1", "user", s.user, 1),
           parent: "root",
           children: ["n2"],
         },
@@ -290,6 +311,17 @@ export function chatgptRaw(s: Sentinels) {
       blocked_urls: [],
     },
     assets: {},
+    ...(extra.image
+      ? {
+          assetRefs: {
+            [extra.image.pointer]: {
+              downloadUrl: extra.image.url,
+              contentType: "image/png",
+              filename: "a.png",
+            },
+          },
+        }
+      : {}),
   };
 }
 

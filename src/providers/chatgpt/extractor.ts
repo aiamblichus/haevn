@@ -1,11 +1,11 @@
-import { arrayBufferToBase64 } from "../../utils/binary_utils";
 import { log } from "../../utils/logger";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import { RateLimiter } from "../../utils/rateLimit";
 import { detectPlatform } from "../shared/platformDetector";
 import { generateFallbackId } from "../shared_utils";
 import type {
-  ChatGPTAssetsMap,
+  ChatGPTAssetRef,
+  ChatGPTAssetRefs,
   ChatGPTRawExtraction,
   ChatList,
   OpenAIConversation,
@@ -176,16 +176,14 @@ export async function fetchConversation(
   return (await resp.json()) as OpenAIConversation;
 }
 
-// Asset downloading
-async function downloadAsset(
+// Asset download, stage 1: ask for the signed URL of one asset. Stage 2 (the bytes) is the
+// transformer's, one asset at a time, so no message from the content script carries image bytes
+// (HVN-123). Stage 1 needs the bearer token, which only this side has.
+async function resolveAssetRef(
   accessToken: string,
   assetPointer: string,
   conversationId: string,
-): Promise<{
-  dataBase64: string;
-  contentType: string;
-  filename?: string;
-} | null> {
+): Promise<ChatGPTAssetRef | null> {
   try {
     const base = getBaseUrl();
     let url: string | null = null;
@@ -220,46 +218,18 @@ async function downloadAsset(
       return null;
     }
     // The API returns JSON with a temporary download_url
-    let downloadUrl: string | null = null;
-    let fileName: string | undefined;
-    let declaredMime: string | undefined;
-    try {
-      const meta = await resp.json();
-      downloadUrl = meta?.download_url || null;
-      fileName = meta?.file_name || undefined;
-      declaredMime = meta?.mime_type || undefined;
-    } catch (_e) {
-      log.warn("[ChatGPT] Asset meta JSON parse failed; falling back to raw body");
-    }
-
+    const meta = await resp.json().catch(() => null);
+    const downloadUrl = typeof meta?.download_url === "string" ? meta.download_url : null;
     if (!downloadUrl) {
-      // Fallback: treat the first response as the file (legacy behavior)
-      const contentType =
-        resp.headers.get("content-type") || declaredMime || "application/octet-stream";
-      const buf = await resp.arrayBuffer();
-      return {
-        dataBase64: arrayBufferToBase64(buf),
-        contentType,
-        filename: fileName,
-      };
-    }
-
-    const second = await chatgptRateLimiter.schedule(() =>
-      fetchWithTimeout(downloadUrl, { timeoutMs: 30000 }),
-    );
-    if (!second.ok) {
-      log.warn("[ChatGPT] Second-stage asset download failed", second.status, second.statusText);
+      log.warn("[ChatGPT] Asset answer has no download_url", assetPointer);
       return null;
     }
-    const contentType =
-      second.headers.get("content-type") ||
-      declaredMime ||
-      (fileName ? guessMimeFromFilename(fileName) : "application/octet-stream");
-    const buf = await second.arrayBuffer();
+    const filename: string | undefined = meta?.file_name || undefined;
+    const declaredMime: string | undefined = meta?.mime_type || undefined;
     return {
-      dataBase64: arrayBufferToBase64(buf),
-      contentType,
-      filename: fileName,
+      downloadUrl,
+      contentType: declaredMime || (filename ? guessMimeFromFilename(filename) : undefined),
+      filename,
     };
   } catch (e) {
     log.warn("[ChatGPT] Asset download error for", assetPointer, e);
@@ -290,6 +260,8 @@ function collectAssetPointers(conv: OpenAIConversation): {
   Object.values(conv.mapping || {}).forEach((node: OpenAIConversationNode) => {
     const msg = node.message;
     if (!msg || !msg.content) return;
+    // Only a multimodal message shows its images (see the transformer)
+    if ((msg.content as { content_type?: string }).content_type !== "multimodal_text") return;
     const content = msg.content as { parts?: unknown[] } | undefined;
     const parts = (content?.parts || []) as Array<{
       content_type?: string;
@@ -318,7 +290,7 @@ export async function fetchChatGPTConversation(
   const conversation = await fetchConversation(accessToken, conversationId);
 
   const { pointers } = collectAssetPointers(conversation);
-  const assets: ChatGPTAssetsMap = {};
+  const assetRefs: ChatGPTAssetRefs = {};
   // Use the correct conversation id for asset download (conversation_id fallback)
   const convIdForAssets =
     ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
@@ -327,24 +299,25 @@ export async function fetchChatGPTConversation(
     ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
     conversationId;
 
-  // Download all assets in parallel (much faster than sequential downloads)
+  // Resolve all assets in parallel (much faster than sequentially). A pointer that cannot be
+  // resolved is left out, and the transformer shows it as not found.
   if (pointers.length > 0) {
-    log.info(`[ChatGPT] Downloading ${pointers.length} assets in parallel`);
-    const downloadPromises = pointers.map(async (ptr) => {
-      const downloaded = await downloadAsset(accessToken, ptr, convIdForAssets);
-      return { ptr, downloaded };
-    });
-
-    const results = await Promise.all(downloadPromises);
-    results.forEach(({ ptr, downloaded }) => {
-      if (downloaded) assets[ptr] = downloaded;
-    });
+    log.info(`[ChatGPT] Resolving ${pointers.length} assets in parallel`);
+    const results = await Promise.all(
+      pointers.map(async (ptr) => ({
+        ptr,
+        ref: await resolveAssetRef(accessToken, ptr, convIdForAssets),
+      })),
+    );
+    for (const { ptr, ref } of results) {
+      if (ref) assetRefs[ptr] = ref;
+    }
   }
 
-  return { conversation, assets };
+  return { conversation, assets: {}, assetRefs };
 }
 
-// Main extraction: fetch conversation and download assets
+// Main extraction: fetch conversation and resolve where its assets can be downloaded
 import type { ExportOptions } from "../interfaces";
 
 export async function extractChatGPTConversationData(
