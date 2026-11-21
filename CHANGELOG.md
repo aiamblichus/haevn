@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- **Logs**: the Capture level in the logs viewer now takes effect. Before, it was saved but ignored, so DEBUG lines filled the 1,000-entry log and pushed out the warnings and errors you meant to keep; now entries below the level are not recorded, and each extension context stops producing them.
 - **AI metadata and embeddings**: a chat whose generation failed three times was never tried again. "Retry failed" beside the unprocessable count (metadata and Starmap) puts only those chats back in the queue, and changing the model, the URL or the extra parameters retries them too. The reply limit is 5,000 tokens (was 2,000), a leading `<think>` block in a reply is ignored, and "Extra request parameters (JSON)" passes your host's own switches with each request (for LM Studio, `{"reasoning_effort": "none"}` turns a model's thinking off).
 - **Poe**: syncing saved every turn as the model's, because Poe no longer sends the field that names the author; your turns are yours again, a cleared context still starts a new section, and a failed reply keeps Poe's reason. Chats synced before this release were not affected.
 - **Claude**: newer chats hide their thinking and send short summaries; HAEVN stored an empty thinking block and dropped the summaries. It now keeps the summaries. Re-sync (forced) chats synced since about October 2026 to recover them.
