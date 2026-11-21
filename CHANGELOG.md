@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- **ChatGPT**: a chat with many large images syncs. Before, the ChatGPT tab sent the conversation and every image in one message, and a chat over Chrome's 64 MiB message limit was not saved at all. Images are now downloaded one at a time and stored as files like the other providers' (chats synced before keep their images as they are until re-synced). A bulk sync also keeps its ChatGPT tab open until the last chat's images are downloaded.
 - **Sync**: a request that fails with 404 or another client error (a ChatGPT image the site no longer has, for example) is no longer retried three times; a missing file costs one request instead of about 12 s. Timeouts, network errors, 408, 429 and server errors still retry.
 - **Bulk sync**: a chat with a lot of images or files (over 64 MB with its media) no longer loses its after-save step. It was always saved and indexed, but the extension dropped the message that marks it synced, counts it and updates the open archive page, and logged `BLOCKED oversized worker message`.
 - **Sync**: a failed request now says which one it was and how each attempt ended (`Failed to fetch [GET https://chatgpt.com/backend-api/conversation/…: 4 attempts: TypeError 2ms, …; total 9012ms; online]`), and the failed chat's ID is in the content tab's log, so a bulk-sync failure can be traced to its chat and its cause. After a 429 or 503 the extension backs off (3, 6, 12 s, or the server's `Retry-After`, capped at 60 s) instead of retrying every 3 s.
