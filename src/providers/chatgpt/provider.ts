@@ -10,7 +10,7 @@ import {
 } from "./extractor";
 import { setupChatGPTListeners } from "./listeners";
 import type { ChatGPTRawExtraction } from "./model";
-import { transformOpenAIToHaevn } from "./transformer";
+import { transformChatGPTExtractionToHaevn } from "./transformer";
 
 // Extractor implementation
 const extractor: Extractor<ChatGPTRawExtraction> = {
@@ -44,8 +44,8 @@ const extractor: Extractor<ChatGPTRawExtraction> = {
 
 // Transformer implementation
 const transformer: Transformer<ChatGPTRawExtraction> = {
-  transform: async (raw: ChatGPTRawExtraction) => {
-    const chat = transformOpenAIToHaevn(raw);
+  transform: async (raw: ChatGPTRawExtraction, tabId, options) => {
+    const chat = await transformChatGPTExtractionToHaevn(raw, tabId, options);
     return [chat as Chat];
   },
 
