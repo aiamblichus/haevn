@@ -21,6 +21,7 @@
 
 // Core exports
 export { configureLogger, getLogLevel, log, setLogLevel } from "./core";
+export { followStoredLogLevel, LOGGER_CONFIG_STORAGE_KEY } from "./levelSync";
 // Transport exports (for configuration)
 export { DirectTransport, MessageTransport } from "./transports";
 export type { LogEntry, LoggerConfig, LogTransport } from "./types";

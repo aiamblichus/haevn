@@ -13,6 +13,7 @@
 import { loggerService } from "../services/loggerService";
 import { ChromeStorageAdapter, setStorageAdapter } from "../storage";
 import { configureLogger, DirectTransport, type LogEntry } from "../utils/logger";
+import { followStoredLogLevel } from "../utils/logger/index";
 
 // 1. Initialize storage adapter FIRST
 setStorageAdapter(new ChromeStorageAdapter());
@@ -24,6 +25,7 @@ const transport = new DirectTransport((entry: LogEntry) => {
 });
 
 configureLogger({ transport });
+followStoredLogLevel();
 
 // 3. Initialize LoggerService (async, but we fire-and-forget)
 //    This loads persisted logs and config from storage

@@ -16,7 +16,13 @@
 
 /// <reference lib="webworker" />
 
-import { configureLogger, log as coreLog, LogLevel, MessageTransport } from "./logger/index";
+import {
+  configureLogger,
+  log as coreLog,
+  followStoredLogLevel,
+  LogLevel,
+  MessageTransport,
+} from "./logger/index";
 
 // Auto-configure MessageTransport for non-background contexts
 // This runs when the module is first imported
@@ -30,6 +36,8 @@ function autoConfigureTransport(): void {
   configureLogger({
     transport: new MessageTransport({ echoToConsole: true }),
   });
+  // Follow the Capture level so filtered entries are never sent (HVN-119)
+  followStoredLogLevel();
 }
 
 // Run auto-configuration
