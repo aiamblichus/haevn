@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- **Sync**: a request that fails with 404 or another client error (a ChatGPT image the site no longer has, for example) is no longer retried three times; a missing file costs one request instead of about 12 s. Timeouts, network errors, 408, 429 and server errors still retry.
 - **Bulk sync**: a chat with a lot of images or files (over 64 MB with its media) no longer loses its after-save step. It was always saved and indexed, but the extension dropped the message that marks it synced, counts it and updates the open archive page, and logged `BLOCKED oversized worker message`.
 - **Sync**: a failed request now says which one it was and how each attempt ended (`Failed to fetch [GET https://chatgpt.com/backend-api/conversation/…: 4 attempts: TypeError 2ms, …; total 9012ms; online]`), and the failed chat's ID is in the content tab's log, so a bulk-sync failure can be traced to its chat and its cause. After a 429 or 503 the extension backs off (3, 6, 12 s, or the server's `Retry-After`, capped at 60 s) instead of retrying every 3 s.
 - **Logs**: the Capture level in the logs viewer now takes effect. Before, it was saved but ignored, so DEBUG lines filled the 1,000-entry log and pushed out the warnings and errors you meant to keep; now entries below the level are not recorded, and each extension context stops producing them.
