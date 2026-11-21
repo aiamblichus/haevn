@@ -22,6 +22,7 @@ import {
 } from "../src/background/state";
 import { safeSendMessage } from "../src/background/utils/messageUtils";
 import { createExtractionTab } from "../src/background/utils/tabUtils";
+import { getStorageAdapter } from "../src/storage";
 
 // HVN-126: a bulk sync is visible, and can be stopped, from the moment it holds the lock. It used
 // to write its state only once the chat list was known, so a Stop during the wait found nothing to
@@ -31,16 +32,23 @@ import { createExtractionTab } from "../src/background/utils/tabUtils";
 const TAB = 42;
 const LIST_ERROR = "The message port closed before a response was received.";
 
-const { workerRequests } = vi.hoisted(() => {
+const { workerRequests, gate } = vi.hoisted(() => {
   // bulkSync.ts registers its worker listener when it loads, which syncHandlers does
   const runtime = (globalThis as unknown as { chrome: { runtime: object } }).chrome.runtime;
   Object.assign(runtime, { onMessage: { addListener: () => {} } });
-  return { workerRequests: [] as { type: string }[] };
+  // A test holds a step open by setting its gate to a promise it resolves later
+  const gate = {
+    fetch: null as Promise<unknown> | null,
+    reset: null as Promise<unknown> | null,
+    indexing: null as Promise<unknown> | null,
+  };
+  return { workerRequests: [] as { type: string }[], gate };
 });
 
 vi.mock("../src/utils/workerApi", () => ({
   sendWorkerRequest: vi.fn(async (_worker: string, message: { type: string }) => {
     workerRequests.push(message);
+    if (message.type === "reset") await gate.reset;
     return undefined;
   }),
 }));
@@ -50,7 +58,12 @@ vi.mock("../src/background/utils/offscreenUtils", () => ({
 vi.mock("../src/background/utils/messageUtils", () => ({ safeSendMessage: vi.fn() }));
 vi.mock("../src/background/utils/tabUtils", () => ({ createExtractionTab: vi.fn() }));
 vi.mock("../src/background/bulkSync/fetchStrategies", () => ({
-  getStrategy: () => ({ fetch: async () => ({ success: true, data: { conversation: {} } }) }),
+  getStrategy: () => ({
+    fetch: async () => {
+      await gate.fetch;
+      return { success: true, data: { conversation: {} } };
+    },
+  }),
 }));
 vi.mock("../src/providers/provider", () => ({
   getProvider: (name: string) =>
@@ -65,7 +78,9 @@ vi.mock("../src/providers/provider", () => ({
 }));
 vi.mock("../src/services/syncService", () => ({
   SyncService: {
-    finishBulkSyncIndexing: vi.fn(async () => undefined),
+    finishBulkSyncIndexing: vi.fn(async () => {
+      await gate.indexing;
+    }),
     startBulkSyncIndexing: vi.fn(async () => undefined),
     addOrUpdateChatInIndex: vi.fn(async () => undefined),
     batchCheckExistingChats: vi.fn(async () => new Set<string>()),
@@ -113,6 +128,8 @@ async function startAndWaitForChatList(provider = "chatgpt", tabId = TAB) {
 
 beforeEach(async () => {
   workerRequests.length = 0;
+  vi.mocked(createExtractionTab).mockReset();
+  gate.fetch = gate.reset = gate.indexing = null;
   chatListWaits = new Map();
   closedTabs = [];
   vi.stubGlobal("chrome", {
@@ -139,6 +156,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   stopWaitingForWorker();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
@@ -253,11 +271,15 @@ describe("Stop while the sync is looking for its chats", () => {
     });
     expect(sentActions()).not.toContain("bulkSyncFailed");
     expect(sentActions()).not.toContain("bulkSyncStarted");
-    // nothing was synced: no bulk indexing began, no alarm, no chat reached the worker
+    // nothing was synced, and nothing was set up that needs undoing: no bulk indexing began, no
+    // alarm, no worker was asked for anything and the offscreen document was not woken
     const { SyncService } = await import("../src/services/syncService");
     expect(SyncService.startBulkSyncIndexing).not.toHaveBeenCalled();
+    expect(SyncService.finishBulkSyncIndexing).not.toHaveBeenCalled();
     expect(chrome.alarms.create).not.toHaveBeenCalled();
-    expect(workerRequests.filter((m) => m.type === "sync")).toEqual([]);
+    expect(workerRequests).toEqual([]);
+    const { ensureOffscreenDocument } = await import("../src/background/utils/offscreenUtils");
+    expect(ensureOffscreenDocument).not.toHaveBeenCalled();
   });
 
   it("is not mistaken for a failure of the page: the tab's closing reaches the start as an error", async () => {
@@ -332,7 +354,7 @@ describe("Stop while the sync is looking for its chats", () => {
 });
 
 describe("a force reset while the sync is looking for its chats", () => {
-  it("is not revived by the start, and the next run keeps its lock", async () => {
+  it("is not revived by the start, which closes its own tab and sends nothing", async () => {
     const { start } = await startAndWaitForChatList();
 
     // what handleForceResetBulkSync does: wipe the state and release the lock
@@ -347,6 +369,26 @@ describe("a force reset while the sync is looking for its chats", () => {
     expect(sentActions()).not.toContain("bulkSyncStarted");
     expect(closedTabs).toEqual([TAB]);
     expect(chrome.alarms.create).not.toHaveBeenCalled();
+  });
+
+  it("leaves the run that follows it, its state and its lock, alone", async () => {
+    const { start: first } = await startAndWaitForChatList("chatgpt", TAB);
+    await setBulkSyncState(null);
+    await setActiveOperation("idle");
+
+    const { start: second } = await startAndWaitForChatList("chatgpt", 77);
+    // the first page answers late, after the second run has taken the lock
+    answerChatList(TAB, ["a", "b"]);
+    await first;
+
+    expect(await getActiveOperation()).toBe("bulkSync");
+    expect((await getBulkSyncState())?.status).toBe("discovering");
+    expect(closedTabs).toEqual([TAB]);
+    expect(sentActions()).not.toContain("bulkSyncFailed");
+
+    answerChatList(77, ["c"]);
+    await second;
+    expect((await getBulkSyncState())?.status).toBe("running");
   });
 });
 
@@ -489,5 +531,191 @@ describe("the cancelled message", () => {
     expect(sentMessage("bulkSyncCanceled")).toMatchObject({
       status: "Canceled after 1 of 3 chats.",
     });
+  });
+});
+
+// An ender (a Stop's cleanup, an old tick, a start's finally) ends the run it was given. These
+// tests hold one step of an old run open, start the next run meanwhile, and let the old step finish.
+
+/** A promise a test settles later, to hold a step of the code under test open. */
+function hold(): { gate: Promise<void>; release: () => void } {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { gate, release };
+}
+
+/** Presses Sync all while the lock is taken: the second start must be turned away. */
+async function pressSyncAllWhileLockIsHeld(tabId = 77) {
+  vi.mocked(createExtractionTab).mockImplementationOnce(async (_url, options) => {
+    options?.onCreated?.(tabId);
+    return tabId;
+  });
+  const second = startBulkSync(0, "chatgpt", undefined, {});
+  await vi.waitFor(() => expect(sentMessage("bulkSyncFailed")).toBeDefined(), { timeout: 800 });
+  expect(sentMessage("bulkSyncFailed")?.error).toContain("currently in progress");
+  await second;
+}
+
+describe("an ender never cleans up a run that is not the one it was ending", () => {
+  it("an old tick winding down after a Stop leaves the next run's discovery alone", async () => {
+    await setBulkSyncState(
+      discoveringState({
+        status: "running",
+        chatIds: ["a", "b", "c"],
+        total: 3,
+        startedAt: 1,
+        extractionTabId: TAB,
+      }),
+    );
+    await setActiveOperation("bulkSync");
+    const fetch = hold();
+    gate.fetch = fetch.gate;
+    const tick = handleBulkSyncTick();
+    await vi.waitFor(() => expect(chrome.tabs.get).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20)); // the tick is inside its fetch
+
+    await cancelBulkSync(); // Stop on the running sync: cleaned up, lock free
+    const { start: second } = await startAndWaitForChatList("chatgpt", 77); // Sync all again
+    closedTabs.length = 0;
+    vi.mocked(safeSendMessage).mockClear();
+    workerRequests.length = 0;
+
+    fetch.release(); // the old tick's fetch returns
+    await tick;
+
+    const state = await getBulkSyncState();
+    expect(state).toMatchObject({
+      status: "discovering",
+      extractionTabId: 77,
+      currentIndex: 0,
+      processedChatIds: [],
+    });
+    expect(state?.startedAt).not.toBe(1);
+    expect(await getActiveOperation()).toBe("bulkSync");
+    expect(closedTabs).toEqual([]);
+    expect(sentActions()).not.toContain("bulkSyncComplete");
+    // the chat the old tick fetched belongs to nobody: it is not handed to the worker
+    expect(workerRequests.filter((m) => m.type === "sync")).toEqual([]);
+
+    answerChatList(77, ["x"]);
+    await second;
+    expect((await getBulkSyncState())?.status).toBe("running");
+  });
+
+  it("a cleanup that is for an earlier run does not wipe or free the later run", async () => {
+    const earlier = discoveringState({ status: "cancelled", startedAt: 1, extractionTabId: 5 });
+    await setBulkSyncState(discoveringState({ startedAt: 2, extractionTabId: 77 }));
+    await setActiveOperation("bulkSync");
+
+    await cleanupBulkSync(earlier);
+
+    expect((await getBulkSyncState())?.startedAt).toBe(2);
+    expect(await getActiveOperation()).toBe("bulkSync");
+    expect(closedTabs).toEqual([5]); // its own tab is still closed
+    expect(sentActions()).not.toContain("bulkSyncCanceled");
+  });
+
+  it("a Stop's cleanup keeps the lock until the state is wiped, so no run starts inside it", async () => {
+    await setBulkSyncState(
+      discoveringState({ status: "running", chatIds: ["a"], total: 1, extractionTabId: TAB }),
+    );
+    await setActiveOperation("bulkSync");
+    const reset = hold();
+    gate.reset = reset.gate;
+
+    const cancel = cancelBulkSync();
+    await vi.waitFor(() => expect(workerRequests.some((m) => m.type === "reset")).toBe(true));
+    await pressSyncAllWhileLockIsHeld();
+    expect(await getActiveOperation()).toBe("bulkSync");
+
+    reset.release();
+    await cancel;
+    expect(await getBulkSyncState()).toBeNull();
+    expect(await getActiveOperation()).toBe("idle");
+    expect(sentMessage("bulkSyncCanceled")).toBeDefined();
+  });
+
+  it("Stop on a discovering run holds the lock until the state is wiped", async () => {
+    const { start } = await startAndWaitForChatList();
+    // hold the wipe of the state open
+    const adapter = getStorageAdapter();
+    const remove = adapter.remove.bind(adapter);
+    const wipe = hold();
+    const wiping = vi.fn();
+    vi.spyOn(adapter, "remove").mockImplementationOnce(async (key) => {
+      wiping();
+      await wipe.gate;
+      return remove(key);
+    });
+
+    const cancel = cancelBulkSync();
+    await vi.waitFor(() => expect(wiping).toHaveBeenCalled());
+    await pressSyncAllWhileLockIsHeld();
+    expect(await getActiveOperation()).toBe("bulkSync");
+
+    wipe.release();
+    await cancel;
+    await start;
+    expect(await getBulkSyncState()).toBeNull();
+    expect(await getActiveOperation()).toBe("idle");
+    expect(sentActions().filter((a) => a === "bulkSyncCanceled")).toHaveLength(1);
+  });
+
+  it("an early completion keeps the lock until it has finished, so its finally cannot free a later run's", async () => {
+    const { SyncService } = await import("../src/services/syncService");
+    vi.mocked(SyncService.batchCheckExistingChats).mockResolvedValueOnce(new Set(["a"]));
+    const indexing = hold();
+    gate.indexing = indexing.gate;
+    const { start } = await startAndWaitForChatList();
+
+    answerChatList(TAB, ["a"]); // every chat is already synced
+    await vi.waitFor(() => expect(SyncService.finishBulkSyncIndexing).toHaveBeenCalled());
+    expect(sentMessage("bulkSyncComplete")).toBeDefined();
+    await pressSyncAllWhileLockIsHeld();
+
+    indexing.release();
+    await start;
+    expect(await getActiveOperation()).toBe("idle");
+    expect(await getBulkSyncState()).toBeNull();
+  });
+});
+
+describe("a failure before the run has a state is a failure, not a Stop", () => {
+  it("frees the lock and says so when the first state write fails", async () => {
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    // the first write is the lock, the second the discovering state
+    vi.spyOn(adapter, "set")
+      .mockImplementationOnce(write)
+      .mockRejectedValueOnce(new Error("storage is full"));
+
+    await startBulkSync(0, "chatgpt", undefined, {});
+
+    expect(await getActiveOperation()).toBe("idle");
+    expect(sentMessage("bulkSyncFailed")).toMatchObject({ error: "storage is full" });
+    expect(createExtractionTab).not.toHaveBeenCalled();
+  });
+
+  it("does not leave a rejected promise behind when the tab's id cannot be recorded", async () => {
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    // the lock, the discovering state, then the tab's id
+    vi.spyOn(adapter, "set")
+      .mockImplementationOnce(write)
+      .mockImplementationOnce(write)
+      .mockRejectedValueOnce(new Error("storage is full"));
+    vi.mocked(createExtractionTab).mockImplementationOnce(async (_url, options) => {
+      options?.onCreated?.(TAB);
+      throw new Error("the page did not load");
+    });
+
+    await startBulkSync(0, "chatgpt", undefined, {});
+    await new Promise((resolve) => setTimeout(resolve, 20)); // an unhandled rejection surfaces here
+
+    expect(sentMessage("bulkSyncFailed")).toMatchObject({ error: "the page did not load" });
+    expect(await getActiveOperation()).toBe("idle");
+    expect(closedTabs).toEqual([TAB]);
   });
 });

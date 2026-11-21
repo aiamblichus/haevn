@@ -84,12 +84,18 @@ export const BulkSyncStateHelper = {
   },
 };
 
-// Cancel bulk sync by updating status. A run still discovering its chats is cancelled the same way:
-// closing its extraction tab ends the pending `getChatIds`, and the start sees its state is gone
-// from "discovering" and leaves the clean-up to this function (HVN-126).
+// Cancel bulk sync by updating status. A run still discovering its chats has no worker, no index in
+// bulk mode and no alarm, so it is ended by `cancelDiscovery`: the tab is closed (which ends the
+// pending `getChatIds`), and the start sees its state is no longer its own discovery and leaves the
+// clean-up to it (HVN-126).
 export async function cancelBulkSync(): Promise<void> {
   const state = await getBulkSyncState();
-  if (state && (state.status === "running" || state.status === "discovering")) {
+  if (state?.status === "discovering") {
+    const { cancelDiscovery } = await import("./bulkSync/bulkSync");
+    await cancelDiscovery(state);
+    return;
+  }
+  if (state && state.status === "running") {
     const newState = {
       ...state,
       status: "cancelled" as const,

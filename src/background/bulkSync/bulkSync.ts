@@ -3,6 +3,7 @@
 
 import {
   BULK_SYNC_ALARM_NAME,
+  cancelDiscovery,
   cancelSyncWorker,
   cleanupBulkSync,
   handleBulkSync,
@@ -26,6 +27,7 @@ export {
   startBulkSync,
   resumeBulkSync,
   handleBulkSyncTick,
+  cancelDiscovery,
   cancelSyncWorker,
   cleanupBulkSync,
   handleBulkSync,
