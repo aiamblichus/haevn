@@ -99,6 +99,12 @@ async function recoverextractionTab(
     active: useForegroundextractionTab,
   });
 
+  // The old tab goes before the re-read, so nothing is awaited between the read and the write: a
+  // resume landing during the removal is seen below (Gauge N5, HVN-124).
+  if (state.extractionTabId !== null && state.extractionTabId !== newextractionTabId) {
+    await removeextractionTabBestEffort(state.extractionTabId, "tab recovery");
+  }
+
   const latest = await getBulkSyncState();
   if (!latest || syncRunId(latest) !== syncRunId(state)) {
     await removeextractionTabBestEffort(
@@ -106,10 +112,6 @@ async function recoverextractionTab(
       "tab recovery of a run that was replaced",
     );
     return SUPERSEDED;
-  }
-
-  if (state.extractionTabId !== null && state.extractionTabId !== newextractionTabId) {
-    await removeextractionTabBestEffort(state.extractionTabId, "tab recovery");
   }
 
   const recoveredState: BulkSyncState = {

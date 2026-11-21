@@ -766,6 +766,29 @@ describe("a tick that recovers its tab does not write the earlier run over the r
     expect(sent("bulkSyncComplete")[0]).toMatchObject({ successCount: 6, failedCount: 0 });
   });
 
+  it("leaves the resume alone when it lands while the old tab is being closed", async () => {
+    await interruptedRun({ n: 6, handedOver: 3, pending: ["c2", "c3"] });
+    vi.mocked(createExtractionTab)
+      .mockResolvedValueOnce(RECOVERED_TAB)
+      .mockResolvedValueOnce(NEW_TAB);
+    // the tick's tab is gone; the resume lands while the recovery closes it (Gauge N5)
+    vi.mocked(chrome.tabs.get).mockImplementationOnce(async () => {
+      throw new Error("No tab with id: 42.");
+    });
+    vi.mocked(chrome.tabs.remove).mockImplementationOnce(async () => {
+      await restart();
+    });
+
+    await handleBulkSyncTick();
+
+    expect(await getBulkSyncState()).toMatchObject({
+      resumeCount: 1,
+      currentIndex: 1,
+      extractionTabId: NEW_TAB,
+    });
+    expect(vi.mocked(chrome.tabs.remove)).toHaveBeenCalledWith(RECOVERED_TAB);
+  });
+
   it("keeps what a report wrote to the run while its new tab was opening", async () => {
     // an ordinary recovery, no resume: the tab was closed by someone, and the worker reports a failure meanwhile
     await interruptedRun({ n: 3, handedOver: 0 });
