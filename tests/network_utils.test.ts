@@ -269,3 +269,58 @@ describe("waiting between attempts", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("which non-OK statuses are retried", () => {
+  // A 4xx goes back to the caller at once, and the caller reads its status. retries: 3 is set so
+  // that a retry would show: the old code made four calls here.
+  it.each([
+    400, 401, 403, 404,
+  ])("returns a %i after one attempt, with the warning and a one-attempt summary", async (status) => {
+    const times = recordCalls(() => respond(status));
+
+    const response = await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000, retries: 3 }));
+
+    expect((response as Response).status).toBe(status);
+    expect(times).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toBe(
+      `[Network] HTTP ${status} [GET ${PATH_URL}: 1 attempt: HTTP ${status} 0ms; total 0ms; online]`,
+    );
+  });
+
+  it("does not retry a 404 that follows a 500, and its summary names both attempts", async () => {
+    const times = recordCalls((call) => (call === 0 ? respond(500) : respond(404)));
+
+    const response = await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000, retries: 3 }));
+
+    expect((response as Response).status).toBe(404);
+    expect(times.map((t) => t - times[0])).toEqual([0, 1000]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toBe(
+      `[Network] HTTP 404 [GET ${PATH_URL}: 2 attempts: HTTP 500 0ms, HTTP 404 0ms; total 1000ms; online]`,
+    );
+  });
+
+  it.each([
+    408, 500, 502,
+  ])("still retries a %i at the fixed retryDelayMs, as before", async (status) => {
+    const times = recordCalls(() => respond(status));
+
+    const response = await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000, retries: 3 }));
+
+    expect((response as Response).status).toBe(status);
+    expect(times.map((t) => t - times[0])).toEqual([0, 1000, 2000, 3000]);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("still honours Retry-After after a 503", async () => {
+    const times = recordCalls((call) =>
+      call === 0 ? respond(503, { "Retry-After": "5" }) : respond(200),
+    );
+
+    await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000 }));
+
+    expect(times).toHaveLength(2);
+    expect(times[1] - times[0]).toBe(5_000);
+  });
+});
