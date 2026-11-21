@@ -39,19 +39,15 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
 
     case "postProcess": {
       // Worker requests post-processing (indexing, cache updates, broadcasting)
+      const { summary } = message;
       try {
         // Update search index. The bulk sync worker saved the chat before it posted this, so the
-        // search worker reads the saved row, not the copy in the message (HVN-76).
+        // search worker reads the saved row, not the message (HVN-76, HVN-121).
         await SyncService.addOrUpdateChatInIndex(message.chatId);
 
         // Update sync status cache
-        if (message.chat.source && message.chat.sourceId) {
-          await CacheService.setSyncStatus(
-            message.chat.source,
-            message.chat.sourceId,
-            true,
-            message.chat.id ?? null,
-          );
+        if (summary.source && summary.sourceId) {
+          await CacheService.setSyncStatus(summary.source, summary.sourceId, true, summary.id);
         }
 
         // Update provider stats cache if new chat
@@ -60,14 +56,14 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
         }
 
         // Generate thumbnails (fire-and-forget)
-        if (message.chat.id) {
-          handleGenerateThumbnails(message.chat.id).catch((err) => {
-            log.warn(`[BulkSync] Failed to generate thumbnails for ${message.chat.id}:`, err);
+        if (summary.id) {
+          handleGenerateThumbnails(summary.id).catch((err) => {
+            log.warn(`[BulkSync] Failed to generate thumbnails for ${summary.id}:`, err);
           });
         }
 
         // Broadcast chatSynced event
-        broadcastChatSynced(message.chat);
+        broadcastChatSynced(summary);
       } catch (error) {
         log.error(`[BulkSync] Failed to post-process chat ${message.chatId}:`, error);
         // Don't fail the sync if post-processing fails
