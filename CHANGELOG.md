@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- **Bulk sync**: a sync interrupted by an extension restart now finishes after it resumes, and fetches again any chat that was still being saved when the extension restarted. Before, a resumed sync with fewer chats left than it started with never finished, and chats in flight at the restart were silently skipped.
 - **Bulk sync**: "Sync all" shows its progress and a working Stop from the moment you press it, while it is still looking for your chats (for Gemini that step can take a while). Before, the in-progress view and Stop appeared only once the chat list was known. A sync stopped or interrupted while looking for chats is never offered for resume.
 - **ChatGPT**: a chat with many large images syncs. Before, the ChatGPT tab sent the conversation and every image in one message, and a chat over Chrome's 64 MiB message limit was not saved at all. Images are now downloaded one at a time and stored as files like the other providers' (chats synced before keep their images as they are until re-synced). A bulk sync also keeps its ChatGPT tab open until the last chat's images are downloaded.
 - **Sync**: a request that fails with 404 or another client error (a ChatGPT image the site no longer has, for example) is no longer retried three times; a missing file costs one request instead of about 12 s. Timeouts, network errors, 408, 429 and server errors still retry.
