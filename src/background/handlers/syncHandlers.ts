@@ -375,6 +375,12 @@ export async function handleForceResetBulkSync(
     const { BULK_SYNC_ALARM_NAME } = await import("../bulkSync/bulkSync");
     chrome.alarms.clear(BULK_SYNC_ALARM_NAME);
 
+    // And the wait for the worker (HVN-123), so its recheck cannot touch the next run
+    const { stopWaitingForWorker } = await import("../bulkSync/orchestrator");
+    stopWaitingForWorker();
+    const { clearPendingHandoffs } = await import("../bulkSync/pendingHandoffs");
+    await clearPendingHandoffs();
+
     log.info("[ForceResetBulkSync] Bulk sync state reset complete");
     sendResponse({ success: true });
   } catch (err: unknown) {

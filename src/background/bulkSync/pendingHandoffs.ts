@@ -32,10 +32,27 @@ function exclusive<T>(job: () => Promise<T>): Promise<T> {
 
 // The last time any message came from the worker, in this service worker's lifetime. A worker that
 // is busy with a large chat reports nothing for a while, but it keeps asking this side to fetch.
+// It is also written to storage, at most every ACTIVITY_PERSIST_MS, so a service worker that was
+// suspended still knows the worker spoke recently. Never initialise it to "now" at load: a service
+// worker woken every 30 s by the alarm would then never see the silence, and the give-up would be
+// unbounded.
 let lastWorkerMessageAt = 0;
+let lastPersistedAt = 0;
+const ACTIVITY_PERSIST_MS = 10_000;
 
 export function noteWorkerActivity(): void {
-  lastWorkerMessageAt = Date.now();
+  const now = Date.now();
+  lastWorkerMessageAt = now;
+  if (now - lastPersistedAt < ACTIVITY_PERSIST_MS) return;
+  lastPersistedAt = now;
+  void exclusive(async () => {
+    const current = await getPendingHandoffs();
+    if (current.chatIds.length === 0) return;
+    await getStorageAdapter().set(PENDING_KEY, {
+      ...current,
+      lastActivityAt: Math.max(current.lastActivityAt, now),
+    });
+  }).catch(() => undefined);
 }
 
 export async function getPendingHandoffs(): Promise<PendingHandoffs> {

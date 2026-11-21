@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   handleBulkSyncTick,
+  stopWaitingForWorker,
   WORKER_IDLE_GIVE_UP_MS,
 } from "../src/background/bulkSync/orchestrator";
-import { noteWorkerActivity } from "../src/background/bulkSync/pendingHandoffs";
+import {
+  clearPendingHandoffs,
+  noteWorkerActivity,
+} from "../src/background/bulkSync/pendingHandoffs";
 import type { BulkSyncState } from "../src/background/bulkSync/types";
 import { handleWorkerMessage } from "../src/background/bulkSync/workerHandler";
 import { getBulkSyncState, setBulkSyncState } from "../src/background/state";
+import { safeSendMessage } from "../src/background/utils/messageUtils";
 import { log } from "../src/utils/logger";
 
 // HVN-123: the bulk sync worker's transform downloads a chat's media through the extraction tab,
@@ -181,6 +186,58 @@ describe("a worker that never reports does not hold the sync forever", () => {
     expect(await getBulkSyncState()).toBeNull();
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("Giving up on the worker"));
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("c1"));
+    // the chat that never reported is counted as failed, not as synced
+    const sent = JSON.stringify(vi.mocked(safeSendMessage).mock.calls);
+    expect(sent).toContain("1 failed");
+  });
+
+  it("remembers the worker's last sign of life across a service-worker restart", async () => {
+    await startAndHandOver(["c1"]);
+    await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+    noteWorkerActivity(); // the worker asked for a download at +2 min
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(removed).toEqual([]);
+
+    // restart: the module's memory is gone, storage is not
+    const adapter = (await import("../src/storage")).getStorageAdapter();
+    vi.resetModules();
+    (await import("../src/storage")).setStorageAdapter(adapter);
+    const fresh = await import("../src/background/bulkSync/orchestrator");
+
+    // 3 min 30 s after the hand-off, 90 s after the worker last spoke: still waiting
+    await vi.advanceTimersByTimeAsync(70_000);
+    await fresh.handleBulkSyncTick();
+    expect(removed).toEqual([]);
+  });
+});
+
+describe("a stale wait does not touch the next run", () => {
+  it("a force-reset run's recheck does not close the next run's tab", async () => {
+    await startAndHandOver(["c1"]); // run A waits, its recheck armed
+
+    // force-reset (as handleForceResetBulkSync does), then run B starts straight away
+    await setBulkSyncState(null);
+    stopWaitingForWorker();
+    await clearPendingHandoffs();
+    await setBulkSyncState({ ...runningState(["b1", "b2", "b3"]), extractionTabId: 77 });
+
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(removed).toEqual([]);
+    expect((await getBulkSyncState())?.status).toBe("running");
+  });
+
+  it("even without the reset's stop, a recheck leaves a run that is still handing over alone", async () => {
+    await startAndHandOver(["c1"]);
+
+    // run B starts (startBulkSync clears the pending set) while A's recheck is still armed
+    await setBulkSyncState(null);
+    await clearPendingHandoffs();
+    await setBulkSyncState({ ...runningState(["b1", "b2", "b3"]), extractionTabId: 77 });
+    await vi.advanceTimersByTimeAsync(6000);
+
+    expect(removed).toEqual([]);
+    expect((await getBulkSyncState())?.currentIndex).toBe(0);
   });
 
   it("counts from the worker's last sign of life, not from the hand-off", async () => {

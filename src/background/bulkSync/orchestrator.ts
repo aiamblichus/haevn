@@ -706,8 +706,10 @@ async function finishWhenWorkerIdle(): Promise<void> {
   if (_finishing) return;
   _finishing = true;
   try {
-    const state = await getBulkSyncState();
-    if (!state) return;
+    let state = await getBulkSyncState();
+    // Only a run whose chats are all handed over finishes here. A stale recheck from a run that was
+    // force-reset must not close the next run's tab (Gauge, HVN-123).
+    if (!state || state.currentIndex < state.total) return;
     if (state.status === "running") {
       const pending = await getPendingHandoffs();
       if (pending.chatIds.length > 0) {
@@ -729,11 +731,29 @@ async function finishWhenWorkerIdle(): Promise<void> {
         log.warn(
           `[Bulk Sync] Giving up on the worker after ${Math.round(idleMs / 1000)} s of silence; ${pending.chatIds.length} chat(s) never reported: ${pending.chatIds.join(", ")}`,
         );
+        // A chat the worker never reported on is not a success: count it as failed.
+        const error = `worker never reported (gave up after ${Math.round(idleMs / 1000)} s of silence)`;
+        state = {
+          ...state,
+          failedSyncs: [
+            ...state.failedSyncs,
+            ...pending.chatIds.map((chatId) => ({ chatId, error })),
+          ],
+        };
+        await setBulkSyncState(state);
       }
     }
     await cleanupBulkSync(state);
   } finally {
     _finishing = false;
+  }
+}
+
+/** Stop waiting for the worker: for a force-reset, which wipes the state without a cleanup. */
+export function stopWaitingForWorker(): void {
+  if (_recheckTimer) {
+    clearTimeout(_recheckTimer);
+    _recheckTimer = null;
   }
 }
 
