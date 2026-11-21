@@ -141,7 +141,7 @@ export async function extractChatGPTChatIds(): Promise<string[]> {
       offset += limit;
     } catch (err) {
       // On 401, force-clear cached token and retry once with a fresh one
-      if (!tokenRefreshed && err instanceof Error && err.message.includes("401")) {
+      if (!tokenRefreshed && err instanceof Error && /\b401\b/.test(err.message)) {
         log.info("[ChatGPT] Got 401 fetching chat list — refreshing access token and retrying");
         await chrome.storage.local.remove("chatgptAuthTokens");
         const freshToken = await fetchAndStoreAccessToken();

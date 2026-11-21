@@ -214,6 +214,27 @@ describe("waiting between attempts", () => {
     );
   });
 
+  it.each([
+    ["zero", "0"],
+    ["a past HTTP-date", new Date(START.getTime() - 10_000).toUTCString()],
+  ])("never waits less than retryDelayMs when Retry-After is %s", async (_label, header) => {
+    const times = recordCalls((call) =>
+      call === 0 ? respond(429, { "Retry-After": header }) : respond(200),
+    );
+
+    await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000 }));
+
+    expect(times[1] - times[0]).toBe(1000);
+  });
+
+  it("falls back to the doubled wait when Retry-After is unreadable", async () => {
+    const times = recordCalls(() => respond(429, { "Retry-After": "soon" }));
+
+    await settle(fetchWithTimeout(PATH_URL, { retryDelayMs: 1000, retries: 3 }));
+
+    expect(times.map((t) => t - times[0])).toEqual([0, 1000, 3000, 7000]);
+  });
+
   it("caps the doubled wait at 60 s", async () => {
     const times = recordCalls(() => respond(429));
 

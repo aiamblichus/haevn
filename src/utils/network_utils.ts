@@ -123,12 +123,16 @@ export async function fetchWithTimeout(
 }
 
 /**
- * The wait after a 429 or 503: its Retry-After when the server sent a readable one, otherwise
+ * The wait after a 429 or 503: its Retry-After (never less than retryDelayMs) when the server sent
+ * a readable one, otherwise
  * retryDelayMs doubled for each attempt made so far. Never more than MAX_WAIT_MS.
  */
 function backoffMs(response: Response, attempt: number, retryDelayMs: number): number {
   const retryAfter = retryAfterMs(response.headers?.get("Retry-After") ?? null);
-  return Math.min(retryAfter ?? retryDelayMs * 2 ** attempt, MAX_WAIT_MS);
+  // Retry-After never shortens the normal wait: a 0, a past date or a misread header is not "now".
+  const wait =
+    retryAfter === undefined ? retryDelayMs * 2 ** attempt : Math.max(retryAfter, retryDelayMs);
+  return Math.min(wait, MAX_WAIT_MS);
 }
 
 /** Retry-After as a wait in ms, from delay-seconds or an HTTP-date. Undefined if unreadable. */
