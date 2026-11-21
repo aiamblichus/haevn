@@ -100,11 +100,22 @@ async function processSyncTask(task: {
 
       savedIds.push(haevnChat.id);
 
-      // Request post-processing via service worker (indexing, cache updates, broadcasting)
+      // Request post-processing via service worker (indexing, cache updates, broadcasting). The
+      // message carries a summary, not the chat: a chat with inline media can be past the 64 MB
+      // message limit (HVN-121).
       self.postMessage({
         type: "postProcess",
         chatId: haevnChat.id,
-        chat: haevnChat,
+        summary: {
+          id: haevnChat.id,
+          source: haevnChat.source,
+          sourceId: haevnChat.sourceId,
+          title: haevnChat.title,
+          lastSyncedTimestamp: haevnChat.lastSyncedTimestamp,
+          syncStatus: haevnChat.syncStatus,
+          providerLastModifiedTimestamp: haevnChat.providerLastModifiedTimestamp,
+          lastSyncAttemptMessage: haevnChat.lastSyncAttemptMessage,
+        },
         isNewChat,
         platformName: task.platformName,
       });

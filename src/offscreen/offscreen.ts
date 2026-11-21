@@ -412,6 +412,7 @@ function handleWorkerMessage(
     log.error(`[Offscreen] BLOCKED oversized worker message:`, {
       workerType,
       messageType: data.type,
+      chatId: "chatId" in data ? data.chatId : undefined,
       warning: safeResult.warning,
     });
     // Don't send - it would crash the extension

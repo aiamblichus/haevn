@@ -213,6 +213,23 @@ export type BulkSyncWorkerMessage = (
     }
 ) & { requestId?: string };
 
+/**
+ * What the service worker reads of a chat the bulk sync worker has saved: its identity and the
+ * sync fields of the chatSynced event. The worker posts this and not the chat, because a chat with
+ * inline media can be past Chrome's 64 MB message limit, and offscreen then drops the message
+ * (HVN-121).
+ */
+export type SavedChatSummary = Pick<
+  import("../model/haevn_model").Chat,
+  | "source"
+  | "sourceId"
+  | "title"
+  | "lastSyncedTimestamp"
+  | "syncStatus"
+  | "providerLastModifiedTimestamp"
+  | "lastSyncAttemptMessage"
+> & { id: string };
+
 export type BulkSyncWorkerResponse = (
   | {
       type: "progress";
@@ -227,7 +244,7 @@ export type BulkSyncWorkerResponse = (
   | {
       type: "postProcess";
       chatId: string;
-      chat: import("../model/haevn_model").Chat;
+      summary: SavedChatSummary;
       isNewChat: boolean;
       platformName: string | undefined;
     }

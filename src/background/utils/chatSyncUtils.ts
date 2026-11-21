@@ -10,9 +10,21 @@ import { safeSendMessage } from "./messageUtils";
 import { transformRawDataToHaevn } from "./platformTransform";
 
 /**
- * Broadcasts a chatSynced event to notify UI components
+ * Broadcasts a chatSynced event to notify UI components. It takes the fields the event carries, so
+ * the bulk sync worker's summary of a chat (HVN-121) is enough, and a full chat still is.
  */
-export function broadcastChatSynced(chat: Chat): void {
+export function broadcastChatSynced(
+  chat: Pick<
+    Chat,
+    | "id"
+    | "source"
+    | "title"
+    | "lastSyncedTimestamp"
+    | "syncStatus"
+    | "providerLastModifiedTimestamp"
+    | "lastSyncAttemptMessage"
+  >,
+): void {
   safeSendMessage({
     action: "chatSynced",
     meta: {
