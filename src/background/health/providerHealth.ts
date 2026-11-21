@@ -238,9 +238,18 @@ export function isSignInUrl(address: string | undefined): boolean {
 export function classifyFailure(message: string, tabUrl?: string): FailureKind {
   if (tabUrl?.startsWith("chrome-error:")) return "unreachable";
   if (isSignInUrl(tabUrl)) return "not-signed-in";
-  if (SIGN_IN_MESSAGE.test(message)) return "not-signed-in";
-  if (NETWORK_MESSAGE.test(message)) return "unreachable";
+  const head = withoutAttemptSummaries(message);
+  if (SIGN_IN_MESSAGE.test(head)) return "not-signed-in";
+  if (NETWORK_MESSAGE.test(head)) return "unreachable";
   return "other";
+}
+
+// fetchWithTimeout ends its errors with `[GET https://…: 4 attempts: HTTP 401 3ms, …]` (HVN-120).
+// Judge the failure by its own words: an earlier attempt's "HTTP 401" or "timed out" is history.
+const ATTEMPT_SUMMARY = /\s*\[[A-Z]+ [^\]]*?: \d+ attempts?: [^\]]*\]/g;
+
+function withoutAttemptSummaries(message: string): string {
+  return message.replace(ATTEMPT_SUMMARY, "");
 }
 
 /** An open() failure that knows the tab's address. */
