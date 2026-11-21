@@ -36,19 +36,20 @@ const STARTED = 1_700_000_000_000;
 
 type SyncRequest = { type: string; data: { chatId: string; runId: string } };
 
-const { workerRequests, fetched, fetchErrors, workerMode, fetchHold, workerHold } = vi.hoisted(
-  () => ({
+const { workerRequests, fetched, fetchErrors, workerMode, fetchHold, workerHold, rate } =
+  vi.hoisted(() => ({
     workerRequests: [] as SyncRequest[],
     fetched: [] as string[],
     fetchErrors: new Map<string, string>(),
     // a test sets a promise here to hold the next fetch open (it may reject, as a closed tab does)
     fetchHold: { promise: null as Promise<void> | null },
+    // the provider's politeness delay between two chats, in ms
+    rate: { ms: 0 },
     // the same for the hand-off to the worker
     workerHold: { promise: null as Promise<void> | null },
     // "report": the worker answers every sync request; "silent": it never does
     workerMode: { value: "report" as "report" | "silent" },
-  }),
-);
+  }));
 
 vi.mock("../src/utils/workerApi", () => ({
   sendWorkerRequest: vi.fn(async (_worker: string, message: SyncRequest) => {
@@ -96,7 +97,7 @@ vi.mock("../src/background/bulkSync/fetchStrategies", () => ({
 vi.mock("../src/providers/provider", () => ({
   getProvider: (name: string) => ({
     name,
-    bulkSyncConfig: { mode: "api", rateLimitDelayMs: 0 },
+    bulkSyncConfig: { mode: "api", rateLimitDelayMs: rate.ms },
     getListUrl: () => "https://chatgpt.com/",
     buildChatUrl: (id: string) => `https://chatgpt.com/c/${id}`,
   }),
@@ -197,6 +198,7 @@ beforeEach(async () => {
   fetchErrors.clear();
   fetchHold.promise = null;
   workerHold.promise = null;
+  rate.ms = 0;
   workerMode.value = "report";
   vi.mocked(createExtractionTab).mockReset();
   vi.mocked(createExtractionTab).mockResolvedValue(NEW_TAB);
@@ -630,6 +632,19 @@ describe("a run that was stopped while it resumed stays stopped (HVN-126)", () =
     expect(fetched).toEqual([]);
   });
 
+  it("is not resumed over a Stop that has marked it cancelled and not yet wiped it", async () => {
+    await resumeWhile(async () => {
+      const state = (await getBulkSyncState()) as BulkSyncState;
+      await setBulkSyncState({ ...state, status: "cancelled", isCancelled: true });
+    });
+
+    expect((await getBulkSyncState())?.status).toBe("cancelled");
+    expect(vi.mocked(chrome.tabs.remove)).toHaveBeenCalledWith(NEW_TAB);
+    expect(vi.mocked(chrome.alarms.create)).not.toHaveBeenCalled();
+    expect(sent("bulkSyncStarted")).toHaveLength(0);
+    expect(fetched).toEqual([]);
+  });
+
   it("does not overwrite a run that replaced it, nor free that run's lock", async () => {
     const newer = runState({ startedAt: STARTED + 50, chatIds: ["x1"], total: 1 });
     await resumeWhile(async () => {
@@ -714,5 +729,141 @@ describe("a resume that lands later in the tick is not written over either (HVN-
 
     expect(landed).toBe(true);
     expect((await getBulkSyncState())?.currentIndex).toBe(1);
+  });
+});
+
+describe("a tick that recovers its tab does not write the earlier run over the resume (HVN-127)", () => {
+  const RECOVERED_TAB = 88;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("closes the tab it opened and leaves the resume's list, index, count and tab alone", async () => {
+    await interruptedRun({ n: 6, handedOver: 3, pending: ["c2", "c3"] });
+    // the resume's tab, then the one the stale tick makes while it recovers
+    vi.mocked(createExtractionTab)
+      .mockResolvedValueOnce(NEW_TAB)
+      .mockResolvedValueOnce(RECOVERED_TAB);
+    // the resume lands while the tick is looking at its tab, and the tab it looked for is gone
+    vi.mocked(chrome.tabs.get).mockImplementationOnce(async () => {
+      await restart();
+      throw new Error("No tab with id: 42.");
+    });
+
+    await handleBulkSyncTick();
+
+    expect(await getBulkSyncState()).toMatchObject({
+      resumeCount: 1,
+      currentIndex: 1,
+      extractionTabId: NEW_TAB,
+      processedChatIds: ["c1"],
+    });
+    expect(vi.mocked(chrome.tabs.remove)).toHaveBeenCalledWith(RECOVERED_TAB);
+    expect(vi.mocked(chrome.tabs.remove)).not.toHaveBeenCalledWith(NEW_TAB);
+    await driveToEnd();
+    expect(fetched).toEqual(["c2", "c3", "c4", "c5", "c6"]);
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ successCount: 6, failedCount: 0 });
+  });
+
+  it("keeps what a report wrote to the run while its new tab was opening", async () => {
+    // an ordinary recovery, no resume: the tab was closed by someone, and the worker reports a failure meanwhile
+    await interruptedRun({ n: 3, handedOver: 0 });
+    let openTab!: (id: number) => void;
+    vi.mocked(createExtractionTab).mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          openTab = resolve;
+        }),
+    );
+    vi.mocked(chrome.tabs.get).mockRejectedValueOnce(new Error("No tab with id: 42."));
+    const tick = handleBulkSyncTick();
+    await vi.waitFor(() => expect(createExtractionTab).toHaveBeenCalled());
+
+    const state = (await getBulkSyncState()) as BulkSyncState;
+    await setBulkSyncState({ ...state, failedSyncs: [{ chatId: "c0", error: "boom" }] });
+    openTab(RECOVERED_TAB);
+    await tick;
+
+    expect((await getBulkSyncState())?.failedSyncs).toEqual([{ chatId: "c0", error: "boom" }]);
+    expect((await getBulkSyncState())?.extractionTabId).toBe(RECOVERED_TAB);
+    await driveToEnd();
+  });
+
+  it("goes no further after the politeness delay when a resume landed in it", async () => {
+    rate.ms = 300;
+    await interruptedRun({ n: 6, handedOver: 3, pending: ["c2", "c3"] });
+    // as in Chrome: the tab the resume closed is gone
+    vi.mocked(chrome.tabs.get).mockImplementation(async (id: number) => {
+      const closed = vi.mocked(chrome.tabs.remove).mock.calls.some(([closedId]) => closedId === id);
+      if (closed) throw new Error(`No tab with id: ${id}.`);
+      return { id } as chrome.tabs.Tab;
+    });
+    const stale = handleBulkSyncTick();
+    // c4 is fetched, handed over and reported on; the tick is now in its delay before c5
+    await vi.waitFor(async () => {
+      expect((await getBulkSyncState())?.currentIndex).toBe(4);
+      expect((await getPendingHandoffs()).chatIds).toEqual(["c2", "c3"]);
+    });
+
+    await restart();
+    await stale;
+
+    // the tick did not go on from the list it read before the delay: no fetch, and no tab of its own
+    expect(fetched).toEqual(["c4"]);
+    expect(vi.mocked(createExtractionTab)).toHaveBeenCalledTimes(1);
+    expect((await getBulkSyncState())?.currentIndex).toBe(2);
+    rate.ms = 0;
+    await driveToEnd();
+    expect(fetched).toEqual(["c4", "c2", "c3", "c5", "c6"]);
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ successCount: 6, failedCount: 0 });
+  });
+});
+
+describe("a tick that was skipped is not lost (HVN-127)", () => {
+  /** The alarm, and nothing else: a tick runs only when the last one (or the resume) set it. */
+  async function runWhileAlarmArmed(maxTicks = 40): Promise<void> {
+    for (let i = 0; i < maxTicks; i++) {
+      if (vi.mocked(chrome.alarms.create).mock.calls.length === 0) return;
+      vi.mocked(chrome.alarms.create).mockClear();
+      await handleBulkSyncTick();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  it("re-arms the alarm when the running tick stands down for a resume", async () => {
+    await interruptedRun({ n: 6, handedOver: 3, pending: ["c2", "c3"] });
+    let release!: () => void;
+    fetchHold.promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stale = handleBulkSyncTick();
+    await vi.waitFor(() => expect(fetched).toEqual(["c4"]));
+
+    // the resume's own tick is skipped: the stale one is still running
+    await restart();
+    vi.mocked(chrome.alarms.create).mockClear();
+    release();
+    await stale;
+
+    expect(vi.mocked(chrome.alarms.create)).toHaveBeenCalledWith("bulkSyncAlarm", {
+      when: expect.any(Number),
+    });
+    await runWhileAlarmArmed();
+    expect(await getBulkSyncState()).toBeNull();
+    expect(fetched).toEqual(["c4", "c2", "c3", "c4", "c5", "c6"]);
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ successCount: 6, failedCount: 0 });
+  });
+
+  it("does not arm an alarm for a run that is over", async () => {
+    // every chat is settled: the first tick ends the run, and the second is asked for meanwhile
+    await interruptedRun({ n: 2, handedOver: 2 });
+    await clearStaleOperationLocks();
+    const first = handleBulkSyncTick();
+    const second = handleBulkSyncTick();
+    await Promise.all([first, second]);
+    await vi.waitFor(async () => expect(await getBulkSyncState()).toBeNull());
+
+    expect(vi.mocked(chrome.alarms.create)).not.toHaveBeenCalled();
   });
 });

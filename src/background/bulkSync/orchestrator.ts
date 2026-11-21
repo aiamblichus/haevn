@@ -76,7 +76,17 @@ async function isDiscoveryMine(startedAt: number): Promise<boolean> {
   return state?.status === "discovering" && state.startedAt === startedAt;
 }
 
-async function recoverextractionTab(state: BulkSyncState): Promise<BulkSyncState | null> {
+/** What `recoverextractionTab` answers when the run it was recovering for has been replaced. */
+const SUPERSEDED = "superseded";
+
+/**
+ * Opens a new extraction tab for a run whose tab is gone. Null when it cannot. It takes seconds, and
+ * a resume may land meanwhile: it then closes the tab it made and answers SUPERSEDED, and writes
+ * nothing, so the resume's list, index and tab are not written over (HVN-127).
+ */
+async function recoverextractionTab(
+  state: BulkSyncState,
+): Promise<BulkSyncState | null | typeof SUPERSEDED> {
   const providerModule = state.provider ? getProvider(state.provider) : null;
   const listUrl = providerModule?.getListUrl(state.baseUrl);
   if (!listUrl) {
@@ -89,12 +99,21 @@ async function recoverextractionTab(state: BulkSyncState): Promise<BulkSyncState
     active: useForegroundextractionTab,
   });
 
+  const latest = await getBulkSyncState();
+  if (!latest || syncRunId(latest) !== syncRunId(state)) {
+    await removeextractionTabBestEffort(
+      newextractionTabId,
+      "tab recovery of a run that was replaced",
+    );
+    return SUPERSEDED;
+  }
+
   if (state.extractionTabId !== null && state.extractionTabId !== newextractionTabId) {
     await removeextractionTabBestEffort(state.extractionTabId, "tab recovery");
   }
 
   const recoveredState: BulkSyncState = {
-    ...state,
+    ...latest,
     extractionTabId: newextractionTabId,
   };
 
@@ -504,6 +523,10 @@ export async function startBulkSync(
 // and the storage write (isProcessing=true), starting a second concurrent tick.
 // This module-level flag is checked and set synchronously, eliminating the race.
 let _tickRunning = false;
+// Set when a tick was asked for while another was running. The running one may be about to leave
+// without re-arming the alarm (it found a resume, or a Stop, and stood down), and nothing else would
+// tick the run until the service worker next wakes.
+let _tickSkipped = false;
 
 /**
  * Processes one batch of chats (called by alarm listener).
@@ -513,6 +536,7 @@ export async function handleBulkSyncTick(): Promise<void> {
   // Synchronous guard — no await before the check+set, so no race condition
   if (_tickRunning) {
     log.debug("[Bulk Sync] Tick already running in this context, skipping.");
+    _tickSkipped = true;
     return;
   }
   _tickRunning = true;
@@ -586,12 +610,21 @@ export async function handleBulkSyncTick(): Promise<void> {
       if (delayPromise) {
         await delayPromise;
         delayPromise = null;
+        // The delay is as long as the provider's rate limit: a resume may have landed in it, and the
+        // state read before it is then the earlier run's
+        const afterDelay = await getBulkSyncState();
+        if (isAnotherRun(afterDelay)) return;
+        if (!afterDelay || afterDelay.status !== "running") {
+          await cleanupBulkSync(afterDelay);
+          return;
+        }
       }
 
       // Check if extraction tab is still valid
       if (state.extractionTabId === null) {
         log.warn("[Bulk Sync] extraction tab ID missing. Attempting recovery.");
         const recoveredState = await recoverextractionTab(state);
+        if (recoveredState === SUPERSEDED) return;
         if (!recoveredState) {
           await setBulkSyncState({
             ...state,
@@ -617,6 +650,7 @@ export async function handleBulkSyncTick(): Promise<void> {
             err,
           );
           const recoveredState = await recoverextractionTab(state);
+          if (recoveredState === SUPERSEDED) return;
           if (!recoveredState) {
             await setBulkSyncState({
               ...state,
@@ -826,6 +860,14 @@ export async function handleBulkSyncTick(): Promise<void> {
     }
   } finally {
     _tickRunning = false;
+    if (_tickSkipped) {
+      _tickSkipped = false;
+      // Only a run that is still going wants a tick: after the end, an alarm would be a stray one
+      const state = await getBulkSyncState();
+      if (state?.status === "running") {
+        chrome.alarms.create(BULK_SYNC_ALARM_NAME, { when: Date.now() + 100 });
+      }
+    }
   }
 }
 
@@ -1107,7 +1149,12 @@ export async function resumeBulkSync(provider: string): Promise<void> {
     // A run that was stopped or replaced meanwhile is not revived: whoever ended it freed the lock
     // and sent the message, so the resume closes its tab and leaves (HVN-126).
     const current = await getBulkSyncState();
-    if (!current || current.startedAt !== state.startedAt) {
+    // A Stop that has marked it cancelled but not yet wiped it keeps its startedAt: not resumable
+    if (
+      !current ||
+      current.startedAt !== state.startedAt ||
+      (current.status !== "running" && current.status !== "paused")
+    ) {
       log.info("[BulkSync] The run was stopped while it resumed; closing the new tab and leaving");
       await removeextractionTabBestEffort(extractionTabId, "resume of a run that was stopped");
       return;

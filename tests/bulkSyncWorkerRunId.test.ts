@@ -128,6 +128,16 @@ describe("a task that a newer run has asked for again does not save (HVN-127)", 
     expect(postProcessed()).toHaveLength(1);
   });
 
+  it("drops a late task of an earlier run once a later run has begun, whatever its resume count", async () => {
+    transform.mockResolvedValue([chat]);
+    // the worker was reset when run A ended; run B's first task sets the newest id
+    await sync("c1", "1700000000500:0");
+
+    await sync("c1", "1700000000000:7");
+
+    expect(saveChat).toHaveBeenCalledTimes(1);
+  });
+
   it("forgets the newest run when the run is over", async () => {
     transform.mockResolvedValue([chat]);
     await sync("c1", NEW);
