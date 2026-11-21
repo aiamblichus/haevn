@@ -34,16 +34,26 @@ const BACKOFF_STATUSES = new Set([429, 503]);
 const MAX_WAIT_MS = 60_000;
 
 /**
+ * Whether a non-OK status is worth another try: 408, 429 and the 5xx ones, where the server is busy,
+ * slow or failing. Any other 4xx is returned at once: a retry sends the same request again, and the
+ * caller reads the status and decides what it means.
+ */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+/**
  * Fetch with timeout and retry support using AbortController.
  * Automatically aborts an attempt that exceeds the timeout. The wait between attempts is not part
  * of an attempt, so it does not use up the timeout.
- * Retries on a thrown error or a non-OK response. After a 429 or 503 the wait is Retry-After when
- * the server sent one, otherwise retryDelayMs doubled for each attempt, capped at 60 s. Any other
- * failure waits retryDelayMs.
+ * Retries on a thrown error, and on a non-OK response that can heal (408, 429 and 5xx). After a 429
+ * or 503 the wait is Retry-After when the server sent one, otherwise retryDelayMs doubled for each
+ * attempt, capped at 60 s. Any other failure waits retryDelayMs. Any other non-OK response, such as
+ * a 401 or a 404, is returned after one attempt.
  *
- * A non-OK response that survives every attempt is returned, with one warning in the log. A failure
- * that survives every attempt is thrown as a FetchFailedError, whose message says what each attempt
- * did. The URL appears as origin and path only: no query string, no headers.
+ * A non-OK response that is not retried, or survives every attempt, is returned, with one warning in
+ * the log. A failure that survives every attempt is thrown as a FetchFailedError, whose message says
+ * what each attempt did. The URL appears as origin and path only: no query string, no headers.
  *
  * @param url - The URL to fetch
  * @param options - Optional RequestInit options (headers, credentials, etc.) plus timeoutMs, retries, and retryDelayMs
@@ -101,7 +111,7 @@ export async function fetchWithTimeout(
       outcome: `HTTP ${response.status}`,
       elapsedMs: Date.now() - attemptStartedAt,
     });
-    if (attempt === maxRetries) {
+    if (attempt === maxRetries || !isRetryableStatus(response.status)) {
       const summary = withAttempts(
         `HTTP ${response.status}`,
         method,
