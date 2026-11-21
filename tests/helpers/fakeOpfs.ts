@@ -40,6 +40,8 @@ export interface FakeOpfsFailures {
   syncWriteShort?: boolean;
   /** `createWritable().write()` throws. */
   writableWriteThrows?: boolean;
+  /** File handles have no `createSyncAccessHandle`, as in a service worker or a page. */
+  noSyncHandle?: boolean;
   /** `removeEntry` of these names (the last path segment) throws a non-NotFound error. */
   removeEntryThrows?: Set<string>;
 }
@@ -265,6 +267,9 @@ export class FakeOpfs {
         };
       },
     };
+    if (self.failures.noSyncHandle) {
+      delete (handle as { createSyncAccessHandle?: unknown }).createSyncAccessHandle;
+    }
     return handle as unknown as FileSystemFileHandle;
   }
 }
