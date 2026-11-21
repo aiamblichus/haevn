@@ -17,6 +17,7 @@ import type { BulkSyncWorkerMessage } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import { handleWorkerResponse } from "../../utils/media_utils";
 import { transformRawDataToHaevn } from "../utils/platformTransform";
+import { isOlderRun } from "./runId";
 
 // This worker is its own JavaScript context with an empty provider registry (see content.ts)
 registerAllProviders();
@@ -33,6 +34,12 @@ interface WorkerState {
 }
 
 let workerState: WorkerState | null = null;
+
+// The newest run id this worker has been asked to sync for. After a restart of the service worker
+// the worker may still be on the chats of the earlier stretch of the run while the redo of the same
+// chats arrives: a task older than this does not save (HVN-127). One id, so it cannot grow; it is
+// forgotten on `reset`, when the run is over.
+let newestRunId: string | null = null;
 
 /**
  * Process a single sync task
@@ -96,6 +103,13 @@ async function processSyncTask(task: {
       const existingChat = await db.chats.get(haevnChat.id);
       const isNewChat = !existingChat;
 
+      // A redo of this chat is on its way or here: its save is the one that counts (its tab is the
+      // live one, and it is the one that counts the chat as new). The report of this task is ignored.
+      if (newestRunId !== null && isOlderRun(task.runId, newestRunId)) {
+        log.info(`[BulkSyncWorker] Dropping ${haevnChat.id}: a newer run has asked for it again`);
+        continue;
+      }
+
       // Save the chat
       await ChatPersistence.saveChat(haevnChat, task.rawData);
 
@@ -139,6 +153,9 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
     // Handle commands from service worker
     switch (msg.type) {
       case "sync": {
+        if (newestRunId === null || isOlderRun(newestRunId, msg.data.runId)) {
+          newestRunId = msg.data.runId;
+        }
         // Initialize state if not already initialized
         if (!workerState) {
           workerState = {
@@ -220,6 +237,7 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
 
       case "reset": {
         workerState = null;
+        newestRunId = null;
         break;
       }
 

@@ -11,16 +11,6 @@ import type { BulkSyncState } from "./types";
 
 const STALE_STATE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-/**
- * The identity a bulk sync gives the chats it hands to the worker, and the worker echoes on its
- * report: a report for another id is not this run's to count (HVN-127). It is the run's `startedAt`
- * and, once the run has been resumed after a restart, the resume: what the worker was doing before
- * the restart is redone, so its late reports must not settle or fail the redo.
- */
-export function syncRunId(state: Pick<BulkSyncState, "startedAt" | "resumeCount">): string {
-  return `${state.startedAt}:${state.resumeCount ?? 0}`;
-}
-
 /** What `resumeBulkSync` writes into the state of an interrupted run. */
 export interface ResumePlan {
   /** The run's whole list: the settled chats, then those to fetch again, then those not yet fetched. */

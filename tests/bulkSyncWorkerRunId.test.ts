@@ -3,13 +3,13 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // The bulk sync worker answers a sync request with a `progress` report for the chat. The report
 // carries the run id of the request, success or failure, so that the service worker can tell a
 // report for the run it is driving from a late one for an earlier run (HVN-127).
-const { transform } = vi.hoisted(() => ({ transform: vi.fn() }));
+const { transform, saveChat } = vi.hoisted(() => ({ transform: vi.fn(), saveChat: vi.fn() }));
 
 vi.mock("../src/background/utils/platformTransform", () => ({
   transformRawDataToHaevn: transform,
 }));
 vi.mock("../src/providers/index", () => ({ registerAllProviders: () => {} }));
-vi.mock("../src/services/chatPersistence", () => ({ saveChat: vi.fn(async () => ({})) }));
+vi.mock("../src/services/chatPersistence", () => ({ saveChat }));
 vi.mock("../src/utils/logger", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -31,6 +31,10 @@ beforeAll(async () => {
 beforeEach(() => {
   posted = [];
   transform.mockReset();
+  saveChat.mockReset();
+  saveChat.mockResolvedValue({});
+  // a new run: the worker forgets the runs it has seen
+  void workerSelf.onmessage?.({ data: { type: "reset" } });
 });
 
 async function sync(chatId: string, runId: string): Promise<void> {
@@ -72,12 +76,65 @@ describe("the bulk sync worker's report", () => {
   it("keeps each request's id apart when two follow each other", async () => {
     transform.mockResolvedValue([]);
 
-    await sync("c1", "run-a");
-    await sync("c1", "run-b");
+    await sync("c1", "1700000000000:0");
+    await sync("c1", "1700000000000:1");
 
     expect(posted.filter((m) => m.type === "progress").map((m) => m.runId)).toEqual([
-      "run-a",
-      "run-b",
+      "1700000000000:0",
+      "1700000000000:1",
     ]);
+  });
+});
+
+describe("a task that a newer run has asked for again does not save (HVN-127)", () => {
+  const OLD = "1700000000000:0";
+  const NEW = "1700000000000:1";
+  const chat = { id: "c1", source: "chatgpt", sourceId: "c1", title: "t" };
+
+  function postProcessed(): unknown[] {
+    return posted.filter((m) => m.type === "postProcess");
+  }
+
+  it("saves only the newer task when both are on the chat at once", async () => {
+    // the old task is still transforming (its media come through a tab that is gone) when the redo arrives
+    let finishOld!: () => void;
+    transform.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOld = () => resolve([chat]);
+        }),
+    );
+    transform.mockResolvedValueOnce([chat]);
+
+    const old = sync("c1", OLD);
+    await vi.waitFor(() => expect(transform).toHaveBeenCalledTimes(1));
+    await sync("c1", NEW);
+    finishOld();
+    await old;
+
+    expect(saveChat).toHaveBeenCalledTimes(1);
+    expect(postProcessed()).toHaveLength(1);
+    // both still answer, each with its own id: the service worker ignores the old one
+    expect(posted.filter((m) => m.type === "progress").map((m) => m.runId)).toEqual([NEW, OLD]);
+  });
+
+  it("drops an old task that arrives after the newer one", async () => {
+    transform.mockResolvedValue([chat]);
+
+    await sync("c1", NEW);
+    await sync("c1", OLD);
+
+    expect(saveChat).toHaveBeenCalledTimes(1);
+    expect(postProcessed()).toHaveLength(1);
+  });
+
+  it("forgets the newest run when the run is over", async () => {
+    transform.mockResolvedValue([chat]);
+    await sync("c1", NEW);
+
+    await workerSelf.onmessage?.({ data: { type: "reset" } });
+    await sync("c1", OLD);
+
+    expect(saveChat).toHaveBeenCalledTimes(2);
   });
 });

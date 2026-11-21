@@ -8,7 +8,7 @@ import { type BrowserApiRequest, handleBrowserApiRequest } from "../utils/browse
 import { broadcastChatSynced } from "../utils/chatSyncUtils";
 import { onWorkerReport } from "./orchestrator";
 import { noteWorkerActivity } from "./pendingHandoffs";
-import { syncRunId } from "./stateManager";
+import { syncRunId } from "./runId";
 
 /**
  * Handle messages from the sync worker (forwarded from offscreen document)

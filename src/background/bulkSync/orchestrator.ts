@@ -20,7 +20,8 @@ import {
   settlePendingHandoff,
   workerIdleMs,
 } from "./pendingHandoffs";
-import { planResume, syncRunId } from "./stateManager";
+import { syncRunId } from "./runId";
+import { planResume } from "./stateManager";
 import type { BulkSyncOptions, BulkSyncState } from "./types";
 
 export const BULK_SYNC_ALARM_NAME = "bulkSyncAlarm";
@@ -528,10 +529,11 @@ export async function handleBulkSyncTick(): Promise<void> {
 
     // This tick drives this run. Whatever it reads later that belongs to another run (a Stop, then
     // a new Sync all, while a fetch was in flight) is not the tick's to touch, clean up or write to
-    // (HVN-126).
-    const runStartedAt = state.startedAt;
-    const isAnotherRun = (s: BulkSyncState | null): boolean =>
-      s !== null && s.startedAt !== runStartedAt;
+    // (HVN-126). A resume is another run for the tick, though it keeps `startedAt`: it rewrites the
+    // list and the index, and a tick that began before it must not write over them (HVN-127). Ending
+    // a run (`cleanupBulkSync`, the start) stays keyed on `startedAt`, which a resume keeps.
+    const runId = syncRunId(state);
+    const isAnotherRun = (s: BulkSyncState | null): boolean => s !== null && syncRunId(s) !== runId;
 
     if (state.currentIndex >= state.total) {
       await finishWhenWorkerIdle();
@@ -645,6 +647,7 @@ export async function handleBulkSyncTick(): Promise<void> {
         const progress = ((i + 1) / state.total) * 100;
         currentState = await getBulkSyncState();
         if (!currentState) break;
+        if (isAnotherRun(currentState)) return;
         state = currentState;
 
         // Build status message with counts in format: "1/20, 50 skipped, 3 failed"
@@ -707,7 +710,7 @@ export async function handleBulkSyncTick(): Promise<void> {
                   origin,
                   tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
                   // The worker echoes it, so a report for another run is ignored (HVN-127)
-                  runId: syncRunId(state),
+                  runId,
                 },
               },
               { expectResponse: false },
@@ -719,6 +722,7 @@ export async function handleBulkSyncTick(): Promise<void> {
 
           // Track successful processing (Spec 03.02)
           currentState = await getBulkSyncState();
+          if (isAnotherRun(currentState)) return;
           if (currentState) {
             state = currentState;
             await setBulkSyncState({
@@ -731,6 +735,7 @@ export async function handleBulkSyncTick(): Promise<void> {
           const errorMessage = dataResponse?.error || "Unknown error during extraction";
           log.warn(`[Bulk Sync] Could not extract data for chat ID ${chatId}: ${errorMessage}`);
           currentState = await getBulkSyncState();
+          if (isAnotherRun(currentState)) return;
           if (currentState) {
             state = currentState;
             await setBulkSyncState({
@@ -751,6 +756,8 @@ export async function handleBulkSyncTick(): Promise<void> {
         );
         log.error(`[Bulk Sync] Error stack:`, error instanceof Error ? error.stack : undefined);
         currentState = await getBulkSyncState();
+        // A resume that began meanwhile owns this chat: it fetches it again
+        if (isAnotherRun(currentState)) return;
         if (currentState) {
           state = currentState;
           await setBulkSyncState({
@@ -765,6 +772,7 @@ export async function handleBulkSyncTick(): Promise<void> {
       // Update currentIndex for each chat processed (Theory: Race condition fix)
       // We update i+1 immediately so if another tick starts, it sees the new index
       const stateAtEndOfLoop = await getBulkSyncState();
+      if (isAnotherRun(stateAtEndOfLoop)) return;
       if (stateAtEndOfLoop) {
         await setBulkSyncState({
           ...stateAtEndOfLoop,
@@ -1094,15 +1102,22 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       active: useForegroundextractionTab,
     });
 
+    // The state and the hand-offs are read now, after the slow part (the tab), and written back at
+    // once: a report that landed meanwhile (the worker outlives the service worker) is in what is read.
+    // A run that was stopped or replaced meanwhile is not revived: whoever ended it freed the lock
+    // and sent the message, so the resume closes its tab and leaves (HVN-126).
+    const current = await getBulkSyncState();
+    if (!current || current.startedAt !== state.startedAt) {
+      log.info("[BulkSync] The run was stopped while it resumed; closing the new tab and leaving");
+      await removeextractionTabBestEffort(extractionTabId, "resume of a run that was stopped");
+      return;
+    }
+
     // Best-effort cleanup of previous extraction tab from interrupted run.
     if (state.extractionTabId !== null && state.extractionTabId !== extractionTabId) {
       await removeextractionTabBestEffort(state.extractionTabId, "resume cleanup");
     }
 
-    // The state and the hand-offs are read now, after the slow part (the tab), and written back at
-    // once: a report that landed meanwhile (the worker outlives the service worker) is in what is read.
-    const latest = await getBulkSyncState();
-    const current = latest && latest.startedAt === state.startedAt ? latest : state;
     const pending = await getPendingHandoffs();
     const plan = planResume(current, pending.chatIds);
 
