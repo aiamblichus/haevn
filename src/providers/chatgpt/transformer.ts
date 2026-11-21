@@ -345,12 +345,7 @@ export function transformOpenAIToHaevn(
       data: {
         node,
         msg,
-        conversationId:
-          ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
-            ? conversation.conversation_id
-            : null) ||
-          ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
-          node.id,
+        conversationId: conversationIdOf(raw) || node.id,
       },
     });
   }
@@ -561,12 +556,7 @@ export function transformOpenAIToHaevn(
     };
   });
 
-  const convId =
-    ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
-      ? conversation.conversation_id
-      : null) ||
-    ("id" in conversation && typeof conversation.id === "string" ? conversation.id : null) ||
-    "";
+  const convId = conversationIdOf(raw);
   const chat: Chat = {
     id: convId,
     source: "chatgpt",
@@ -590,8 +580,8 @@ export function transformOpenAIToHaevn(
   return chat;
 }
 
-function conversationIdOf(raw: ChatGPTRawExtraction): string {
-  const { conversation } = raw;
+/** The id the chat is saved under, and the folder of its media in OPFS. */
+function conversationIdOf({ conversation }: ChatGPTRawExtraction): string {
   return (
     ("conversation_id" in conversation && typeof conversation.conversation_id === "string"
       ? conversation.conversation_id
@@ -626,7 +616,9 @@ async function downloadChatGPTAssets(
   const refs = raw.assetRefs ?? {};
   const chatId = conversationIdOf(raw);
 
-  const jobs: { nodeId: string; pointers: string[] }[] = [];
+  // `position` is the pointer's place among ALL the message's image pointers, resolved or not: it
+  // names the file in OPFS, so a pointer whose stage 1 failed cannot move the others into its slot.
+  const jobs: { nodeId: string; assets: { pointer: string; position: number }[] }[] = [];
   for (const node of Object.values(raw.conversation.mapping || {})) {
     const content = node.message?.content;
     if (!content || !("content_type" in content) || content.content_type !== "multimodal_text") {
@@ -635,21 +627,24 @@ async function downloadChatGPTAssets(
     const pointers: string[] = [];
     for (const part of content.parts) {
       if (typeof part === "string" || part?.content_type !== "image_asset_pointer") continue;
-      const pointer = part.asset_pointer;
-      if (refs[pointer] && !pointers.includes(pointer)) pointers.push(pointer);
+      if (!pointers.includes(part.asset_pointer)) pointers.push(part.asset_pointer);
     }
-    if (pointers.length > 0) jobs.push({ nodeId: node.id, pointers });
+    const assets = pointers
+      .map((pointer, position) => ({ pointer, position }))
+      .filter(({ pointer }) => refs[pointer]);
+    if (assets.length > 0) jobs.push({ nodeId: node.id, assets });
   }
 
   const downloaded = new Map<string, DownloadedAssets>();
   let next = 0;
   async function worker() {
     while (next < jobs.length) {
-      const { nodeId, pointers } = jobs[next++];
-      const assets: UrlAsset[] = pointers.map((pointer) => ({
+      const { nodeId, assets: wanted } = jobs[next++];
+      const assets: UrlAsset[] = wanted.map(({ pointer, position }) => ({
         url: refs[pointer].downloadUrl,
         type: imageTypeOf(refs[pointer]),
         name: refs[pointer].filename,
+        index: position,
       }));
       const content = await processExternalAssets(assets, {
         logPrefix: "[ChatGPT Transformer]",
@@ -664,7 +659,7 @@ async function downloadChatGPTAssets(
         tabId,
         media: options?.media,
       });
-      downloaded.set(nodeId, new Map(pointers.map((pointer, i) => [pointer, content[i]])));
+      downloaded.set(nodeId, new Map(wanted.map(({ pointer }, i) => [pointer, content[i]])));
     }
   }
   await Promise.all(Array.from({ length: Math.min(MESSAGE_DOWNLOADS, jobs.length) }, worker));

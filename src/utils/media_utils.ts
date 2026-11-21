@@ -23,7 +23,7 @@ import {
 } from "../services/mediaStorage";
 import type { ContentScriptResponse } from "../types/messaging";
 import { log } from "./logger";
-import { fetchWithTimeout } from "./network_utils";
+import { fetchWithTimeout, originAndPath } from "./network_utils";
 
 /**
  * Generic interface for URL-based assets that need to be downloaded and converted.
@@ -33,6 +33,11 @@ export interface UrlAsset {
   url: string;
   type?: string;
   name?: string;
+  /**
+   * The asset's index in OPFS (`{messageId}_{index}.{ext}`), when it is not its position in the
+   * list: a caller that leaves an asset out of the list keeps the others where they were.
+   */
+  index?: number;
 }
 
 interface BlobFetchResult {
@@ -151,7 +156,7 @@ async function fetchBlobViaHelperTab(url: string, logPrefix?: string): Promise<B
     }
 
     if (logPrefix) {
-      log.info(`${logPrefix} Helper tab fallback succeeded for: ${url}`);
+      log.info(`${logPrefix} Helper tab fallback succeeded for: ${originAndPath(url)}`);
     }
     return result.result as BlobFetchResult;
   } finally {
@@ -264,7 +269,7 @@ async function reuseStoredFile(
     if (!stored) return null;
     if (logPrefix) {
       log.warn(
-        `${logPrefix} Download failed for ${asset.url}; keeping the stored file ${stored.storagePath}`,
+        `${logPrefix} Download failed for ${originAndPath(asset.url)}; keeping the stored file ${stored.storagePath}`,
       );
     }
     return {
@@ -280,7 +285,10 @@ async function reuseStoredFile(
   } catch (error) {
     // The lookup must never take the URL fallback away
     if (logPrefix) {
-      log.error(`${logPrefix} Could not look for a stored file of ${asset.url}:`, error);
+      log.error(
+        `${logPrefix} Could not look for a stored file of ${originAndPath(asset.url)}:`,
+        error,
+      );
     }
     return null;
   }
@@ -375,8 +383,10 @@ export async function processExternalAssets(
 
   async function worker() {
     while (currentIndex < assets.length) {
-      const index = currentIndex++;
-      const asset = assets[index];
+      const position = currentIndex++;
+      const asset = assets[position];
+      // where the file lives in OPFS; `position` is where the result goes
+      const index = asset.index ?? position;
       const assetUrl = normalizeAssetUrl(asset.url);
       const contentType = asset.type || "image/jpeg";
 
@@ -387,7 +397,9 @@ export async function processExternalAssets(
 
       try {
         if (logPrefix) {
-          log.info(`${logPrefix} Downloading file [${index + 1}/${assets.length}]: ${asset.url}`);
+          log.info(
+            `${logPrefix} Downloading file [${position + 1}/${assets.length}]: ${originAndPath(asset.url)}`,
+          );
         }
 
         // Wrap entire download operation in a timeout to prevent hanging
@@ -504,7 +516,7 @@ export async function processExternalAssets(
                 } catch (helperError) {
                   if (logPrefix) {
                     log.error(
-                      `${logPrefix} Helper tab fallback failed for ${assetUrl}:`,
+                      `${logPrefix} Helper tab fallback failed for ${originAndPath(assetUrl)}:`,
                       helperError,
                     );
                   }
@@ -535,7 +547,9 @@ export async function processExternalAssets(
               retryDelayMs,
             });
             if (!response.ok) {
-              throw new Error(`Failed to fetch file: ${response.statusText} for url ${assetUrl}`);
+              throw new Error(
+                `Failed to fetch file: ${response.statusText} for url ${originAndPath(assetUrl)}`,
+              );
             }
             // Prefer server-declared content type, but ignore generic octet-stream and keep the source hint.
             finalContentType = resolvePreferredMimeType(
@@ -543,14 +557,14 @@ export async function processExternalAssets(
               contentType,
             );
             if (logPrefix) {
-              log.info(`${logPrefix} Reading arrayBuffer for: ${assetUrl}`);
+              log.info(`${logPrefix} Reading arrayBuffer for: ${originAndPath(assetUrl)}`);
             }
             buffer = await response.arrayBuffer();
           }
 
           // Save to OPFS
           if (logPrefix) {
-            log.info(`${logPrefix} Saving to OPFS for: ${assetUrl}`);
+            log.info(`${logPrefix} Saving to OPFS for: ${originAndPath(assetUrl)}`);
           }
           const extension = getExtensionFromMimeType(finalContentType);
           const storedRef = await mediaStorage.save(chatId, messageId, buffer, extension, index);
@@ -578,21 +592,23 @@ export async function processExternalAssets(
           setTimeout(
             () =>
               reject(
-                new Error(`File download timeout after ${overallTimeoutMs}ms for ${asset.url}`),
+                new Error(
+                  `File download timeout after ${overallTimeoutMs}ms for ${originAndPath(asset.url)}`,
+                ),
               ),
             overallTimeoutMs,
           );
         });
 
-        results[index] = await Promise.race([downloadOperation(), timeoutPromise]);
+        results[position] = await Promise.race([downloadOperation(), timeoutPromise]);
       } catch (error) {
         if (logPrefix) {
-          log.error(`${logPrefix} Error downloading file from ${asset.url}:`, error);
+          log.error(`${logPrefix} Error downloading file from ${originAndPath(asset.url)}:`, error);
         }
         // A re-sync that cannot download an asset again must not lose the copy an earlier sync
         // stored at the stable path: it may be the only one left. Only when there is none does the
         // message fall back to the remote URL.
-        results[index] =
+        results[position] =
           (await reuseStoredFile(
             mediaStorage,
             chatId,

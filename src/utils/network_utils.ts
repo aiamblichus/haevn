@@ -177,7 +177,7 @@ function withAttempts(
 }
 
 /** The request's origin and path. A relative URL is cut at its query string and fragment. */
-function originAndPath(url: string): string {
+export function originAndPath(url: string): string {
   try {
     const parsed = new URL(url);
     return `${parsed.origin}${parsed.pathname}`;

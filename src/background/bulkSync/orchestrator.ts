@@ -13,12 +13,28 @@ import { safeSendMessage } from "../utils/messageUtils";
 import { ensureOffscreenDocument } from "../utils/offscreenUtils";
 import { createExtractionTab } from "../utils/tabUtils";
 import { type FetchDataResult, getStrategy } from "./fetchStrategies";
+import {
+  addPendingHandoff,
+  clearPendingHandoffs,
+  getPendingHandoffs,
+  settlePendingHandoff,
+  workerIdleMs,
+} from "./pendingHandoffs";
 import { bulkSyncStateManager } from "./stateManager";
 import type { BulkSyncOptions, BulkSyncState } from "./types";
 
 export const BULK_SYNC_ALARM_NAME = "bulkSyncAlarm";
 const FETCH_BATCH_SIZE = 5; // Fetch 5 chats at once and send to worker
 const MAX_TICK_TIME_MS = 25000; // Max 25 seconds per tick to leave buffer for next alarm
+
+// The worker's transform downloads each chat's media through the extraction tab, so the tab stays
+// open until the worker has reported on every chat handed to it (HVN-123). A worker that has
+// handed nothing back and asked for nothing for this long is taken to be dead: the sync gives up
+// waiting and closes. One download is over in 40 s at most, so a live worker is never this quiet.
+export const WORKER_IDLE_GIVE_UP_MS = 3 * 60 * 1000;
+const WORKER_RECHECK_MS = 5000;
+// Backstop for a service worker that is suspended while it waits: its timer is gone, an alarm is not.
+const WORKER_RECHECK_ALARM_MS = 30000;
 
 function isTabNotFoundError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
@@ -307,6 +323,7 @@ export async function startBulkSync(
         processedChatIds: [],
       };
 
+      await clearPendingHandoffs();
       await setBulkSyncState(initialState);
 
       // Enable bulk sync indexing mode to defer index rebuilds
@@ -397,7 +414,7 @@ export async function handleBulkSyncTick(): Promise<void> {
     }
 
     if (state.currentIndex >= state.total) {
-      await cleanupBulkSync(state);
+      await finishWhenWorkerIdle();
       return;
     }
 
@@ -548,23 +565,30 @@ export async function handleBulkSyncTick(): Promise<void> {
             log.warn(`[BulkSync] Failed to parse hostname from list URL:`, err);
           }
 
-          // Send to worker for processing (non-blocking)
+          // Send to worker for processing (non-blocking). The chat counts as pending until the
+          // worker reports on it: the extraction tab stays open for its media downloads.
           const origin = state.platformName === "openwebui" ? state.baseUrl : undefined;
-          await sendWorkerRequest(
-            "bulkSync",
-            {
-              type: "sync",
-              data: {
-                chatId,
-                platformName: state.platformName,
-                hostname: currentHostname,
-                rawData: rawPlatformData,
-                origin,
-                tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
+          await addPendingHandoff(chatId);
+          try {
+            await sendWorkerRequest(
+              "bulkSync",
+              {
+                type: "sync",
+                data: {
+                  chatId,
+                  platformName: state.platformName,
+                  hostname: currentHostname,
+                  rawData: rawPlatformData,
+                  origin,
+                  tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
+                },
               },
-            },
-            { expectResponse: false },
-          );
+              { expectResponse: false },
+            );
+          } catch (sendError) {
+            await settlePendingHandoff(chatId);
+            throw sendError;
+          }
 
           // Track successful processing (Spec 03.02)
           currentState = await getBulkSyncState();
@@ -656,14 +680,8 @@ export async function handleBulkSyncTick(): Promise<void> {
     }
 
     if (finalState.currentIndex >= finalState.total) {
-      // Wait a bit for worker to finish processing remaining tasks
-      // Then cleanup
-      setTimeout(async () => {
-        const checkState = await getBulkSyncState();
-        if (checkState && checkState.currentIndex >= checkState.total) {
-          await cleanupBulkSync(checkState);
-        }
-      }, 2000);
+      // Every chat is handed over; clean up once the worker has reported on all of them
+      await finishWhenWorkerIdle();
     } else {
       // Schedule next tick
       chrome.alarms.create(BULK_SYNC_ALARM_NAME, {
@@ -672,6 +690,63 @@ export async function handleBulkSyncTick(): Promise<void> {
     }
   } finally {
     _tickRunning = false;
+  }
+}
+
+let _recheckTimer: ReturnType<typeof setTimeout> | null = null;
+let _finishing = false;
+
+/**
+ * Cleans up the bulk sync once the worker has reported on every chat handed to it. While one is
+ * outstanding it looks again in a few seconds, and the alarm is the backstop for a service worker
+ * that is suspended meanwhile. It gives up, and logs it, when the worker has been silent for
+ * WORKER_IDLE_GIVE_UP_MS. Called when the last chat is handed over and on each report after that.
+ */
+async function finishWhenWorkerIdle(): Promise<void> {
+  if (_finishing) return;
+  _finishing = true;
+  try {
+    const state = await getBulkSyncState();
+    if (!state) return;
+    if (state.status === "running") {
+      const pending = await getPendingHandoffs();
+      if (pending.chatIds.length > 0) {
+        const idleMs = await workerIdleMs();
+        if (idleMs < WORKER_IDLE_GIVE_UP_MS) {
+          log.info(
+            `[Bulk Sync] Waiting for the worker to finish ${pending.chatIds.length} chat(s) before closing the extraction tab`,
+          );
+          if (_recheckTimer) clearTimeout(_recheckTimer);
+          _recheckTimer = setTimeout(() => {
+            _recheckTimer = null;
+            void finishWhenWorkerIdle();
+          }, WORKER_RECHECK_MS);
+          chrome.alarms.create(BULK_SYNC_ALARM_NAME, {
+            when: Date.now() + WORKER_RECHECK_ALARM_MS,
+          });
+          return;
+        }
+        log.warn(
+          `[Bulk Sync] Giving up on the worker after ${Math.round(idleMs / 1000)} s of silence; ${pending.chatIds.length} chat(s) never reported: ${pending.chatIds.join(", ")}`,
+        );
+      }
+    }
+    await cleanupBulkSync(state);
+  } finally {
+    _finishing = false;
+  }
+}
+
+/**
+ * The worker reported on a chat. If that was the last one outstanding and every chat is handed
+ * over, the sync finishes. While a tick is still handing chats over, the tick does it.
+ */
+export async function onWorkerReport(chatId: string): Promise<void> {
+  await settlePendingHandoff(chatId);
+  if (_tickRunning) return;
+  const state = await getBulkSyncState();
+  if (state && state.status === "running" && state.currentIndex >= state.total) {
+    await finishWhenWorkerIdle();
   }
 }
 
@@ -691,6 +766,12 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
     }
     return;
   }
+
+  if (_recheckTimer) {
+    clearTimeout(_recheckTimer);
+    _recheckTimer = null;
+  }
+  await clearPendingHandoffs();
 
   // Reset worker
   try {
@@ -831,6 +912,9 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       processed: state.processedChatIds.length,
       remaining: remainingChatIds.length,
     });
+
+    // Whatever the interrupted run had handed to the worker is not waited for
+    await clearPendingHandoffs();
 
     // Update state to resume with remaining chats
     await setBulkSyncState({

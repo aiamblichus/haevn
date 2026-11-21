@@ -260,6 +260,8 @@ function collectAssetPointers(conv: OpenAIConversation): {
   Object.values(conv.mapping || {}).forEach((node: OpenAIConversationNode) => {
     const msg = node.message;
     if (!msg || !msg.content) return;
+    // Only a multimodal message shows its images (see the transformer)
+    if ((msg.content as { content_type?: string }).content_type !== "multimodal_text") return;
     const content = msg.content as { parts?: unknown[] } | undefined;
     const parts = (content?.parts || []) as Array<{
       content_type?: string;

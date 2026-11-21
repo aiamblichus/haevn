@@ -6,11 +6,14 @@ import { handleGenerateThumbnails } from "../handlers/galleryHandlers";
 import { getBulkSyncState, setBulkSyncState } from "../state";
 import { type BrowserApiRequest, handleBrowserApiRequest } from "../utils/browserApiBridge";
 import { broadcastChatSynced } from "../utils/chatSyncUtils";
+import { onWorkerReport } from "./orchestrator";
+import { noteWorkerActivity } from "./pendingHandoffs";
 
 /**
  * Handle messages from the sync worker (forwarded from offscreen document)
  */
 export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Promise<void> {
+  noteWorkerActivity();
   switch (message.type) {
     case "progress": {
       // Worker reports progress for a single chat
@@ -34,6 +37,9 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
 
       // Note: Progress updates are sent by the fetch loop in handleBulkSyncTick()
       // to avoid conflicting progress values from stale currentIndex during batch processing
+
+      // The chat is no longer the worker's: when it was the last, the sync can finish (HVN-123)
+      await onWorkerReport(message.chatId);
       break;
     }
 

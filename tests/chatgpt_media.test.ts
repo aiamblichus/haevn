@@ -176,6 +176,18 @@ describe("the extraction returns references, not bytes", () => {
     expect(JSON.stringify(raw).includes("dataBase64")).toBe(false);
   });
 
+  it("asks only for the images of a multimodal message, the only kind that shows them", async () => {
+    const conv = conversation([[pointerOf(0)], [pointerOf(1)]]);
+    (conv.mapping.m1.message as { content: { content_type: string } }).content.content_type =
+      "text";
+    const fetched = stageOneServer(conv);
+
+    const raw = await fetchChatGPTConversation("token", CHAT);
+
+    expect(Object.keys(raw.assetRefs ?? {})).toEqual([pointerOf(0)]);
+    expect(fetched).toHaveBeenCalledTimes(2);
+  });
+
   it("leaves out an image whose stage 1 failed, and one that came back without a URL", async () => {
     const pointers = [pointerOf(0), pointerOf(1), pointerOf(2)];
     const conv = conversation([pointers]);
@@ -334,6 +346,55 @@ describe("the transformer downloads each image on its own", () => {
     ]);
     // nothing new was written
     expect(fs.files()).toEqual([`media/${CHAT}/m0_0.png`]);
+  });
+
+  it("does not move an image into the slot of one whose stage 1 failed", async () => {
+    const [a, b] = [pointerOf(0), pointerOf(1)];
+    // a was stored last time at m0_0; this time a has no reference, and only b downloads
+    const raw: ChatGPTRawExtraction = {
+      conversation: conversation([[a, b]]),
+      assets: {},
+      assetRefs: refsFor([b]),
+    };
+    fs.put(`media/${CHAT}/m0_0.png`, "a, from last time");
+    const tab = tabServing(() => ({ success: true, base64: "AAAA", contentType: "image/png" }));
+
+    const [chat] = await chatgptProvider.transformer.transform(raw, 7, {});
+
+    expect(tab.requests.map((r) => r.url)).toEqual([signedUrl(b)]);
+    // b is at its own index, and a's file is where it was, untouched
+    expect(fs.files().sort()).toEqual([`media/${CHAT}/m0_0.png`, `media/${CHAT}/m0_1.png`]);
+    expect(fs.text(`media/${CHAT}/m0_0.png`)).toBe("a, from last time");
+    const content = (chat.messages.m0.message[0] as { parts: { content: unknown[] }[] }).parts[0]
+      .content;
+    expect(content).toMatchObject([
+      `[Image not found: ${a}]\ntext of m0`,
+      { kind: "binary", data: `media/${CHAT}/m0_1.png` },
+    ]);
+  });
+
+  it("keeps the query of a signed URL out of the log", async () => {
+    const [a, b] = [pointerOf(0), pointerOf(1)];
+    const raw: ChatGPTRawExtraction = {
+      conversation: conversation([[a, b]]),
+      assets: {},
+      assetRefs: refsFor([a, b]),
+    };
+    // a downloads, b fails
+    tabServing((url) =>
+      url === signedUrl(a)
+        ? { success: true, base64: "AAAA", contentType: "image/png" }
+        : { success: false, error: "HTTP 403 Forbidden" },
+    );
+
+    await chatgptProvider.transformer.transform(raw, 7, {});
+
+    const logged = [log.info, log.warn, log.error, log.debug]
+      .flatMap((spy) => (spy as unknown as { mock: { calls: unknown[][] } }).mock.calls)
+      .map((args) => args.map(String).join(" "))
+      .join("\n");
+    expect(logged).toContain("files.example.test/");
+    expect(logged).not.toContain("sig=abc");
   });
 
   it("without a tab downloads from the extension, with the same credentials", async () => {
