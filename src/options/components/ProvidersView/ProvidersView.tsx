@@ -11,6 +11,7 @@ import {
 } from "../../../components/ui/dialog";
 import { getAllProviders } from "../../../providers/provider";
 import type { BackgroundEvent } from "../../../types/messaging";
+import { bulkSyncViewFor, DISCOVERING_LABEL } from "../../../utils/bulkSyncView";
 import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
 import type { ProviderStats, ProviderSyncState } from "../../types";
@@ -415,20 +416,17 @@ export const ProvidersView = ({
             const canSync = !!provider.bulkSyncConfig;
 
             // Check if a sync is running for this provider
-            const isSyncingThisProvider =
-              canSync &&
-              globalSyncState?.status === "running" &&
-              globalSyncState?.provider === provider.name;
+            const view = bulkSyncViewFor(globalSyncState, provider.name);
+            const isSyncingThisProvider = canSync && view.active;
 
             const syncState: ProviderSyncState = isSyncingThisProvider
               ? {
                   isSyncing: true,
-                  progress: globalSyncState
-                    ? (globalSyncState.currentIndex / globalSyncState.total) * 100
-                    : 0,
-                  status: isSyncingThisProvider
-                    ? `Syncing ${globalSyncState.currentIndex}/${globalSyncState.total}...`
-                    : "",
+                  discovering: view.discovering,
+                  progress: view.percent,
+                  status: view.discovering
+                    ? DISCOVERING_LABEL
+                    : `Syncing ${globalSyncState?.currentIndex}/${globalSyncState?.total}...`,
                   failedCount: globalSyncState?.failedSyncs.length || 0,
                 }
               : {

@@ -64,7 +64,7 @@ export const ProviderCard = ({
             <Progress value={syncState.progress} />
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{syncState.status}</span>
-              <span>{Math.round(syncState.progress)}%</span>
+              {!syncState.discovering && <span>{Math.round(syncState.progress)}%</span>}
             </div>
             {syncState.failedCount !== undefined && syncState.failedCount > 0 && (
               <div className="text-xs text-red-400">{syncState.failedCount} failed</div>

@@ -330,8 +330,9 @@ export async function handleAbandonBulkSync(
     const { provider } = message;
     const state = await getBulkSyncState();
 
-    // Verify state exists and matches provider
-    if (!state || state.provider !== provider) {
+    // Verify state exists and matches provider. A run still discovering is live, not interrupted:
+    // Stop ends it, and wiping its state here would leave its lock and tab behind (HVN-126).
+    if (!state || state.provider !== provider || state.status === "discovering") {
       sendResponse({
         success: false,
         error: "No incomplete sync found for this provider",

@@ -6,6 +6,7 @@ import { log } from "../utils/logger";
 import type { BulkExportState } from "./bulkExport/types";
 import type { BulkSyncState } from "./bulkSync/types";
 import { getExportJobState, setExportJobState } from "./export/exportState";
+import { safeSendMessage } from "./utils/messageUtils";
 
 const BULK_SYNC_STATE_KEY = "bulkSyncState";
 const BULK_EXPORT_STATE_KEY = "bulkExportState";
@@ -83,9 +84,17 @@ export const BulkSyncStateHelper = {
   },
 };
 
-// Cancel bulk sync by updating status
+// Cancel bulk sync by updating status. A run still discovering its chats has no worker, no index in
+// bulk mode and no alarm, so it is ended by `cancelDiscovery`: the tab is closed (which ends the
+// pending `getChatIds`), and the start sees its state is no longer its own discovery and leaves the
+// clean-up to it (HVN-126).
 export async function cancelBulkSync(): Promise<void> {
   const state = await getBulkSyncState();
+  if (state?.status === "discovering") {
+    const { cancelDiscovery } = await import("./bulkSync/bulkSync");
+    await cancelDiscovery(state);
+    return;
+  }
   if (state && state.status === "running") {
     const newState = {
       ...state,
@@ -202,7 +211,26 @@ export async function clearStaleOperationLocks(): Promise<void> {
   // NOTE: Bulk sync is resumable and should NOT be force-cancelled here.
   try {
     const syncState = await getBulkSyncState();
-    if (syncState && syncState.status === "running") {
+    if (syncState && syncState.status === "discovering") {
+      // Its start died with the service worker, and it has no chat list to resume from: drop it,
+      // close the tab it was reading, and tell any open page so its Stop button does not linger.
+      log.warn("Found a bulk sync that was still discovering its chats, dropping it");
+      if (syncState.extractionTabId !== null) {
+        try {
+          await chrome.tabs.remove(syncState.extractionTabId);
+        } catch (_e) {
+          // The tab is already gone
+        }
+      }
+      await setBulkSyncState(null);
+      safeSendMessage({
+        action: "bulkSyncFailed",
+        provider: syncState.provider,
+        baseUrl: syncState.baseUrl,
+        error:
+          "Bulk sync stopped while it was looking for chats: the extension restarted. Start it again.",
+      });
+    } else if (syncState && syncState.status === "running") {
       log.warn("Found interrupted bulk sync state, preserving for resume");
       await setBulkSyncState({
         ...syncState,

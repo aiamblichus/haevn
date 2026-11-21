@@ -1,5 +1,6 @@
 import type { BulkSyncState } from "../background/bulkSync/types";
 import type { Chat } from "../model/haevn_model";
+import { bulkSyncViewFor, DISCOVERING_LABEL, isBulkSyncActive } from "../utils/bulkSyncView";
 import { log } from "../utils/logger";
 import type { PlatformInfo } from "../utils/platform";
 import { listenForPopupBroadcasts, type PopupBroadcast } from "./popupBroadcasts";
@@ -214,8 +215,8 @@ async function initializePopup(): Promise<void> {
 
 function updatePopupView(): void {
   // Is a sync running for the *current* platform?
-  const isSyncingThisProvider =
-    globalSyncState?.status === "running" && globalSyncState?.provider === currentPlatform?.name;
+  const view = bulkSyncViewFor(globalSyncState, currentPlatform?.name);
+  const isSyncingThisProvider = view.active;
 
   const syncProgressSection = getSyncProgressSection();
   const progressBar = getProgressBar();
@@ -233,14 +234,13 @@ function updatePopupView(): void {
       exportSection.classList.add("hidden");
     }
 
-    const progress = globalSyncState
-      ? (globalSyncState.currentIndex / globalSyncState.total) * 100
-      : 0;
     if (progressBar) {
-      progressBar.style.width = `${progress}%`;
+      progressBar.style.width = `${view.percent}%`;
     }
     if (progressText && globalSyncState) {
-      progressText.textContent = `Syncing ${globalSyncState.currentIndex} / ${globalSyncState.total}...`;
+      progressText.textContent = view.discovering
+        ? DISCOVERING_LABEL
+        : `Syncing ${globalSyncState.currentIndex} / ${globalSyncState.total}...`;
       const stopBtn = getStopSyncBtn();
       if (stopBtn) {
         stopBtn.disabled = false;
@@ -406,8 +406,7 @@ function updateButtonStates(): void {
   // Check if any sync is in progress (single or bulk)
   const isSyncing = isSingleSyncing || isBulkSyncing;
   // Also check if a global bulk sync is running for this provider
-  const isGlobalBulkSyncing =
-    globalSyncState?.status === "running" && globalSyncState?.provider === currentPlatform?.name;
+  const isGlobalBulkSyncing = bulkSyncViewFor(globalSyncState, currentPlatform?.name).active;
 
   const canExportSingle = currentPlatform?.canExportSingle ?? false;
   // Disable sync button if syncing or if platform doesn't support single sync
@@ -551,7 +550,7 @@ function setupEventListeners(): void {
         if (res.success) {
           globalSyncState = res.state;
           // Reset local bulk syncing flag if sync is no longer running
-          if (isBulkSyncing && (!globalSyncState || globalSyncState.status !== "running")) {
+          if (isBulkSyncing && !isBulkSyncActive(globalSyncState)) {
             isBulkSyncing = false;
           }
           updatePopupView(); // Redraw the entire popup UI

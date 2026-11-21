@@ -53,6 +53,28 @@ async function removeextractionTabBestEffort(tabId: number, context: string): Pr
   }
 }
 
+/**
+ * Thrown inside `startBulkSync` when the run is no longer the start's: it was cancelled or reset
+ * while it was discovering. Whoever ended it has cleaned up (lock, tab, state, message), so the
+ * start leaves quietly instead of reporting a failure or releasing a lock that may be the next
+ * run's (HVN-126).
+ */
+class DiscoveryEnded extends Error {}
+
+// A start's `startedAt` is its identity while it discovers, so no two starts may share one, even in
+// the same millisecond.
+let _lastStartedAt = 0;
+function nextStartedAt(): number {
+  _lastStartedAt = Math.max(Date.now(), _lastStartedAt + 1);
+  return _lastStartedAt;
+}
+
+/** True while the state in storage is still this start's discovery: not cancelled, reset or replaced. */
+async function isDiscoveryMine(startedAt: number): Promise<boolean> {
+  const state = await getBulkSyncState();
+  return state?.status === "discovering" && state.startedAt === startedAt;
+}
+
 async function recoverextractionTab(state: BulkSyncState): Promise<BulkSyncState | null> {
   const providerModule = state.provider ? getProvider(state.provider) : null;
   const listUrl = providerModule?.getListUrl(state.baseUrl);
@@ -145,8 +167,43 @@ export async function startBulkSync(
     return;
   }
 
+  // The run is visible and can be cancelled from the moment it holds the lock: a state in the
+  // "discovering" phase, with no chats yet (HVN-126). `startedAt` tells it from a later run.
+  const startedAt = nextStartedAt();
+  // Set once the state has been handed on as a running sync: from then on the tick owns it
+  let handedOver = false;
+  // Set once the discovering state is in storage: before that, a failure is a failure, not a Stop
+  let stateWritten = false;
+  // Set when someone else ended the run while it was discovering: they wiped the state and
+  // released the lock
+  let endedElsewhere = false;
+  const ensureMine = async (): Promise<void> => {
+    if (!(await isDiscoveryMine(startedAt))) throw new DiscoveryEnded();
+  };
+
   // Wrap entire initialization in try-finally to ensure lock is always released on error
   try {
+    await setBulkSyncState({
+      status: "discovering",
+      provider,
+      tabId: 0,
+      extractionTabId: null,
+      baseUrl,
+      chatIds: [],
+      total: 0,
+      currentIndex: 0,
+      isCancelled: false,
+      failedSyncs: [],
+      skippedCount: 0,
+      platformName: undefined,
+      overwriteExisting: options?.overwriteExisting === true,
+      isProcessing: false,
+      startedAt,
+      lastProgressAt: startedAt,
+      processedChatIds: [],
+    });
+    stateWritten = true;
+
     const providerModule = getProvider(provider);
     if (!providerModule) {
       await setBulkSyncState(null);
@@ -181,18 +238,46 @@ export async function startBulkSync(
       status: "Extracting chat IDs from the page...",
     });
 
-    // Create extraction tab pointing to list URL
+    // Create extraction tab pointing to list URL. The state learns the tab the moment it exists, so
+    // a Stop (or a restart) while the page loads can close it.
     const useForegroundextractionTab =
       provider === "gemini" || !!providerModule.bulkSyncConfig?.requiresActiveTab;
-    const extractionTabId = await createExtractionTab(listUrl, {
-      active: useForegroundextractionTab,
-    });
+    const opened: { id: number | null } = { id: null };
+    let tabRecorded: Promise<void> = Promise.resolve();
+    let extractionTabId: number;
+    try {
+      extractionTabId = await createExtractionTab(listUrl, {
+        active: useForegroundextractionTab,
+        onCreated: (id) => {
+          opened.id = id;
+          // Check then write, not atomic: a Stop landing between the two is overwritten, which a
+          // second Stop undoes. Accepted (HVN-126). A failed write only costs the Stop its tab id;
+          // the start closes its own tab when it finds the run ended.
+          tabRecorded = (async () => {
+            const state = await getBulkSyncState();
+            if (state?.status === "discovering" && state.startedAt === startedAt) {
+              await setBulkSyncState({ ...state, extractionTabId: id });
+            }
+          })().catch((err) => log.warn("[Bulk Sync] Could not record the extraction tab:", err));
+        },
+      });
+    } catch (tabError) {
+      // The tab opened but did not load: close what there is
+      if (opened.id !== null) {
+        await removeextractionTabBestEffort(opened.id, "extraction tab setup failure");
+      }
+      throw tabError;
+    }
 
     try {
-      // Get chat IDs via content script in tab
+      await tabRecorded;
+      await ensureMine();
+
+      // Get chat IDs via content script in tab. Closing the tab (a Stop) ends this wait.
       const chatIdsResponse = await chrome.tabs.sendMessage(extractionTabId, {
         action: "getChatIds",
       });
+      await ensureMine();
 
       if (!chatIdsResponse?.success || !chatIdsResponse?.chatIds) {
         throw new Error(chatIdsResponse?.error || "Failed to get chat IDs from the page.");
@@ -215,6 +300,7 @@ export async function startBulkSync(
         log.warn("[Bulk Sync] Failed to detect platform:", err);
       }
 
+      await ensureMine();
       const overwriteExisting = options?.overwriteExisting === true;
       log.info(`[Bulk Sync] Starting bulk sync with overwriteExisting=${overwriteExisting}`);
 
@@ -235,6 +321,7 @@ export async function startBulkSync(
           `[Bulk Sync] Overwrite disabled - checking which of ${chatIds.length} chats already exist...`,
         );
         const existingChats = await SyncService.batchCheckExistingChats(chatIds, platformName);
+        await ensureMine();
         skippedCount = existingChats.size;
         chatsToSync = chatIds.filter((id: string) => !existingChats.has(id));
         log.info(
@@ -288,7 +375,8 @@ export async function startBulkSync(
         // Cleanup
         await removeextractionTabBestEffort(extractionTabId, "early completion cleanup");
 
-        await releaseOperationLock("bulkSync");
+        // The state goes first and the lock last (the finally below), so no new run starts while
+        // the old state is still there to be wiped
         await setBulkSyncState(null);
 
         // Finish indexing since we're done
@@ -303,7 +391,7 @@ export async function startBulkSync(
       // Initialize state
       // Store extraction tab ID for reuse during sync
       const initialState: BulkSyncState = {
-        status: "running", // New status field
+        status: "running",
         provider,
         tabId: 0, // Legacy, kept for backward compatibility
         extractionTabId: extractionTabId, // Tab used for extraction
@@ -318,13 +406,20 @@ export async function startBulkSync(
         overwriteExisting,
         isProcessing: false,
         // Resume functionality (Spec 03.02)
-        startedAt: Date.now(),
+        startedAt, // the discovery's: this is the same run
         lastProgressAt: Date.now(),
         processedChatIds: [],
       };
 
       await clearPendingHandoffs();
+      // A Stop that landed while the chats were being checked has ended the run: do not revive it
+      await ensureMine();
+      // A Stop ends a discovering run by wiping its state and then freeing the lock: a lock that
+      // is gone means this run is over, even if its state was read just before. The read and the
+      // write below are still two steps; a Stop landing between them is accepted (HVN-126).
+      if ((await getActiveOperation()) !== "bulkSync") throw new DiscoveryEnded();
       await setBulkSyncState(initialState);
+      handedOver = true;
 
       // Enable bulk sync indexing mode to defer index rebuilds
       await SyncService.startBulkSyncIndexing();
@@ -362,6 +457,19 @@ export async function startBulkSync(
       throw extractError;
     }
   } catch (error) {
+    // Stopped while it was discovering (a Stop, a reset): whoever ended it did the clean-up and
+    // sent the message. Closing the tab is what made the pending getChatIds fail, so an error here
+    // is the Stop, not a failure of the sync. Before the first state write there is no run to be
+    // stopped: that error is a failure, and the lock is this start's to release.
+    if (
+      stateWritten &&
+      !handedOver &&
+      (error instanceof DiscoveryEnded || !(await isDiscoveryMine(startedAt)))
+    ) {
+      log.info("[Bulk Sync] Discovery ended before the chats were found; nothing to clean up");
+      endedElsewhere = true;
+      return;
+    }
     const errorMessage = error instanceof Error ? error.message : String(error);
     log.error("Bulk sync initialization failed:", errorMessage, error);
     // Finish indexing even on initialization failure
@@ -380,9 +488,13 @@ export async function startBulkSync(
   } finally {
     // Always release lock if we hit an error during initialization
     // Note: On success, the lock is held and released in cleanupBulkSync()
-    const state = await getBulkSyncState();
-    if (!state || state.status !== "running") {
-      await releaseOperationLock("bulkSync");
+    // A state with another startedAt is a later run's, which has taken the lock by now: not ours
+    // to release.
+    if (!endedElsewhere) {
+      const state = await getBulkSyncState();
+      if (!state || (state.startedAt === startedAt && state.status !== "running")) {
+        await releaseOperationLock("bulkSync");
+      }
     }
   }
 }
@@ -407,11 +519,20 @@ export async function handleBulkSyncTick(): Promise<void> {
 
   try {
     let state = await getBulkSyncState();
+    // A run still looking for its chats has nothing to tick, and is not ended by a stray alarm
+    if (state?.status === "discovering") return;
     // Check for termination conditions: no state, or not in 'running' state
     if (!state || state.status !== "running") {
       await cleanupBulkSync(state);
       return;
     }
+
+    // This tick drives this run. Whatever it reads later that belongs to another run (a Stop, then
+    // a new Sync all, while a fetch was in flight) is not the tick's to touch, clean up or write to
+    // (HVN-126).
+    const runStartedAt = state.startedAt;
+    const isAnotherRun = (s: BulkSyncState | null): boolean =>
+      s !== null && s.startedAt !== runStartedAt;
 
     if (state.currentIndex >= state.total) {
       await finishWhenWorkerIdle();
@@ -426,6 +547,7 @@ export async function handleBulkSyncTick(): Promise<void> {
     if (!processingState || processingState.status !== "running") {
       return;
     }
+    if (isAnotherRun(processingState)) return;
     state = processingState;
 
     // Ensure offscreen document is ready (it manages the worker)
@@ -451,6 +573,7 @@ export async function handleBulkSyncTick(): Promise<void> {
     for (let i = state.currentIndex; i < endIdx; i++) {
       // Re-check cancellation and state
       let currentState = await getBulkSyncState();
+      if (isAnotherRun(currentState)) return;
       if (!currentState || currentState.status !== "running") {
         await cleanupBulkSync(currentState);
         return;
@@ -549,6 +672,9 @@ export async function handleBulkSyncTick(): Promise<void> {
         // Fetch data using the centralized dispatcher
         // The dispatcher decides which strategy to use (API vs navigation)
         const dataResponse = await fetchConversationData(state, chatId, url);
+        // The fetch can take seconds: if the run was stopped and another began meanwhile, this
+        // chat belongs to nobody
+        if (isAnotherRun(await getBulkSyncState())) return;
 
         if (dataResponse?.success) {
           log.info(
@@ -665,7 +791,7 @@ export async function handleBulkSyncTick(): Promise<void> {
 
     // Clear processing flag
     const finalStateForUpdate = await getBulkSyncState();
-    if (finalStateForUpdate) {
+    if (finalStateForUpdate && !isAnotherRun(finalStateForUpdate)) {
       await setBulkSyncState({
         ...finalStateForUpdate,
         isProcessing: false,
@@ -674,6 +800,7 @@ export async function handleBulkSyncTick(): Promise<void> {
 
     // Check if we're done
     const finalState = await getBulkSyncState();
+    if (isAnotherRun(finalState)) return;
     if (!finalState || finalState.status !== "running") {
       await cleanupBulkSync(finalState);
       return;
@@ -709,7 +836,7 @@ async function finishWhenWorkerIdle(): Promise<void> {
     let state = await getBulkSyncState();
     // Only a run whose chats are all handed over finishes here. A stale recheck from a run that was
     // force-reset must not close the next run's tab (Gauge, HVN-123).
-    if (!state || state.currentIndex < state.total) return;
+    if (!state || state.status === "discovering" || state.currentIndex < state.total) return;
     if (state.status === "running") {
       const pending = await getPendingHandoffs();
       if (pending.chatIds.length > 0) {
@@ -771,13 +898,56 @@ export async function onWorkerReport(chatId: string): Promise<void> {
 }
 
 /**
- * Cleans up bulk sync state and sends completion message.
+ * Wipes the stored state and then frees the lock, but only for the run that is stored: a state
+ * with another `startedAt` is a later run's, and its state and lock are not this ender's to touch.
+ * The lock goes last, so no new run can take it while the old state is still there to be wiped
+ * (HVN-126). Returns false when the stored state is another run's.
+ */
+async function wipeAndReleaseIfMine(startedAt: number): Promise<boolean> {
+  const stored = await getBulkSyncState();
+  if (stored && stored.startedAt !== startedAt) return false;
+  await setBulkSyncState(null);
+  await releaseOperationLock("bulkSync");
+  return true;
+}
+
+/**
+ * Ends a run that is still looking for its chats, and says so. It has no worker, no index in bulk
+ * mode and no alarm, so there is nothing to reset: the start's wait ends when the tab is closed.
+ * The state is marked cancelled first, which is how the start knows to leave (HVN-126).
+ */
+export async function cancelDiscovery(state: BulkSyncState): Promise<void> {
+  await setBulkSyncState({ ...state, status: "cancelled", isCancelled: true });
+  if (state.extractionTabId !== null) {
+    await removeextractionTabBestEffort(state.extractionTabId, "cancel during discovery");
+  }
+  if (await wipeAndReleaseIfMine(state.startedAt)) {
+    safeSendMessage({
+      action: "bulkSyncCanceled",
+      provider: state.provider,
+      baseUrl: state.baseUrl,
+      status: "Canceled before any chat was synced.",
+    });
+  }
+}
+
+/**
+ * Cleans up bulk sync state and sends completion message. It ends the run it is given: if the
+ * stored state is a later run's (an old tick winding down, a Stop that was slow), it leaves it be.
  */
 export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void> {
-  // Release operation lock first
-  await releaseOperationLock("bulkSync");
+  const stored = await getBulkSyncState();
+  if (state && stored && stored.startedAt !== state.startedAt) {
+    log.info("[Bulk Sync] Cleanup is for an earlier run; the stored run is not touched");
+    if (state.extractionTabId !== null && state.extractionTabId !== stored.extractionTabId) {
+      await removeextractionTabBestEffort(state.extractionTabId, "cleanup of an earlier run");
+    }
+    return;
+  }
 
   if (!state) {
+    // Free the lock unless a run has already written its state
+    if (!stored) await releaseOperationLock("bulkSync");
     // Still finish indexing in case bulk sync was interrupted
     try {
       await SyncService.finishBulkSyncIndexing();
@@ -815,6 +985,13 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
   } catch (err) {
     log.error("[Bulk Sync] Failed to rebuild index:", err);
     // Continue with cleanup even if index rebuild fails
+  }
+
+  // Clear the state from storage, then free the lock. A later run's state is left alone, and so is
+  // the report: it is not this run's to make.
+  if (!(await wipeAndReleaseIfMine(state.startedAt))) {
+    log.info("[Bulk Sync] A later run started during cleanup; leaving its state and lock");
+    return;
   }
 
   // Determine action based on status
@@ -857,9 +1034,6 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
       totalCount: state.total,
     });
   }
-
-  // CRITICAL: Clear the state from storage
-  await setBulkSyncState(null);
 }
 
 /**
@@ -878,7 +1052,8 @@ export async function cancelSyncWorker(): Promise<void> {
  */
 export async function resumeBulkSync(provider: string): Promise<void> {
   const state = await getBulkSyncState();
-  if (!state || state.provider !== provider) {
+  // A run still discovering has no chat list to resume from (HVN-126)
+  if (!state || state.provider !== provider || state.status === "discovering") {
     safeSendMessage({
       action: "bulkSyncFailed",
       provider,

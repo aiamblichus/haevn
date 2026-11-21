@@ -42,6 +42,8 @@ export interface ProviderStats {
 
 export interface ProviderSyncState {
   isSyncing: boolean;
+  /** Still looking for the chats to sync: there is no total yet, so no percentage (HVN-126). */
+  discovering?: boolean;
   progress: number;
   status: string;
   failedCount?: number;
