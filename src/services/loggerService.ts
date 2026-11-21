@@ -90,6 +90,9 @@ class LoggerService {
    * This is called by DirectTransport.
    */
   addEntry(entry: LogEntry): void {
+    // Capture level: entries below it are dropped before they reach the buffer
+    if (!this.isCaptured(entry.level)) return;
+
     this.logs.push(entry);
 
     // Notify listeners
@@ -108,6 +111,14 @@ class LoggerService {
 
     // Schedule persistence
     this.schedulePersistence();
+  }
+
+  /**
+   * Whether an entry at this level passes the Capture level (`config.minLevel`).
+   */
+  private isCaptured(level: LogEntry["level"]): boolean {
+    const value = LogLevel[level];
+    return value === undefined || value >= this.config.minLevel;
   }
 
   /**
@@ -137,6 +148,8 @@ class LoggerService {
     },
     sender: chrome.runtime.MessageSender,
   ): void {
+    if (!this.isCaptured(logData.level)) return;
+
     const context = this.identifyContext(sender);
 
     const entry: LogEntry = {
