@@ -8,6 +8,7 @@ import { getProvider } from "../providers/provider";
 import type { ContentScriptResponse } from "../types/messaging";
 import { isContentScriptRequest } from "../types/messaging";
 import { log } from "../utils/logger";
+import { originAndPath } from "../utils/network_utils";
 import { detectCurrentPlatform, getConversationId } from "../utils/platform";
 
 log.debug("[HAEVN][Content] Script loading...");
@@ -330,7 +331,8 @@ function handleFetchBlob(
 ): void {
   (async () => {
     try {
-      log.debug("[HAEVN][Content] Fetching blob:", message.url);
+      // Origin and path only: a signed URL's query is a short-lived credential (HVN-123)
+      log.debug("[HAEVN][Content] Fetching blob:", originAndPath(message.url));
       const response = await fetch(message.url, {
         credentials: message.credentials ?? "include",
       });
