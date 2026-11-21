@@ -176,7 +176,7 @@ export async function saveChat(haevnChat: Chat, rawPlatformData: unknown): Promi
         // The new media has already been downloaded by the transformer before saveChat is called.
         // Deleting here would destroy the freshly downloaded media.
         // Old media files will be orphaned and cleaned up by the janitor service.
-        // See: JanitorService.cleanupOrphanedMediaFiles()
+        // See: JanitorService.sweepMediaIfDue()
 
         // 2. Clean up thumbnail metadata from database
         try {

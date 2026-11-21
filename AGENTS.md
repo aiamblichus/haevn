@@ -81,7 +81,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 - **Frontend:** React 18.3, Tailwind CSS, shadcn/ui, Radix UI primitives
 - **Persistence:** Dexie (IndexedDB, schema in `src/services/db.ts`) + OPFS for media
 - **State:** event-driven (`chrome.runtime` messaging); the service worker is the source of truth
-- **Search:** Lunr.js in a Web Worker
+- **Search:** SQLite FTS5 (WebAssembly) on an OPFS file, in a Web Worker
 - **CLI:** citty, a WebSocket daemon bridged to the extension (`src/background/wsBridge.ts`)
 - **Testing:** Vitest, fake-indexeddb
 - **Linting:** Biome 2.3
@@ -110,7 +110,7 @@ Each platform implements `Extractor<TRaw>` and `Transformer<TRaw>`. Core sync lo
 
 ### 5. Soft delete with deferred cleanup
 
-A soft-delete flag gives instant UX; the Janitor service hard-deletes after a 5-minute grace, at start and every 30 minutes. There is no undo. Compound indexes filter deleted items at query time.
+A soft-delete flag gives instant UX; the Janitor service hard-deletes after a 5-minute grace, at start and every 30 minutes. Until then the archive offers an undo of the last delete ("Deleted N chats — Undo"). Compound indexes filter deleted items at query time.
 
 ### 6. Event-driven UI updates
 
@@ -157,7 +157,7 @@ The maps of each subsystem are in `/project/haevn/architecture/` (`gnomon read /
 
 - **Single chat sync:** popup → handler → content script → extractor → transformer → repository → index → event
 - **Bulk sync:** orchestrator → extraction tab → chat ids → alarm loop → fetch (API or navigation) → transform → save → event
-- **Search:** UI → handler → offscreen → worker (Lunr) → streaming results → UI
+- **Search:** UI → handler → offscreen → worker (FTS5) → streaming results → UI
 - **Export:** handler → worker → ZIP → browser API bridge → download
 
 ### Adding a platform
