@@ -20,7 +20,7 @@ import {
   settlePendingHandoff,
   workerIdleMs,
 } from "./pendingHandoffs";
-import { bulkSyncStateManager } from "./stateManager";
+import { planResume, syncRunId } from "./stateManager";
 import type { BulkSyncOptions, BulkSyncState } from "./types";
 
 export const BULK_SYNC_ALARM_NAME = "bulkSyncAlarm";
@@ -706,6 +706,8 @@ export async function handleBulkSyncTick(): Promise<void> {
                   rawData: rawPlatformData,
                   origin,
                   tabId: state.extractionTabId !== null ? state.extractionTabId : undefined,
+                  // The worker echoes it, so a report for another run is ignored (HVN-127)
+                  runId: syncRunId(state),
                 },
               },
               { expectResponse: false },
@@ -1079,9 +1081,6 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       throw new Error(`Unknown provider: ${provider}`);
     }
 
-    // Get remaining chats
-    const remainingChatIds = await bulkSyncStateManager.getRemainingChatIds();
-
     // Recreate extraction tab on resume. The previous tab may have become invalid
     // across service worker restarts/reloads.
     const listUrl = providerModule.getListUrl(state.baseUrl);
@@ -1100,21 +1099,33 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       await removeextractionTabBestEffort(state.extractionTabId, "resume cleanup");
     }
 
+    // The state and the hand-offs are read now, after the slow part (the tab), and written back at
+    // once: a report that landed meanwhile (the worker outlives the service worker) is in what is read.
+    const latest = await getBulkSyncState();
+    const current = latest && latest.startedAt === state.startedAt ? latest : state;
+    const pending = await getPendingHandoffs();
+    const plan = planResume(current, pending.chatIds);
+
     log.info("[BulkSync] Resuming sync", {
       provider,
-      total: state.total,
-      processed: state.processedChatIds.length,
-      remaining: remainingChatIds.length,
+      total: plan.total,
+      settled: plan.currentIndex,
+      refetching: plan.refetched.length,
+      remaining: plan.total - plan.currentIndex,
     });
 
-    // Whatever the interrupted run had handed to the worker is not waited for
+    // The chats the worker had been handed are fetched again (the plan put them back in the list),
+    // so nothing is waited for, and the worker's reports from before the restart are another leg's.
     await clearPendingHandoffs();
 
-    // Update state to resume with remaining chats
     await setBulkSyncState({
-      ...state,
-      chatIds: remainingChatIds,
-      currentIndex: 0, // Reset index for remaining chats
+      ...current,
+      chatIds: plan.chatIds,
+      total: plan.total,
+      currentIndex: plan.currentIndex,
+      processedChatIds: plan.processedChatIds,
+      failedSyncs: plan.failedSyncs,
+      resumeCount: (current.resumeCount ?? 0) + 1,
       status: "running",
       extractionTabId,
       lastProgressAt: Date.now(),
@@ -1130,7 +1141,7 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       action: "bulkSyncStarted",
       provider: state.provider,
       baseUrl: state.baseUrl,
-      total: state.total,
+      total: plan.total,
       skippedCount: state.skippedCount,
     });
 

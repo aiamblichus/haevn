@@ -44,6 +44,7 @@ async function processSyncTask(task: {
   rawData: unknown;
   origin?: string;
   tabId?: number;
+  runId: string;
 }): Promise<{ success: boolean; savedIds: string[]; error?: string }> {
   try {
     // Transform raw data to HAEVN format (CPU-intensive)
@@ -156,6 +157,7 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
           self.postMessage({
             type: "progress",
             chatId: msg.data.chatId,
+            runId: msg.data.runId,
             success: true,
             savedIds: result.savedIds,
             processed: workerState.processedCount,
@@ -168,6 +170,7 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
           self.postMessage({
             type: "progress",
             chatId: msg.data.chatId,
+            runId: msg.data.runId,
             success: false,
             error: result.error,
             processed: workerState.processedCount,

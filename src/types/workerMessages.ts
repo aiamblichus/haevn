@@ -198,6 +198,8 @@ export type BulkSyncWorkerMessage = (
         rawData: unknown;
         origin?: string;
         tabId?: number;
+        /** Which run (and which stretch of it) asked: the worker echoes it on its `progress` (HVN-127). */
+        runId: string;
       };
     }
   | { type: "pause" }
@@ -234,6 +236,8 @@ export type BulkSyncWorkerResponse = (
   | {
       type: "progress";
       chatId: string;
+      /** The `runId` of the request this reports on. */
+      runId: string;
       success: boolean;
       savedIds?: string[];
       error?: string;

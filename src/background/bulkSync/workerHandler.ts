@@ -8,6 +8,7 @@ import { type BrowserApiRequest, handleBrowserApiRequest } from "../utils/browse
 import { broadcastChatSynced } from "../utils/chatSyncUtils";
 import { onWorkerReport } from "./orchestrator";
 import { noteWorkerActivity } from "./pendingHandoffs";
+import { syncRunId } from "./stateManager";
 
 /**
  * Handle messages from the sync worker (forwarded from offscreen document)
@@ -19,6 +20,14 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       // Worker reports progress for a single chat
       const state = await getBulkSyncState();
       if (!state) return;
+      // A report is for the run that asked: one from a run that has ended, or from before a restart
+      // that the resume redid, must neither settle this run's hand-off nor fail its chat (HVN-127)
+      if (message.runId !== syncRunId(state)) {
+        log.info(
+          `[BulkSync] Ignoring a report for chat ${message.chatId} from another run (${message.runId})`,
+        );
+        return;
+      }
 
       if (message.success) {
         // Chat successfully processed

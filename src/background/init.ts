@@ -22,13 +22,18 @@ registerAllProviders();
 initWsBridge();
 
 // Clear any stale operation locks and states on startup (from crashed/interrupted operations)
-clearStaleOperationLocks().catch((err) => log.warn("Failed to clear stale operation locks", err));
+const staleLocksCleared = clearStaleOperationLocks().catch((err) =>
+  log.warn("Failed to clear stale operation locks", err),
+);
 clearStaleImportState().catch((err) => log.warn("Failed to clear stale import state", err));
 
 // Resume interrupted bulk sync automatically after service worker restart.
 // The state manager validates staleness and only returns fresh resumable state.
+// It waits for the locks to be cleared: the lock the interrupted run held is still in storage, and
+// a resume that took it before the clearing would find it taken, or have it cleared under it (HVN-124).
 (async () => {
   try {
+    await staleLocksCleared;
     const incompleteSync = await bulkSyncStateManager.checkForIncompleteSync();
     if (!incompleteSync) return;
 
