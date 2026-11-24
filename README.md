@@ -10,7 +10,7 @@ A Chrome extension and CLI that keep your AI conversations from twelve providers
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**Own your AI conversation history. Search across platforms. Export for backup. Never lose context.**
+**Own your AI conversation history. Search across platforms. Back up unattended. Restore exactly. Never lose context.**
 
 </div>
 
@@ -25,7 +25,7 @@ HAEVN is a Chrome Manifest V3 extension that syncs AI conversations from multipl
 - **🔒 Privacy First**: Your archive is stored locally in your browser (IndexedDB + OPFS). HAEVN runs no servers and no analytics. Requests go to the AI platforms you sync from, and to an AI endpoint only if you turn on AI metadata or starmap embeddings.
 - **🌐 Multi-Platform**: Works with 10+ AI platforms from a single interface.
 - **🔍 Full-Text Search**: Find any conversation instantly with Lunr.js-powered search.
-- **📦 Export Anywhere**: Export a full HAEVN ZIP archive, or single chats as HAEVN JSON, HAEVN Markdown or Pi session JSONL. Create backups, migrate, or analyze your conversations.
+- **📦 Export Anywhere**: Export a full HAEVN ZIP archive, or single chats as HAEVN JSON, HAEVN Markdown or Pi session JSONL. Migrate or analyze your conversations. For backups, use `haevn backup`.
 - **🌳 Branch Support**: Preserves conversation trees, not just linear chats.
 - **🖼️ Media Handling**: Images, documents, code execution results—all preserved.
 
