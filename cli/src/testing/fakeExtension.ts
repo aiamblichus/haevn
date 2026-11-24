@@ -1,8 +1,9 @@
 /**
- * A stand-in for the extension, for the tests of `haevn backup` (and, later, `haevn restore`): it
- * connects to a real daemon over a real WebSocket, answers the backup actions from an in-memory
- * archive, and sends each record or file to the daemon's pipe with a real HTTP request, as the
- * extension's `sendToPipe` does. A test can make it fail in the ways the real one can.
+ * A stand-in for the extension, for the tests of `haevn backup` and `haevn restore`: it connects to a
+ * real daemon over a real WebSocket, answers the backup actions from an in-memory archive, and sends
+ * each record or file to the daemon's pipe with a real HTTP request, as the extension's `sendToPipe`
+ * does. The restore actions read the CLI's upload from the pipe, as `readFromPipe` does, and keep
+ * what they received. A test can make it fail in the ways the real one can.
  */
 
 import { randomBytes } from "node:crypto";
@@ -24,7 +25,16 @@ export interface FakeChat {
   media?: FakeMedia[];
   /** Listed, but gone when it is read. */
   vanished?: boolean;
+  /** What `backupList` says of when the chat was last synced; left out of the listing when absent. */
+  lastSyncedTimestamp?: number;
 }
+
+/** What the restore actions saw, in order. */
+export type RestoreEvent =
+  | { kind: "begin"; chats: number }
+  | { kind: "media"; chatId: string; name: string; bytes: number }
+  | { kind: "chat"; chatId: string; index: boolean }
+  | { kind: "finish"; rebuildIndex: boolean };
 
 /** What goes wrong on one request: `n` is how many times this very request has been asked. */
 export type Fault =
@@ -40,6 +50,18 @@ export interface FakeExtensionOptions {
   fault?: (frame: Frame, n: number) => Fault | undefined;
   /** How long before the first connection attempt. */
   connectAfterMs?: number;
+  restore?: {
+    /** What `restoreBegin` answers; default: true up to 20 chats, as the extension does. */
+    indexPerChat?: boolean;
+    /** The whole of `restoreBegin`'s answer, in place of the usual one (an extension that is not ours). */
+    beginAnswer?: Record<string, unknown>;
+    /** What `restoreFinish` answers as `indexError`. */
+    indexError?: string;
+    /** `restoreChat` answers `replaced: true` for every chat, as for one whose row is only soft-deleted. */
+    replacedAlways?: boolean;
+    /** The session is gone when the next restore action comes (the extension was idle too long). */
+    sessionLost?: boolean;
+  };
 }
 
 export type Frame = { id: string; action: string; [field: string]: unknown };
@@ -53,6 +75,12 @@ export class FakeExtension {
   private timer: NodeJS.Timeout | undefined;
   private readonly counts = new Map<string, number>();
   private readonly key: string;
+  /** Every restore action, in order, as the extension saw it. */
+  readonly restoreEvents: RestoreEvent[] = [];
+  /** The records and media files received, by chat id and by `chatId/name`. */
+  readonly receivedRecords = new Map<string, Buffer>();
+  readonly receivedMedia = new Map<string, Buffer>();
+  private session = false;
 
   constructor(
     private readonly port: number,
@@ -162,6 +190,9 @@ export class FakeExtension {
             chats: page.map((c) => ({
               id: c.id,
               source: c.source ?? "test",
+              ...(c.lastSyncedTimestamp === undefined
+                ? {}
+                : { lastSyncedTimestamp: c.lastSyncedTimestamp }),
               media: (c.media ?? []).map((m) => ({
                 name: m.name,
                 bytes: m.listedBytes ?? m.data.length,
@@ -192,9 +223,85 @@ export class FakeExtension {
         await this.send(ws, frame, file.data, fault);
         return;
       }
+      case "restoreBegin":
+        if (this.session) {
+          this.fail(ws, frame, "BUSY", "A restore is already running.");
+          return;
+        }
+        this.session = true;
+        this.restoreEvents.push({ kind: "begin", chats: frame.chats as number });
+        this.reply(ws, frame, {
+          success: true,
+          data: this.options.restore?.beginAnswer ?? {
+            indexPerChat: this.options.restore?.indexPerChat ?? (frame.chats as number) <= 20,
+            idleTimeoutMs: 120_000,
+          },
+        });
+        return;
+      case "restoreMedia":
+      case "restoreChat":
+        await this.receive(ws, frame, fault);
+        return;
+      case "restoreFinish":
+        if (!this.session || this.options.restore?.sessionLost) {
+          this.session = false;
+          this.fail(ws, frame, "NO_SESSION", "No restore is open.");
+          return;
+        }
+        this.session = false;
+        this.restoreEvents.push({ kind: "finish", rebuildIndex: frame.rebuildIndex as boolean });
+        this.reply(ws, frame, {
+          success: true,
+          data: this.options.restore?.indexError
+            ? { indexError: this.options.restore.indexError }
+            : {},
+        });
+        return;
       default:
         this.fail(ws, frame, "UNKNOWN_ACTION", "Unknown action");
     }
+  }
+
+  /**
+   * The extension's `readFromPipe`: read the CLI's upload from the daemon's pipe, check it is as
+   * long as the request said, keep it, and answer the frame.
+   */
+  private async receive(ws: WebSocket, frame: Frame, fault: Fault | undefined): Promise<void> {
+    if (!this.session || this.options.restore?.sessionLost) {
+      this.fail(ws, frame, "NO_SESSION", "No restore is open.");
+      return;
+    }
+    const pipeId = fault === "spent" ? randomBytes(16).toString("hex") : String(frame.pipeId);
+    const res = await fetch(`http://127.0.0.1:${this.port}/pipe/${pipeId}`, {
+      headers: { Authorization: `Bearer ${this.key}` },
+    }).catch(() => null);
+    if (!res?.ok) {
+      this.fail(ws, frame, "PIPE_FAILED", `the daemon's pipe answered ${res?.status ?? "nothing"}`);
+      return;
+    }
+    const body = Buffer.from(await res.arrayBuffer());
+    const chatId = String(frame.chatId);
+    if (frame.action === "restoreMedia") {
+      const name = String(frame.name);
+      if (body.length !== frame.bytes) {
+        this.fail(ws, frame, "PIPE_FAILED", `the pipe carries ${body.length} bytes`);
+        return;
+      }
+      this.restoreEvents.push({ kind: "media", chatId, name, bytes: body.length });
+      this.receivedMedia.set(`${chatId}/${name}`, body);
+      this.reply(ws, frame, { success: true, data: { bytes: body.length } });
+      return;
+    }
+    this.restoreEvents.push({ kind: "chat", chatId, index: frame.index as boolean });
+    this.receivedRecords.set(chatId, body);
+    this.reply(ws, frame, {
+      success: true,
+      data: {
+        replaced:
+          this.options.restore?.replacedAlways === true ||
+          this.chats.some((chat) => chat.id === chatId),
+      },
+    });
   }
 
   /** The extension's `sendToPipe`: POST the bytes to the daemon, then answer the frame. */

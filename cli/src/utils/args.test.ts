@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flagText, parseWholeNumber } from "./args";
+import { flagText, parseWholeNumber, repeatedFlag } from "./args";
 
 describe("parseWholeNumber", () => {
   it("returns the fallback when the flag is absent", () => {
@@ -43,5 +43,23 @@ describe("flagText (HVN-84)", () => {
 
   it("reads the short alias too", () => {
     expect(flagText("", ["-l", "-3"], ["--limit", "-l"])).toBe("-3");
+  });
+});
+
+describe("repeatedFlag", () => {
+  it("collects every value, in the order typed, in both spellings", () => {
+    expect(
+      repeatedFlag(["dir", "--chat", "a", "--yes", "--chat=b", "--chat", "c"], ["--chat"]),
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("is empty when the flag is absent, and keeps a value that starts with a dash", () => {
+    expect(repeatedFlag(["dir", "--yes"], ["--chat"])).toEqual([]);
+    expect(repeatedFlag(["--chat", "-1"], ["--chat"])).toEqual(["-1"]);
+  });
+
+  it("refuses a flag with no value", () => {
+    expect(() => repeatedFlag(["dir", "--chat"], ["--chat"])).toThrow(/--chat needs a value/);
+    expect(() => repeatedFlag(["--chat="], ["--chat"])).toThrow(/--chat needs a value/);
   });
 });

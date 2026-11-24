@@ -16,6 +16,13 @@ import { createHash } from "node:crypto";
 export const BACKUP_FORMAT = "haevn-backup";
 export const BACKUP_VERSION = 1;
 
+/**
+ * The `v` of line 1 of a chat record (`BACKUP_RECORD_VERSION` in the extension). The extension writes
+ * the header with `v` first, so a reader can tell the version from the first bytes of the file.
+ */
+export const RECORD_VERSION = 1;
+export const RECORD_PREFIX = `{"v":${RECORD_VERSION},`;
+
 export const MANIFEST_FILE = "manifest.json";
 export const INDEX_FILE = "index.jsonl";
 export const PID_FILE = "backup.pid";

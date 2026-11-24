@@ -51,7 +51,29 @@ export type CliRequest =
   | { id: string; action: "generateMetadata"; chatId: string }
   | { id: string; action: "health"; options?: HealthOptions }
   | { id: string; action: "backupInfo" }
-  | { id: string; action: "backupList"; after?: string; limit: number };
+  | { id: string; action: "backupList"; after?: string; limit: number }
+  | { id: string; action: "restoreBegin"; chats: number }
+  | { id: string; action: "restoreFinish"; rebuildIndex: boolean };
+
+/** What the extension answers to `restoreBegin` (HVN-136): the session is open and holds the lock. */
+export interface RestoreBeginInfo {
+  /** True when each chat is indexed as it is saved; false when the run indexes once, at the end. */
+  indexPerChat: boolean;
+  /** The extension closes the session when no request has come for this long. */
+  idleTimeoutMs: number;
+}
+
+/** What the extension answers to `restoreFinish`. */
+export interface RestoreFinishInfo {
+  /** Set when the chats are saved but the search index could not be brought up to date. */
+  indexError?: string;
+}
+
+/** What the extension answers to `restoreChat`. */
+export interface RestoreChatAnswer {
+  /** The chat existed (live or deleted) and was replaced; false when it was added. */
+  replaced: boolean;
+}
 
 /** What the extension answers to `backupInfo` (HVN-134): the protocol both sides must agree on. */
 export interface BackupInfo {
@@ -71,6 +93,8 @@ export interface BackupListedMedia {
 export interface BackupListedChat {
   id: string;
   source: string;
+  /** When the chat was last synced; absent from an older extension and from a row that has none. */
+  lastSyncedTimestamp?: number;
   media: BackupListedMedia[];
 }
 

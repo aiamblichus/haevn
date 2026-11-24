@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import * as http from "node:http";
+import * as net from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import {
@@ -879,5 +880,20 @@ describe("the pipe: a peer that is alive but does not read, and an extension tha
     expect(answer.status).toBe(504);
     expect(await answer.json()).toMatchObject({ ok: false });
     await expect(got.arrayBuffer()).rejects.toThrow();
+  });
+});
+
+describe("stopping the daemon", () => {
+  it("closes a WebSocket that never authenticated, so a process that runs the daemon can exit", async () => {
+    // Chrome opens a second WebSocket beside the extension's and sends nothing on it. It is not a
+    // connection `server.close()` waits for, and it keeps the process that started the daemon alive.
+    const daemon = await start();
+    const silent = await open(daemon.port);
+    const closed = new Promise<void>((resolve) => silent.once("close", () => resolve()));
+
+    await daemon.stop();
+
+    await Promise.race([closed, tick(1_000).then(() => Promise.reject(new Error("still open")))]);
+    expect(silent.readyState).toBe(WebSocket.CLOSED);
   });
 });

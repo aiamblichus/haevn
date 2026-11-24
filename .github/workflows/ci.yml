@@ -39,6 +39,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Before the tests: tests/backupRoundTrip.test.ts runs the CLI's own engines
+      - name: Install CLI dependencies
+        run: pnpm -C cli install --frozen-lockfile
+
       - name: Run linter
         run: pnpm run lint
 
@@ -47,9 +51,6 @@ jobs:
 
       - name: Run tests
         run: pnpm test
-
-      - name: Install CLI dependencies
-        run: pnpm -C cli install --frozen-lockfile
 
       - name: Lint, typecheck and test CLI
         run: |

@@ -19,17 +19,9 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
-import {
-  callFrame,
-  DaemonCallError,
-  type DaemonEndpoint,
-  type DaemonSession,
-  openDaemon,
-  pipeOut,
-  probeHealth,
-} from "../daemon/client.js";
-import type { BackupInfo, BackupListedChat, BackupListPage, PipeActionBody } from "../types.js";
-import { deferred, ExitError, failed } from "../utils/exit.js";
+import { DaemonCallError, type DaemonEndpoint, pipeOut } from "../daemon/client.js";
+import type { BackupListedChat, PipeActionBody } from "../types.js";
+import { deferred, failed } from "../utils/exit.js";
 import {
   BACKUP_FORMAT,
   BACKUP_VERSION,
@@ -45,26 +37,15 @@ import {
   PID_FILE,
   StemAllocator,
 } from "./layout.js";
+import { ExtensionLink, errorText, toExitError } from "./link.js";
 
-/** The backup protocol this CLI speaks (`BACKUP_PROTOCOL` in `src/services/backup/format.ts`). */
-export const BACKUP_PROTOCOL = 1;
-
-/**
- * The pause before each new try of an item whose transfer did not get through: a cut stream, a
- * timeout, a pipe the extension could not use (Chrome re-sends a POST on a stale keep-alive
- * connection, and the second try finds the pipe id spent: a 404 that a fresh pipe id cures).
- * Two retries, so three tries in all: enough to ride out the one-off races, few enough that an item
- * that can never get through fails the run in minutes, not hours.
- */
-export const RETRY_DELAYS_MS = [500, 2_000];
+export { BACKUP_PROTOCOL, RETRY_DELAYS_MS } from "./link.js";
 
 /** A live `.partial` older than this is not a run any more (a reused pid after a reboot). */
 const PARTIAL_MAX_AGE_MS = 2 * 60 * 60 * 1000;
 
 /** A `.partial` with no pid file that is younger than this was just claimed by another run. */
 const PARTIAL_CLAIM_GRACE_MS = 60_000;
-
-const PAGE_SIZE = 100;
 
 export interface BackupOptions {
   /** The directory the backup ends up in. */
@@ -95,17 +76,17 @@ export async function runBackup(options: BackupOptions): Promise<BackupResult> {
   const dir = path.resolve(options.dir);
   const partial = `${dir}.partial`;
   claimPartial(dir);
-  let session: DaemonSession | undefined;
+  let link: ExtensionLink | undefined;
   try {
     prepareDirectory(dir);
-    session = await openDaemonOrFail(options.endpoint);
-    return await new BackupRun(options, dir, session).run();
+    link = await ExtensionLink.open(options.endpoint, options);
+    return await new BackupRun(options, dir, link).run();
   } catch (err) {
     // Not another run's directory: a run that outlived the 2 h limit may find its `.partial` taken.
     if (!heldByAnotherRun(partial)) fs.rmSync(partial, { recursive: true, force: true });
     throw toExitError(err, options.signal);
   } finally {
-    await session?.stop();
+    await link?.stop();
   }
 }
 
@@ -114,44 +95,25 @@ export async function runBackup(options: BackupOptions): Promise<BackupResult> {
 class BackupRun {
   private readonly partial: string;
   private readonly old: string;
-  private readonly retryDelays: number[];
-  private readonly pollMs: number;
-  private readonly pageSize: number;
   private readonly signal?: AbortSignal;
   private readonly endpoint: DaemonEndpoint;
 
   constructor(
     private readonly options: BackupOptions,
     private readonly dir: string,
-    private readonly session: DaemonSession,
+    private readonly link: ExtensionLink,
   ) {
     this.partial = `${dir}.partial`;
     this.old = `${dir}.old`;
-    this.retryDelays = options.timing?.retryDelaysMs ?? RETRY_DELAYS_MS;
-    this.pollMs = options.timing?.pollMs ?? 1_000;
-    this.pageSize = options.timing?.pageSize ?? PAGE_SIZE;
     this.signal = options.signal;
-    this.endpoint = session.endpoint;
+    this.endpoint = link.endpoint;
   }
 
   async run(): Promise<BackupResult> {
     const started = Date.now();
-    const waitSeconds = Math.round(this.options.waitMs / 1000);
+    const info = await this.link.connect();
 
-    await this.waitForExtension(
-      `no extension connected within ${waitSeconds} s (Chrome is closed, the CLI bridge is off, or the extension is reloading)`,
-    );
-    const info = await this.attempt("backupInfo", () =>
-      callFrame<BackupInfo>(this.endpoint, { action: "backupInfo" }, this.signal),
-    );
-    if (info.protocol !== BACKUP_PROTOCOL) {
-      throw failed(
-        `the extension speaks backup protocol ${info.protocol} and this CLI speaks ${BACKUP_PROTOCOL}: ` +
-          `update the ${info.protocol > BACKUP_PROTOCOL ? "CLI" : "extension"}`,
-      );
-    }
-
-    const listing = await this.listAll();
+    const listing = await this.link.listChats();
     const names = new StemAllocator();
     const index: IndexEntry[] = [];
     const vanished: string[] = [];
@@ -205,30 +167,10 @@ class BackupRun {
     };
   }
 
-  /** Every live chat, page by page, in the extension's key order. */
-  private async listAll(): Promise<BackupListedChat[]> {
-    const chats: BackupListedChat[] = [];
-    let after: string | undefined;
-    for (;;) {
-      const page = await this.attempt("the chat list", () =>
-        callFrame<BackupListPage>(
-          this.endpoint,
-          { action: "backupList", limit: this.pageSize, ...(after === undefined ? {} : { after }) },
-          this.signal,
-        ),
-      );
-      chats.push(...page.chats);
-      if (page.next === undefined) return chats;
-      if (page.next === after)
-        throw failed("the chat list does not advance: the extension repeats a page");
-      after = page.next;
-    }
-  }
-
   /** One chat's record and media into `.partial`; null when the chat is gone. */
   private async backupChat(chat: BackupListedChat, stem: string): Promise<IndexEntry | null> {
     const file = `${CHATS_DIR}/${stem}.jsonl`;
-    const record = await this.attempt(
+    const record = await this.link.attempt(
       `chat ${chat.id}`,
       () => this.receive({ action: "backupChat", chatId: chat.id }, file, undefined),
       { missingIsOk: true },
@@ -250,7 +192,7 @@ class BackupRun {
         );
       }
       seen.add(foldName(item.name));
-      const got = await this.attempt(`media ${item.name} of chat ${chat.id}`, () =>
+      const got = await this.link.attempt(`media ${item.name} of chat ${chat.id}`, () =>
         this.receive(
           { action: "backupMedia", chatId: chat.id, name: item.name },
           `${mediaDir}/${item.name}`,
@@ -327,99 +269,6 @@ class BackupRun {
       );
     }
     return { bytes, sha256: hash.digest("hex") };
-  }
-
-  /**
-   * One call, tried again when the transfer did not get through. What the unattended runner must
-   * know goes out as `deferred` (BUSY; no extension, now or after the connection was lost) or
-   * `failed` (everything else). A chat the extension no longer has comes back as null when the
-   * caller says a missing item is fine.
-   */
-  private async attempt<T>(
-    what: string,
-    op: () => Promise<T>,
-    flags: { missingIsOk: true },
-  ): Promise<T | null>;
-  private async attempt<T>(what: string, op: () => Promise<T>): Promise<T>;
-  private async attempt<T>(
-    what: string,
-    op: () => Promise<T>,
-    flags: { missingIsOk?: boolean } = {},
-  ): Promise<T | null> {
-    for (let tries = 0; ; tries++) {
-      this.signal?.throwIfAborted();
-      try {
-        return await op();
-      } catch (err) {
-        if (!(err instanceof DaemonCallError)) throw err;
-        switch (err.kind) {
-          case "extension":
-            if (err.code === "BUSY") throw deferred(`the extension is busy: ${err.message}`);
-            if (err.code === "UNKNOWN_ACTION") {
-              throw failed(
-                `the extension does not know ${what}: it predates the backup, update the extension`,
-              );
-            }
-            if (err.code === "NOT_FOUND" && flags.missingIsOk) return null;
-            throw failed(
-              `${what}: the extension answered ${err.code ?? "an error"}: ${err.message}`,
-            );
-          case "not-connected":
-          case "transport":
-            // The connection may be what broke: if so, wait for it before another try.
-            await this.waitForExtension(
-              `the connection to the extension was lost and did not return within ${Math.round(this.options.waitMs / 1000)} s`,
-            );
-            if (tries >= this.retryDelays.length) {
-              throw failed(`${what}: ${err.message} (${tries + 1} tries)`);
-            }
-            await sleep(this.retryDelays[tries], this.signal);
-            continue;
-          case "unauthorized":
-            throw failed(
-              `${what}: the daemon refused the API key: check the key in ~/.haevn/config.json`,
-            );
-          default:
-            throw failed(`${what}: ${err.message}`);
-        }
-      }
-    }
-  }
-
-  /**
-   * Poll `/health` until the extension is connected: at once if it is. When none is within
-   * `--wait`, the run ends: 1 if a socket offered a wrong API key meanwhile (a wrong key never mends
-   * by waiting), else 75 with `timeout`. A wrong-key socket does not matter while a good extension
-   * is connected: any page or other extension can dial the daemon's port with a key of its own.
-   */
-  private async waitForExtension(timeout: string): Promise<void> {
-    const deadline = Date.now() + this.options.waitMs;
-    for (;;) {
-      const health = await probeHealth(this.endpoint, this.signal);
-      if (!health) throw failed(`the daemon on port ${this.endpoint.port} stopped answering`);
-      if (health.extensionConnected) return;
-      const left = deadline - Date.now();
-      if (left <= 0) {
-        if (this.session.authFailed()) {
-          throw failed(
-            "an extension connected with a different API key than the one in ~/.haevn/config.json: set the same key in both",
-          );
-        }
-        throw deferred(timeout);
-      }
-      await sleep(Math.min(this.pollMs, left), this.signal);
-    }
-  }
-}
-
-// ─── Reaching the daemon ──────────────────────────────────────────────────────
-
-async function openDaemonOrFail(endpoint: DaemonEndpoint): Promise<DaemonSession> {
-  try {
-    return await openDaemon(endpoint);
-  } catch (err) {
-    if (err instanceof DaemonCallError) throw failed(err.message);
-    throw err;
   }
 }
 
@@ -642,42 +491,8 @@ function syncDir(dir: string): void {
 
 // ─── Small things ─────────────────────────────────────────────────────────────
 
-/** What ended a run, in the terms of the exit table: anything not already one is a failure. */
-function toExitError(err: unknown, signal?: AbortSignal): ExitError {
-  if (err instanceof ExitError) return err;
-  if (signal?.aborted) return failed("interrupted");
-  if (err instanceof DaemonCallError) return failed(err.message);
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  if (typeof code === "string" && /^E[A-Z0-9]+$/.test(code)) {
-    return failed(`disk error (${code}): ${errorText(err)}`);
-  }
-  return failed(errorText(err));
-}
-
 function describe(action: PipeActionBody): string {
   return action.action === "backupMedia"
     ? `media file ${String(action.name)} of chat ${String(action.chatId)}`
     : `the record of chat ${String(action.chatId)}`;
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }

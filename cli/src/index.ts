@@ -11,6 +11,7 @@
  *   haevn export chat_abc123 -o out.json --format haevn_json
  *   haevn health                         # does each provider you are signed in to still sync?
  *   haevn backup ~/backups/haevn         # the whole archive into a directory (exit 75: not now)
+ *   haevn restore ~/backups/haevn       # a backup back into the archive (--dry-run first; exit 75: not now)
  *   haevn install -e <extension-id>      # Install native messaging host
  */
 
@@ -25,6 +26,7 @@ import healthCommand from "./commands/health";
 import importCommand from "./commands/import";
 import infoCommand from "./commands/info";
 import listCommand from "./commands/list";
+import restoreCommand from "./commands/restore";
 import searchCommand from "./commands/search";
 import { consola } from "./utils/output";
 
@@ -54,6 +56,7 @@ const mainCommand = defineCommand({
     info: infoCommand,
     health: healthCommand,
     backup: backupCommand,
+    restore: restoreCommand,
     daemon: daemonCommand,
   },
   async setup(ctx) {

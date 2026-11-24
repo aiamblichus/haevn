@@ -10,6 +10,8 @@
  * first run, or manually by the user).
  */
 
+import * as http from "node:http";
+import type { Readable } from "node:stream";
 import type { CliRequestBody, CliResponse, HealthResponse, PipeActionBody } from "../types.js";
 import { DEFAULT_DAEMON_PORT, loadConfig } from "./config.js";
 import { PIPE_PROTOCOL, startDaemon } from "./server.js";
@@ -369,6 +371,99 @@ export async function pipeOut(
     length: declared !== null && /^\d+$/.test(declared) ? Number(declared) : null,
     body: res.body,
   };
+}
+
+/**
+ * An action as the value of the `X-Haevn-Request` header, which is latin-1 on the wire: every
+ * character outside printable ASCII (space to ~) is written as `\uXXXX` (one per UTF-16 unit, so a surrogate
+ * pair stays a pair), and `JSON.parse` on the daemon's side reads the same text back.
+ */
+export function actionHeader(action: PipeActionBody): string {
+  return JSON.stringify(action).replace(
+    /[^ -~]/g,
+    (unit) => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/**
+ * Open `POST /pipe/in`: `length` bytes of `source` go to the extension through the daemon, and the
+ * extension's answer to `action` comes back as the frame's data. The request is its own connection:
+ * an upload cannot be replayed from the middle on a stale pooled one. No time limit here; the
+ * daemon's own (120 s to the first byte, 30 s without one) ends a transfer that does not move, and
+ * `signal` ends it from outside. `source` is destroyed when the call ends.
+ */
+export function pipeIn<T>(
+  endpoint: DaemonEndpoint,
+  action: PipeActionBody,
+  source: Readable,
+  length: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const end = (outcome: { data: T } | { error: unknown }): void => {
+      if (settled) return;
+      settled = true;
+      source.destroy();
+      req.destroy();
+      if ("error" in outcome) {
+        const err = outcome.error;
+        reject(
+          err instanceof DaemonCallError
+            ? err
+            : fetchFailure(new Error(errorText(err), { cause: err }), signal),
+        );
+      } else {
+        resolve(outcome.data);
+      }
+    };
+
+    const req = http.request({
+      host: "127.0.0.1",
+      port: endpoint.port,
+      method: "POST",
+      path: "/pipe/in",
+      agent: false,
+      headers: {
+        Authorization: `Bearer ${endpoint.apiKey}`,
+        "Content-Type": "application/octet-stream",
+        "Content-Length": length,
+        "X-Haevn-Request": actionHeader(action),
+      },
+      ...(signal ? { signal } : {}),
+    });
+    req.on("error", (error) => end({ error }));
+    source.on("error", (error) => end({ error }));
+    req.on("response", (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("error", (error) => end({ error }));
+      res.on("close", () => {
+        if (!res.complete) {
+          end({ error: new Error("the daemon closed the answer before it ended") });
+          return;
+        }
+        answerOf<T>(res.statusCode ?? 0, Buffer.concat(chunks).toString("utf8")).then(
+          (data) => end({ data }),
+          (error) => end({ error }),
+        );
+      });
+    });
+    source.pipe(req);
+  });
+}
+
+/** The data of a `/pipe/in` answer, or the failure it stands for (read as `failureOf` reads one). */
+async function answerOf<T>(status: number, text: string): Promise<T> {
+  if (status !== 200) throw await failureOf(new Response(text, { status }));
+  let payload: CliResponse<T>;
+  try {
+    payload = JSON.parse(text) as CliResponse<T>;
+  } catch {
+    throw new DaemonCallError("protocol", "the daemon's answer is not JSON");
+  }
+  if (!payload.success) throw frameFailure(payload.error, payload.code);
+  return payload.data;
 }
 
 /** An error frame from the extension. A pipe the extension could not use is the transport's fault. */
