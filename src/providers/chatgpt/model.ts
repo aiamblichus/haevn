@@ -250,8 +250,8 @@ export interface OpenAITetherQuoteContent {
  * Web Browse display content.
  */
 export interface OpenAITetherBrowseDisplayContent {
-  /** The content type, always 'tether_Browse_display'. */
-  content_type: "tether_Browse_display";
+  /** The content type, always 'tether_browsing_display'. */
+  content_type: "tether_browsing_display";
   /** The result of the Browse action. */
   result: string;
   /** A summary of the Browse action. */
@@ -289,23 +289,36 @@ export interface OpenAIModelEditableContextContent {
 }
 
 /**
- * Content representing the AI's internal reasoning or "thoughts".
+ * One step of the AI's reasoning: a heading and the text under it. `chunks` is the same text as
+ * the site streamed it, so it is the fallback when `content` is blank.
+ */
+export interface OpenAIThought {
+  summary?: string | null;
+  content?: string | null;
+  chunks?: string[] | null;
+  finished?: boolean;
+}
+
+/**
+ * Content representing the AI's internal reasoning or "thoughts". The text is in `thoughts`; the
+ * node has no `text` field.
  */
 export interface OpenAIThoughtsContent {
   /** The content type, always 'thoughts'. */
   content_type: "thoughts";
-  /** The text of the thoughts. */
-  text: string | null;
+  /** The steps of the reasoning; empty when the site kept none. */
+  thoughts?: OpenAIThought[] | null;
+  source_analysis_msg_id?: string;
 }
 
 /**
- * A recap of the AI's reasoning.
+ * A recap of the AI's reasoning: a duration label such as "Thought for 4s", in `content`.
  */
 export interface OpenAIReasoningRecapContent {
   /** The content type, always 'reasoning_recap'. */
   content_type: "reasoning_recap";
-  /** The text of the reasoning recap. */
-  text: string | null;
+  /** The label. */
+  content?: string | null;
 }
 
 /**
