@@ -84,4 +84,23 @@ describe("qwen_transformer", () => {
 
     expect(chat.messages.m1.info).toBeUndefined();
   });
+
+  it("keeps the parent links Qwen sent: a first message sent again is a second root (HVN-150)", async () => {
+    const chat = await transformQwenToHaevn(
+      chatData([
+        message({ id: "m1", role: "user", content: "Hi" }),
+        message({ id: "a1", parentId: "m1" }),
+        message({ id: "m1b", role: "user", content: "Hi" }),
+        message({ id: "a1b", parentId: "m1b" }),
+        message({ id: "m2", role: "user", content: "More", parentId: "a1b" }),
+      ]),
+    );
+
+    const roots = Object.values(chat.messages)
+      .filter((m) => !m.parentId)
+      .map((m) => m.id)
+      .sort();
+    expect(roots).toEqual(["m1", "m1b"]);
+    expect(chat.messages.m2.parentId).toBe("a1b");
+  });
 });
