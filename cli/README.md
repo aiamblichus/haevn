@@ -237,12 +237,12 @@ The extension opens a tab on each provider's site (in your own Chrome), lists th
 Options:
 - `-p, --provider <list>` - Comma-separated provider names (default: every web provider)
 - `-n, --chats <n>` - Chats to check per provider, from the head of its list (default 2, at most 5)
-- `--timeout <s>` - Seconds to give one provider (default 40, 5 to 120). A large account can spend the 40 s listing its chats (the row says `TIMEOUT`, `listing the chats`): run that provider alone, `haevn health -p chatgpt --timeout 120`
+- `--timeout <s>` - Seconds to give one provider (default 40, or 120 for Gemini and AI Studio, which open each chat's page; 5 to 120). A large account can spend its limit listing its chats (the row says `TIMEOUT`, `listing the chats`): run that provider alone, `haevn health -p chatgpt --timeout 120`
 - `-f, --format <fmt>` - Output format (text, json)
 
 Notes:
 - A row is `ok`, `warn`, `fail`, `not signed in`, `unreachable`, `timeout` or `skipped`. A provider that is not signed in, unreachable or skipped was **not checked**; the last line counts them. A provider you know you are signed in to that shows `not signed in` is a failure of the check or of the stored sign-in details, not a pass: read its note.
-- Claude, ChatGPT and Gemini are checked first, so a run that runs out of time (4 minutes in all, 40 s a provider) skips the others, never these.
+- Claude, ChatGPT and Gemini are checked first, so a run that runs out of time (4 minutes in all, 40 s a provider or 120 s for Gemini and AI Studio) skips the others, never these.
 - Exit code 1 when a provider failed or timed out, or when Claude, ChatGPT or Gemini was skipped because the run ran out of time; 0 otherwise.
 - The run takes seconds to minutes and refuses to start while a sync, import or export holds the extension's operation lock.
 - The same operation runs from the extension: `haevnDebug.providerHealth()` on the Options page.

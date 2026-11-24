@@ -432,6 +432,109 @@ describe("providerHealth: what each step can find", () => {
   });
 });
 
+describe("providerHealth: a chat sync would not keep (HVN-148)", () => {
+  // Sync stores a Claude chat only when it holds text (hasTextContent), so the check does not rule
+  // on such a chat: it is named as a warning and not counted as checked.
+  it("a Claude chat that holds no messages is a warning, and the chat beside it is still checked", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("claude");
+    probe.script("claude", (s) => {
+      const empty = { ...claudeRaw(sentinels("claude0")), chat_messages: [] };
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: empty };
+    });
+    const report = await runProviderHealth({ providers: ["claude"] }, deps(probe));
+    const claude = row(report, "claude");
+    expect(claude, statuses(report)).toMatchObject({ status: "warn", checked: 1 });
+    expect(claude.findings).toEqual([
+      expect.objectContaining({ code: "chat.skipped", level: "warn", count: 1, chats: 1 }),
+    ]);
+    expect(claude.shapes).toHaveLength(2);
+    expect(claude.shapes[0].messages).toBe(0);
+  });
+
+  it("a Claude chat whose messages all have empty text is skipped the same way", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("claude");
+    probe.script("claude", (s) => {
+      const raw = claudeRaw(sentinels("claude0"));
+      raw.chat_messages[0].text = "";
+      raw.chat_messages[1].text = "";
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: raw };
+    });
+    const report = await runProviderHealth({ providers: ["claude"], chats: 1 }, deps(probe));
+    expect(row(report, "claude"), statuses(report)).toMatchObject({ status: "warn", checked: 0 });
+    expect(row(report, "claude").findings.map((f) => f.code)).toEqual(["chat.skipped"]);
+  });
+
+  it("another provider's empty chat is still a failure: its sync stores that chat, so the check does not excuse it", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("deepseek");
+    probe.script("deepseek", (s) => {
+      const raw = { ...(RAW_BY_PROVIDER.deepseek(sentinels("deepseek0")) as object), messages: [] };
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: raw };
+    });
+    const report = await runProviderHealth({ providers: ["deepseek"], chats: 1 }, deps(probe));
+    expect(row(report, "deepseek"), statuses(report)).toMatchObject({ status: "fail", checked: 1 });
+    expect(row(report, "deepseek").findings.map((f) => f.code)).toContain("messages.none");
+  });
+});
+
+describe("providerHealth: a navigation provider gets a longer default limit (HVN-149)", () => {
+  // Gemini and AI Studio read each chat by opening its page, so they are slow, not stuck: the
+  // probe spends the pace ohm measured on the fake clock (20 s to list, 15 s a chat).
+  const slowProbe = (): FakeProbe => {
+    const probe = new FakeProbe();
+    const listIds = probe.listIds.bind(probe);
+    const fetchChat = probe.fetchChat.bind(probe);
+    probe.listIds = async (tabId) => {
+      await vi.advanceTimersByTimeAsync(20_000);
+      return listIds(tabId);
+    };
+    probe.fetchChat = async (tabId, provider, chatId) => {
+      await vi.advanceTimersByTimeAsync(15_000);
+      return fetchChat(tabId, provider, chatId);
+    };
+    return probe;
+  };
+
+  it.each(["gemini", "aistudio"])(
+    "%s, with no limit sent, finishes two chats that take 50 s",
+    async (name) => {
+      fakeClock();
+      const probe = slowProbe();
+      const report = await untilSettled(
+        runProviderHealth({ providers: [name] }, deps(probe)),
+        probe,
+      );
+      expect(row(report, name), statuses(report)).toMatchObject({ status: "ok", checked: 2 });
+      expect(row(report, name).ms).toBeGreaterThan(40_000);
+    },
+  );
+
+  it("an API provider at the same pace still gets 40 s when no limit is sent", async () => {
+    fakeClock();
+    const probe = slowProbe();
+    const report = await untilSettled(
+      runProviderHealth({ providers: ["deepseek"] }, deps(probe)),
+      probe,
+    );
+    expect(row(report, "deepseek"), statuses(report)).toMatchObject({ status: "timeout" });
+    expect(row(report, "deepseek").note).toContain("40 s");
+    expect(row(report, "deepseek").note).toContain("fetching chat 2");
+  });
+
+  it("a limit the caller sent wins for a navigation provider too", async () => {
+    fakeClock();
+    const probe = slowProbe();
+    const report = await untilSettled(
+      runProviderHealth({ providers: ["gemini"], timeoutMs: 40_000 }, deps(probe)),
+      probe,
+    );
+    expect(row(report, "gemini"), statuses(report)).toMatchObject({ status: "timeout" });
+    expect(row(report, "gemini").note).toContain("40 s");
+  });
+});
+
 describe("providerHealth: a slow provider gets a time limit", () => {
   it("stops a list that never answers, reports a timeout, and goes on", async () => {
     fakeClock();
@@ -748,9 +851,10 @@ describe("normalizeHealthOptions", () => {
   it("fills the defaults and refuses what is out of range", () => {
     expect(normalizeHealthOptions(undefined)).toMatchObject({
       chats: 2,
-      timeoutMs: 40_000,
       totalMs: 240_000,
     });
+    // no limit sent is no limit here: each provider takes its own default (HVN-149)
+    expect(normalizeHealthOptions(undefined).timeoutMs).toBeUndefined();
     expect(() => normalizeHealthOptions({ chats: 0 })).toThrow(HealthRequestError);
     expect(() => normalizeHealthOptions({ chats: 6 })).toThrow(HealthRequestError);
     expect(() => normalizeHealthOptions({ chats: 1.5 })).toThrow(HealthRequestError);
