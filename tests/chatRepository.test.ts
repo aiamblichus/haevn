@@ -1,5 +1,12 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  acquireOperationLock,
+  beginSingleSync,
+  endSingleSync,
+  releaseOperationLock,
+  setActiveOperation,
+} from "../src/background/state";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import { ChatRepository } from "../src/services/chatRepository";
 import { getDB } from "../src/services/db";
@@ -249,5 +256,185 @@ describe("ChatRepository.hardDeleteChats leaves a chat that is no longer soft-de
     expect(await getDB().chats.get("revived")).toMatchObject({ deleted: 0 });
     expect(await getDB().chats.get("gone")).toBeUndefined();
     expect(dirsDeleted).toEqual(["gone"]);
+  });
+
+  // HVN-146: the Janitor waits for a restore, an import or a bulk sync (one lock stands for them all).
+  it("does nothing while an operation holds the lock, and deletes at the next run", async () => {
+    await seedFullChat("gone", 1);
+    await setActiveOperation("import");
+    try {
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(0);
+      expect(await getDB().chats.get("gone")).toMatchObject({ deleted: 1 });
+      expect(dirsDeleted).toEqual([]);
+      expect(unindexed).toEqual([]);
+    } finally {
+      await setActiveOperation("idle");
+    }
+
+    expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+    expect(await rowsOf("gone")).toBe(0);
+    expect(dirsDeleted).toEqual(["gone"]);
+  });
+
+  it("keeps a chat that was deleted again, inside its undo window, after the Janitor read it", async () => {
+    await seedFullChat("redeleted", 1);
+    await seedFullChat("gone", 1);
+    const db = getDB();
+    await db.chats.update("redeleted", { deletedAt: Date.now() - 10 * 60_000 });
+    await db.chats.update("gone", { deletedAt: Date.now() - 10 * 60_000 });
+    vi.spyOn(SearchIndexManager, "addOrUpdateChatInIndex").mockResolvedValue(undefined);
+    const read = ChatRepository.getSoftDeletedChatIds;
+    vi.spyOn(ChatRepository, "getSoftDeletedChatIds").mockImplementation(async (grace) => {
+      const ids = await read(grace);
+      expect(ids.sort()).toEqual(["gone", "redeleted"]);
+      // The person undoes the delete and deletes the chat again, between the read and the delete.
+      await ChatRepository.restoreChats(["redeleted"], 60 * 60_000);
+      await db.chats.update("redeleted", { deleted: 1, deletedAt: Date.now() });
+      return ids;
+    });
+
+    const count = await JanitorService.cleanupSoftDeletedChats(5 * 60_000);
+
+    expect(count).toBe(1);
+    expect(await db.chats.get("redeleted")).toMatchObject({ deleted: 1 });
+    expect(await db.chats.get("gone")).toBeUndefined();
+    expect(dirsDeleted).toEqual(["gone"]);
+  });
+
+  it("keeps a chat that is brought back after hardDeleteChats was called and before its transaction opens", async () => {
+    await seedFullChat("revived", 1);
+    await seedFullChat("gone", 1);
+    const db = getDB();
+    // The chat comes back after hardDeleteChats was called and before its transaction opens. A
+    // read made outside the transaction, ahead of this, would be stale by then.
+    const transaction = db.transaction.bind(db) as (...args: unknown[]) => unknown;
+    let revived = false;
+    vi.spyOn(db, "transaction").mockImplementation((async (...args: unknown[]) => {
+      if (!revived) {
+        revived = true;
+        await db.chats.update("revived", { deleted: 0 });
+      }
+      return transaction(...args);
+    }) as never);
+    const before = await rowsOf("revived");
+
+    const deleted = await ChatRepository.hardDeleteChats(["revived", "gone"]);
+
+    expect(deleted).toEqual(["gone"]);
+    expect(await rowsOf("revived")).toBe(before);
+    expect(await db.chats.get("revived")).toMatchObject({ deleted: 0 });
+    expect(dirsDeleted).toEqual(["gone"]);
+  });
+
+  it("aborts the whole chunk when a step inside the transaction fails", async () => {
+    await seedFullChat("a", 1);
+    await seedFullChat("b", 1);
+    const before = { a: await rowsOf("a"), b: await rowsOf("b") };
+    // The last table the delete reaches before the chat rows: everything above it is done by then.
+    vi.spyOn(getDB().embeddingQueue, "bulkDelete").mockRejectedValue(new Error("bad row"));
+
+    await expect(ChatRepository.hardDeleteChats(["a", "b"])).rejects.toThrow(/bad row/);
+
+    expect({ a: await rowsOf("a"), b: await rowsOf("b") }).toEqual(before);
+    expect(before.a).toBeGreaterThan(5);
+    expect(unindexed).toEqual([]);
+    expect(dirsDeleted).toEqual([]);
+  });
+
+  it("deletes the other chunks when one chunk fails, then reports the failure", async () => {
+    const db = getDB();
+    const ids = Array.from({ length: 250 }, (_, i) => `c${String(i).padStart(3, "0")}`);
+    await db.chats.bulkPut(
+      ids.map((id) => ({ ...buildChat(id), deleted: 1 as const, deletedAt: Date.now() - 10 })),
+    );
+    // The second chunk (c100 to c199) holds the bad row.
+    const bulkDelete = db.chatEmbeddings.bulkDelete.bind(db.chatEmbeddings);
+    vi.spyOn(db.chatEmbeddings, "bulkDelete").mockImplementation(async (keys: never) => {
+      if ((keys as string[]).includes("c150")) throw new Error("bad row");
+      return bulkDelete(keys);
+    });
+
+    await expect(ChatRepository.hardDeleteChats(ids)).rejects.toThrow(/bad row/);
+
+    const left = (await db.chats.toArray()).map((c) => c.id).sort();
+    expect(left).toEqual(ids.slice(100, 200));
+    expect(unindexed.sort()).toEqual([...ids.slice(0, 100), ...ids.slice(200)]);
+    expect(dirsDeleted.sort()).toEqual([...ids.slice(0, 100), ...ids.slice(200)]);
+  });
+
+  // HVN-146: a writer that comes after the Janitor has read its ids keeps the media folders, even
+  // one that has finished by the time the folders are about to go.
+  describe("when a writer begins after the Janitor started and before the media folders go", () => {
+    /** Runs `during` at the step between the row transaction and the folder deletion. */
+    function duringIndexRemoval(during: () => Promise<void>): void {
+      vi.spyOn(SearchIndexManager, "removeChatsFromIndexBulk").mockImplementation(async (ids) => {
+        unindexed.push(...ids);
+        await during();
+      });
+    }
+
+    it("keeps the folders of a restore that began and ended in that gap", async () => {
+      await seedFullChat("gone", 1);
+      duringIndexRemoval(async () => {
+        expect(await acquireOperationLock("import")).toBe(true);
+        await releaseOperationLock("import");
+      });
+
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+
+      expect(await rowsOf("gone")).toBe(0);
+      expect(unindexed).toEqual(["gone"]);
+      expect(dirsDeleted).toEqual([]);
+    });
+
+    it("keeps the folders of a single-chat sync that began and ended in that gap", async () => {
+      await seedFullChat("gone", 1);
+      duringIndexRemoval(async () => {
+        beginSingleSync();
+        endSingleSync();
+      });
+
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+
+      expect(await rowsOf("gone")).toBe(0);
+      expect(dirsDeleted).toEqual([]);
+    });
+
+    it("keeps the folders while a lock is held that nothing took through acquireOperationLock", async () => {
+      await seedFullChat("gone", 1);
+      duringIndexRemoval(() => setActiveOperation("import"));
+      try {
+        expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+        expect(dirsDeleted).toEqual([]);
+      } finally {
+        await setActiveOperation("idle");
+      }
+    });
+
+    it("looks again before each folder: a sync during the first folder's delete keeps the second", async () => {
+      await seedFullChat("first", 1);
+      await seedFullChat("second", 1);
+      const db = getDB();
+      await db.chats.update("first", { deletedAt: Date.now() - 20 });
+      await db.chats.update("second", { deletedAt: Date.now() - 10 });
+      vi.spyOn(getMediaStorageService(), "deleteChatDir").mockImplementation(async (id) => {
+        dirsDeleted.push(id);
+        beginSingleSync();
+        endSingleSync();
+        return true;
+      });
+
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(2);
+
+      expect(dirsDeleted).toEqual(["first"]);
+    });
+
+    it("removes the folders when nothing began", async () => {
+      await seedFullChat("gone", 1);
+
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+
+      expect(dirsDeleted).toEqual(["gone"]);
+    });
   });
 });

@@ -6,6 +6,7 @@ import { CacheService } from "../../services/cacheService";
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { beginSingleSync, endSingleSync } from "../state";
 import { safeSendMessage } from "./messageUtils";
 import { transformRawDataToHaevn } from "./platformTransform";
 
@@ -70,6 +71,23 @@ export async function transformAndSaveChat(
   hostname: string,
   origin?: string,
   tabId?: number,
+): Promise<string[]> {
+  // The transform downloads the chat's media and the save writes its row, with no operation lock
+  // held: the count tells the Janitor not to delete media in that gap (HVN-146).
+  beginSingleSync();
+  try {
+    return await transformAndSave(rawData, platformName, hostname, origin, tabId);
+  } finally {
+    endSingleSync();
+  }
+}
+
+async function transformAndSave(
+  rawData: AllProviderRawData,
+  platformName: string | undefined,
+  hostname: string,
+  origin: string | undefined,
+  tabId: number | undefined,
 ): Promise<string[]> {
   const haevnChats = await transformRawDataToHaevn(rawData, platformName, hostname, tabId);
 

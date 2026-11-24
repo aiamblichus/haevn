@@ -636,6 +636,21 @@ export namespace ChatRepository {
     }
   }
 
+  /** Chats per transaction in {@link hardDeleteChats}: bounds one transaction and what a failure rolls back. */
+  const HARD_DELETE_CHUNK_SIZE = 100;
+
+  export interface HardDeleteOptions {
+    /** A chat is deleted only if it was soft-deleted at least this long ago. */
+    gracePeriodMs?: number;
+    /**
+     * Asked after the rows are gone and before each media folder is removed: false keeps that
+     * folder and the ones after it (HVN-146). A restore, an import or a sync that began since writes
+     * media before its row, so the folder may hold files of a chat that is about to come back. A
+     * folder kept for a chat that stays gone is removed by the media sweep.
+     */
+    mayDeleteMedia?: () => Promise<boolean>;
+  }
+
   /**
    * Hard-deletes one or more chats from the local archive.
    * Performs actual cleanup: removes DB rows, thumbnails, mediaContent, OPFS files, and search index entries.
@@ -643,94 +658,152 @@ export namespace ChatRepository {
    *
    * The ids come from a read made earlier, so each row is read again inside the transaction that
    * deletes it: a chat that is no longer soft-deleted (a restore or a sync brought it back since)
-   * is left alone, and so are its media and its search entries (HVN-138).
+   * is left alone, and so are its media and its search entries (HVN-138). With `gracePeriodMs`,
+   * a chat deleted again since the read, and so inside its undo window again, is left alone too.
+   *
+   * The ids go in chunks, one transaction each: a bad row fails its chunk (rolled back whole) and
+   * the other chunks are still deleted. The search index and the media of the chats that went are
+   * cleaned up, and then the call throws if any chunk failed.
    * @param chatIds An array of chat IDs to permanently delete.
-   * @returns The ids that were deleted: those that were still soft-deleted.
+   * @param options The grace period and the media check, both optional.
+   * @returns The ids that were deleted: those that were still soft-deleted (and past the grace).
    */
-  export async function hardDeleteChats(chatIds: string[]): Promise<string[]> {
+  export async function hardDeleteChats(
+    chatIds: string[],
+    options: HardDeleteOptions = {},
+  ): Promise<string[]> {
     if (chatIds.length === 0) return [];
+    const { gracePeriodMs, mayDeleteMedia } = options;
     try {
       const db = getDB();
+      const doomed: string[] = [];
+      let failedChunks = 0;
+      let firstFailure: unknown;
 
-      // One transaction for the check and every row it removes: a chat saved again before this
-      // runs is seen as live, and one saved after it is written on a clean slate, never
-      // half-deleted. Nothing in here may wait on anything but Dexie.
-      const doomed = await db.transaction(
-        "rw",
-        [
-          db.chats,
-          db.chatMessages,
-          db.thumbnails,
-          db.mediaContent,
-          db.chatMetadata,
-          db.chatEmbeddings,
-          db.metadataQueue,
-          db.embeddingQueue,
-        ],
-        async () => {
-          const rows = await db.chats.bulkGet(chatIds);
-          const ids = rows
-            .filter((c): c is Chat & { id: string } => !!c?.id && c.deleted === 1)
-            .map((c) => c.id);
-          if (ids.length === 0) return ids;
+      for (let i = 0; i < chatIds.length; i += HARD_DELETE_CHUNK_SIZE) {
+        const chunk = chatIds.slice(i, i + HARD_DELETE_CHUNK_SIZE);
+        try {
+          // One transaction for the check and every row it removes: a chat saved again before this
+          // runs is seen as live, and one saved after it is written on a clean slate, never
+          // half-deleted. Nothing in here may wait on anything but Dexie.
+          const removed = await db.transaction(
+            "rw",
+            [
+              db.chats,
+              db.chatMessages,
+              db.thumbnails,
+              db.mediaContent,
+              db.chatMetadata,
+              db.chatEmbeddings,
+              db.metadataQueue,
+              db.embeddingQueue,
+            ],
+            async () => {
+              const threshold =
+                gracePeriodMs === undefined ? undefined : Date.now() - gracePeriodMs;
+              const rows = await db.chats.bulkGet(chunk);
+              const ids = rows
+                .filter(
+                  (c): c is Chat & { id: string } =>
+                    !!c?.id &&
+                    c.deleted === 1 &&
+                    (threshold === undefined ||
+                      (typeof c.deletedAt === "number" && c.deletedAt < threshold)),
+                )
+                .map((c) => c.id);
+              if (ids.length === 0) return ids;
 
-          const thumbnails = await db.thumbnails.where("chatId").anyOf(ids).toArray();
-          const thumbnailIds = thumbnails
-            .map((t) => t.id)
-            .filter((id): id is number => id !== undefined);
-          if (thumbnailIds.length > 0) {
-            await db.mediaContent.bulkDelete(thumbnailIds);
-            await db.thumbnails.bulkDelete(thumbnailIds);
-          }
-          await db.chatMessages.where("chatId").anyOf(ids).delete();
-          await db.chatMetadata.bulkDelete(ids);
-          await db.chatEmbeddings.bulkDelete(ids);
-          await db.metadataQueue.bulkDelete(ids);
-          await db.embeddingQueue.bulkDelete(ids);
-          await db.chats.bulkDelete(ids);
-          return ids;
-        },
-      );
+              const thumbnails = await db.thumbnails.where("chatId").anyOf(ids).toArray();
+              const thumbnailIds = thumbnails
+                .map((t) => t.id)
+                .filter((id): id is number => id !== undefined);
+              if (thumbnailIds.length > 0) {
+                await db.mediaContent.bulkDelete(thumbnailIds);
+                await db.thumbnails.bulkDelete(thumbnailIds);
+              }
+              await db.chatMessages.where("chatId").anyOf(ids).delete();
+              await db.chatMetadata.bulkDelete(ids);
+              await db.chatEmbeddings.bulkDelete(ids);
+              await db.metadataQueue.bulkDelete(ids);
+              await db.embeddingQueue.bulkDelete(ids);
+              await db.chats.bulkDelete(ids);
+              return ids;
+            },
+          );
+          doomed.push(...removed);
+        } catch (error) {
+          failedChunks++;
+          firstFailure ??= error;
+          log.error(
+            `Failed to hard-delete a chunk of ${chunk.length} chats; it is left as it was`,
+            error,
+          );
+        }
+      }
 
       if (doomed.length < chatIds.length) {
         log.info(
-          `Kept ${chatIds.length - doomed.length} of ${chatIds.length} chats: no longer soft-deleted`,
+          `Left ${chatIds.length - doomed.length} of ${chatIds.length} chats as they were: brought back, deleted again, or in a chunk that failed`,
         );
       }
-      if (doomed.length === 0) return doomed;
-      log.info(`Hard-deleted chats: ${doomed.join(", ")}`);
-
-      // Update search index in bulk
-      try {
-        await SearchIndexManager.removeChatsFromIndexBulk(doomed);
-      } catch (e) {
-        log.warn("Failed to update the search index for deletions", e);
+      if (doomed.length > 0) {
+        log.info(`Hard-deleted chats: ${doomed.join(", ")}`);
+        await cleanUpAfterHardDelete(doomed, mayDeleteMedia);
       }
-
-      // Clean up OPFS media files for deleted chats
-      try {
-        const { getMediaStorageService } = await import("./mediaStorage");
-        const mediaStorage = getMediaStorageService();
-
-        // Run OPFS deletions in parallel
-        const results = await Promise.all(
-          doomed.map((chatId) => mediaStorage.deleteChatDir(chatId)),
-        );
-        const failed = results.filter((ok) => !ok).length;
-        log.info(`Cleaned up OPFS media for ${doomed.length - failed} of ${doomed.length} chats`);
-        if (failed > 0) {
-          log.warn(`${failed} chat media folders could not be deleted; the media sweep will retry`);
-        }
-      } catch (e) {
-        log.warn("Failed to clean up OPFS media for deletions", e);
-        // Don't throw - deletion failures shouldn't block chat deletion
-      }
+      if (failedChunks > 0) throw firstFailure;
       return doomed;
     } catch (error) {
-      log.error(`Failed to hard-delete chats ${chatIds.join(", ")}`, error);
+      log.error(`Failed to hard-delete ${chatIds.length} chats`, error);
       throw new Error(
         `Failed to hard-delete chats: ${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  /** What follows the commit of a hard delete: the search index and the OPFS media of the chats that went. */
+  async function cleanUpAfterHardDelete(
+    doomed: string[],
+    mayDeleteMedia: HardDeleteOptions["mayDeleteMedia"],
+  ): Promise<void> {
+    // Update search index in bulk
+    try {
+      await SearchIndexManager.removeChatsFromIndexBulk(doomed);
+    } catch (e) {
+      log.warn("Failed to update the search index for deletions", e);
+    }
+
+    // Clean up OPFS media files for deleted chats
+    try {
+      const { getMediaStorageService } = await import("./mediaStorage");
+      const mediaStorage = getMediaStorageService();
+
+      // One folder at a time, each after its own look, so a look is never older than the
+      // deleteChatDir that follows it. What is left is that call itself: a writer would have to
+      // begin and reach its first media file inside it. A folder kept for a chat that does not come
+      // back is collected by the media sweep once its files are a day old.
+      let removed = 0;
+      let failed = 0;
+      let kept = 0;
+      for (const chatId of doomed) {
+        if (mayDeleteMedia && !(await mayDeleteMedia())) {
+          kept = doomed.length - removed - failed;
+          break;
+        }
+        if (await mediaStorage.deleteChatDir(chatId)) removed++;
+        else failed++;
+      }
+      if (kept > 0) {
+        log.info(
+          `Kept the media folders of ${kept} of ${doomed.length} chats: another operation is writing chats`,
+        );
+      }
+      log.info(`Cleaned up OPFS media for ${removed} of ${doomed.length} chats`);
+      if (failed > 0) {
+        log.warn(`${failed} chat media folders could not be deleted; the media sweep will retry`);
+      }
+    } catch (e) {
+      log.warn("Failed to clean up OPFS media for deletions", e);
+      // Don't throw - deletion failures shouldn't block chat deletion
     }
   }
 

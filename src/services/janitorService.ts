@@ -14,6 +14,11 @@
  * and ensures we don't immediately commit to expensive file operations.
  */
 
+import {
+  chatWritersGeneration,
+  getActiveOperation,
+  singleSyncsInFlight,
+} from "../background/state";
 import { SOFT_DELETE_GRACE_MS } from "../types/messaging";
 import { log } from "../utils/logger";
 import { ChatRepository } from "./chatRepository";
@@ -33,11 +38,27 @@ const MEDIA_SWEEP_FIRST_SEEN_KEY = "janitor:media-sweep:first-seen";
 // Chats must be soft-deleted for at least this long before permanent cleanup
 const DEFAULT_GRACE_PERIOD_MS = SOFT_DELETE_GRACE_MS;
 
+/**
+ * What is writing chats now, if anything: an operation that holds the lock, or a single-chat
+ * sync (which takes none). Null when nothing is.
+ */
+async function whatIsWritingChats(): Promise<string | null> {
+  const operation = await getActiveOperation();
+  if (operation !== "idle") return operation;
+  return singleSyncsInFlight() > 0 ? "a single-chat sync" : null;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace JanitorService {
   /**
    * Cleans up all soft-deleted chats that have passed the grace period.
    * This should be called periodically (e.g., on startup, via chrome.alarms, or on idle).
+   *
+   * It does nothing while a bulk sync, an import (the ZIP import and the restore take the same
+   * lock), a bulk export or a health check holds the operation lock, or while a single-chat sync
+   * is running (it takes no lock; `singleSyncsInFlight` counts it). The check is made again
+   * before each media folder is removed, and then it also fails if a restore, an import or a sync
+   * began and ended since the run started (`chatWritersGeneration`).
    *
    * @param gracePeriodMs Time in milliseconds that must pass after soft deletion before permanent cleanup
    * @returns Number of chats permanently deleted
@@ -46,6 +67,19 @@ export namespace JanitorService {
     gracePeriodMs: number = DEFAULT_GRACE_PERIOD_MS,
   ): Promise<number> {
     try {
+      // A restore, an import, a bulk sync and a single-chat sync write a chat's media before its
+      // row: the chat is still soft-deleted in that gap, and the Janitor would delete the new
+      // media. The Janitor yields to them and waits for its next run (HVN-146).
+      // The generation is read first. A writer that began before it is running now, and the check
+      // below sees it; one that begins after it moves the generation, whether or not it has
+      // finished by the time the folders go (see mayDeleteMedia).
+      const generation = chatWritersGeneration();
+      const running = await whatIsWritingChats();
+      if (running) {
+        log.info(`[Janitor] Not cleaning up while ${running} is running`);
+        return 0;
+      }
+
       const chatIds = await ChatRepository.getSoftDeletedChatIds(gracePeriodMs);
 
       if (chatIds.length === 0) {
@@ -56,7 +90,13 @@ export namespace JanitorService {
       log.info(`[Janitor] Found ${chatIds.length} soft-deleted chats ready for cleanup`);
 
       // Some may have been restored since the read: only the ones it deleted are counted.
-      const deleted = await ChatRepository.hardDeleteChats(chatIds);
+      const deleted = await ChatRepository.hardDeleteChats(chatIds, {
+        gracePeriodMs,
+        // Asked before each media folder goes: an operation that is running, or that began since the
+        // generation was read (and may be done already), keeps the folders.
+        mayDeleteMedia: async () =>
+          (await whatIsWritingChats()) === null && chatWritersGeneration() === generation,
+      });
 
       log.info(`[Janitor] Successfully cleaned up ${deleted.length} chats`);
       return deleted.length;

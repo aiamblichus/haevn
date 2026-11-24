@@ -161,6 +161,39 @@ export async function setActiveOperation(operation: ActiveOperation): Promise<vo
   await storage.set(ACTIVE_OPERATION_KEY, operation);
 }
 
+// Single-chat syncs (the popup's and the CLI's) take no operation lock: they are short, and they
+// run beside one another. The Janitor must still know one is running, because a sync writes a
+// chat's media before its row (HVN-146). The count lives in the service worker's memory on
+// purpose: a sync does not outlive the worker, so neither should its count.
+let singleSyncs = 0;
+
+// A count of what is running now cannot say that a writer came and went. This one only grows: it
+// moves whenever something that writes chats begins (an operation lock taken, a single sync
+// started), so a reader that noted it earlier can tell that something has begun since, however
+// short its run (HVN-146).
+let writersGeneration = 0;
+
+/** The generation of chat writers: it moves each time an operation lock is taken or a single sync begins. */
+export function chatWritersGeneration(): number {
+  return writersGeneration;
+}
+
+/** A single-chat sync starts. Pair it with {@link endSingleSync} in a `finally`. */
+export function beginSingleSync(): void {
+  writersGeneration += 1;
+  singleSyncs += 1;
+}
+
+/** A single-chat sync ends, however it ended. */
+export function endSingleSync(): void {
+  singleSyncs = Math.max(0, singleSyncs - 1);
+}
+
+/** How many single-chat syncs are running now. */
+export function singleSyncsInFlight(): number {
+  return singleSyncs;
+}
+
 /**
  * Attempts to acquire the operation lock.
  * @param operation The operation requesting the lock
@@ -172,6 +205,8 @@ export async function acquireOperationLock(operation: ActiveOperation): Promise<
     log.warn(`Cannot start ${operation}: ${current} is active`);
     return false;
   }
+  // Before the lock is written: a reader never sees the lock without the new generation
+  writersGeneration += 1;
   await setActiveOperation(operation);
   log.info(`Operation lock acquired: ${operation}`);
   return true;
