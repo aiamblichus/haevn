@@ -68,6 +68,14 @@ import type {
 import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
 import { parseMarkdownContent } from "../utils/markdownImporter";
+import {
+  beginRestore,
+  finishRestore,
+  type RestoreBeginResult,
+  type RestoreFinishResult,
+  restoreChat,
+  restoreMedia,
+} from "./backup/restoreSession";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
 import { chromeHealthDeps } from "./health/chromeProbe";
 import {
@@ -109,7 +117,18 @@ type WsRequest =
   | { id: string; action: "backupInfo" }
   | { id: string; action: "backupList"; after?: string; limit: number }
   | { id: string; action: "backupChat"; chatId: string; pipeId: string }
-  | { id: string; action: "backupMedia"; chatId: string; name: string; pipeId: string };
+  | { id: string; action: "backupMedia"; chatId: string; name: string; pipeId: string }
+  | { id: string; action: "restoreBegin"; chats: number }
+  | {
+      id: string;
+      action: "restoreMedia";
+      chatId: string;
+      name: string;
+      bytes: number;
+      pipeId: string;
+    }
+  | { id: string; action: "restoreChat"; chatId: string; pipeId: string; index: boolean }
+  | { id: string; action: "restoreFinish"; rebuildIndex: boolean };
 
 /** What `haevn health` may ask for; the same fields as the extension's providerHealth message. */
 interface WsHealthOptions {
@@ -655,6 +674,14 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleBackupChat(id, req);
       case "backupMedia":
         return await handleBackupMedia(id, req);
+      case "restoreBegin":
+        return await handleRestoreBegin(id, req);
+      case "restoreMedia":
+        return await handleRestoreMedia(id, req);
+      case "restoreChat":
+        return await handleRestoreChat(id, req);
+      case "restoreFinish":
+        return await handleRestoreFinish(id, req);
       default: {
         const _exhaustive: never = req;
         void _exhaustive;
@@ -1097,6 +1124,75 @@ async function handleBackupMedia(
   }
 }
 
+/**
+ * The restore actions (HVN-136). The session behind them (the lock, the idle timer, what happens
+ * after each chat) is `./backup/restoreSession`; the write is `services/backup/backupRestore`. The
+ * bridge checks the shape of the request and answers.
+ */
+async function handleRestoreBegin(
+  id: string,
+  req: Extract<WsRequest, { action: "restoreBegin" }>,
+): Promise<WsResponse<RestoreBeginResult>> {
+  return answerBackup(id, () => beginRestore({ chats: req.chats }));
+}
+
+async function handleRestoreMedia(
+  id: string,
+  req: Extract<WsRequest, { action: "restoreMedia" }>,
+): Promise<WsResponse<{ bytes: number }>> {
+  return answerBackup(id, async () => {
+    requirePipeId(req.pipeId);
+    requireString(req.chatId, "chatId");
+    requireString(req.name, "name");
+    return restoreMedia({
+      chatId: req.chatId,
+      name: req.name,
+      bytes: req.bytes,
+      openBody: () => readFromPipe(req.pipeId),
+    });
+  });
+}
+
+async function handleRestoreChat(
+  id: string,
+  req: Extract<WsRequest, { action: "restoreChat" }>,
+): Promise<WsResponse<{ replaced: boolean }>> {
+  return answerBackup(id, async () => {
+    requirePipeId(req.pipeId);
+    requireString(req.chatId, "chatId");
+    return restoreChat({
+      chatId: req.chatId,
+      index: req.index === true,
+      openBody: () => readFromPipe(req.pipeId),
+    });
+  });
+}
+
+async function handleRestoreFinish(
+  id: string,
+  req: Extract<WsRequest, { action: "restoreFinish" }>,
+): Promise<WsResponse<RestoreFinishResult>> {
+  return answerBackup(id, () => finishRestore({ rebuildIndex: req.rebuildIndex === true }));
+}
+
+/** Runs a backup action and answers its result; a BackupError becomes an error frame with its code. */
+async function answerBackup<T>(id: string, work: () => Promise<T>): Promise<WsResponse<T>> {
+  try {
+    return { id, success: true, data: await work() };
+  } catch (err) {
+    if (err instanceof BackupError) {
+      return { id, success: false, error: err.message, code: err.code };
+    }
+    throw err;
+  }
+}
+
+function requireString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string" || value === "") {
+    throw new BackupError("BAD_REQUEST", `${field} must be a non-empty string`);
+  }
+}
+
 /** A pipe id is 128 random bits, in base64url or hex. Nothing else goes into a URL with the key. */
 const PIPE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -1127,6 +1223,33 @@ async function sendToPipe(pipeId: string, body: Blob): Promise<number> {
     throw new BackupError("PIPE_FAILED", `the daemon's pipe answered ${res.status}`);
   }
   return body.size;
+}
+
+/**
+ * Opens the CLI's upload on the daemon's pipe, for a restore action. The mirror of `sendToPipe`:
+ * the same URL, the same Bearer key, and a failure is PIPE_FAILED. The body stays a stream, so a
+ * chat of hundreds of megabytes is never held whole.
+ */
+async function readFromPipe(pipeId: string): Promise<{
+  stream: ReadableStream<Uint8Array>;
+  bytes: number | null;
+}> {
+  const { port, apiKey } = await getCliSettings();
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/pipe/${pipeId}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+  } catch (err) {
+    throw new BackupError("PIPE_FAILED", `the daemon's pipe is not reachable: ${String(err)}`);
+  }
+  if (!res.ok || !res.body) {
+    throw new BackupError("PIPE_FAILED", `the daemon's pipe answered ${res.status}`);
+  }
+  const announced = res.headers.get("content-length");
+  const bytes = announced !== null && /^\d+$/.test(announced) ? Number(announced) : null;
+  return { stream: res.body, bytes };
 }
 
 async function handleImport(

@@ -28,7 +28,11 @@ export interface BackupRecordHeader {
   embedding: ChatEmbeddingRecord | null;
 }
 
-export type BackupErrorCode = "NOT_FOUND" | "BAD_REQUEST" | "PIPE_FAILED";
+/**
+ * `BUSY`: another operation holds the lock (restoreBegin). `NO_SESSION`: a restore request came
+ * with no open session, so it wrote nothing.
+ */
+export type BackupErrorCode = "NOT_FOUND" | "BAD_REQUEST" | "PIPE_FAILED" | "BUSY" | "NO_SESSION";
 
 /** A backup request that cannot be answered. The bridge sends `code` in the error frame. */
 export class BackupError extends Error {

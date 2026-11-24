@@ -216,16 +216,24 @@ export class FakeOpfs {
         return new File([node.data.slice()], name, { lastModified: node.lastModified });
       },
       async createWritable() {
-        let pending = node.data.slice();
+        // As in Chrome: a writable starts empty and each write follows the one before; the file
+        // is replaced when the writable closes, and not at all when it is aborted.
+        const chunks: Uint8Array[] = [];
         let done = false;
         return {
           async write(chunk: unknown) {
             if (self.failures.writableWriteThrows) throw domError("QuotaExceededError");
-            pending = toBytes(chunk);
+            chunks.push(toBytes(chunk));
           },
           async close() {
             if (done) throw new TypeError("stream is closed");
             done = true;
+            const pending = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+            let at = 0;
+            for (const chunk of chunks) {
+              pending.set(chunk, at);
+              at += chunk.byteLength;
+            }
             node.data = pending;
             node.lastModified = Date.now();
             self.counts.writableClosed += 1;

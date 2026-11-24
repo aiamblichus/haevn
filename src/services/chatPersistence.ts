@@ -144,6 +144,27 @@ export async function saveChatToDb(chat: Chat): Promise<void> {
 }
 
 /**
+ * Deletes a chat's thumbnail rows and the `mediaContent` rows they point at, and answers how many
+ * of each went. Inside a transaction over `thumbnails` and `mediaContent` it is part of that
+ * transaction; the caller decides what a failure costs. A save that overwrites a chat
+ * (`saveChat`) and a restore that replaces one (`restoreChatRecord`) both start here, so a replaced
+ * chat never keeps a thumbnail of what it used to hold.
+ */
+export async function deleteChatThumbnails(
+  chatId: string,
+): Promise<{ thumbnails: number; content: number }> {
+  const db = getDB();
+  const rows = await db.thumbnails.where("chatId").equals(chatId).toArray();
+  // `mediaContent` rows share the id of their thumbnail
+  const ids = rows.map((row) => row.id).filter((id): id is number => id !== undefined);
+  if (ids.length > 0) {
+    await db.mediaContent.bulkDelete(ids);
+  }
+  const thumbnails = await db.thumbnails.where("chatId").equals(chatId).delete();
+  return { thumbnails, content: ids.length };
+}
+
+/**
  * Whether a chat's messages are still in its row, the layout before v17: the move has not reached
  * the chat yet (HVN-31). A saved chat, or one the move has emptied, holds none in its row.
  */
@@ -180,28 +201,14 @@ export async function saveChat(haevnChat: Chat, rawPlatformData: unknown): Promi
 
         // 2. Clean up thumbnail metadata from database
         try {
-          const db = getDB();
-
-          // Get all thumbnail IDs for this chat
-          const thumbnails = await db.thumbnails.where("chatId").equals(haevnChat.id).toArray();
-
-          const thumbnailIds = thumbnails
-            .map((t) => t.id)
-            .filter((id): id is number => id !== undefined);
-
-          // Delete corresponding mediaContent entries
-          if (thumbnailIds.length > 0) {
-            await db.mediaContent.bulkDelete(thumbnailIds);
+          const { thumbnails, content } = await deleteChatThumbnails(haevnChat.id);
+          if (content > 0) {
             log.info(
-              `[ChatPersistence] Deleted ${thumbnailIds.length} mediaContent entries for chat ${haevnChat.id}`,
+              `[ChatPersistence] Deleted ${content} mediaContent entries for chat ${haevnChat.id}`,
             );
           }
-
-          // Delete thumbnail entries
-          const deletedCount = await db.thumbnails.where("chatId").equals(haevnChat.id).delete();
-
           log.info(
-            `[ChatPersistence] Deleted ${deletedCount} thumbnail entries for overwritten chat: ${haevnChat.id}`,
+            `[ChatPersistence] Deleted ${thumbnails} thumbnail entries for overwritten chat: ${haevnChat.id}`,
           );
         } catch (error) {
           log.error(
