@@ -479,6 +479,62 @@ describe("providerHealth: a chat sync would not keep (HVN-148)", () => {
   });
 });
 
+describe("providerHealth: a navigation provider gets a longer default limit (HVN-149)", () => {
+  // Gemini and AI Studio read each chat by opening its page, so they are slow, not stuck: the
+  // probe spends the pace ohm measured on the fake clock (20 s to list, 15 s a chat).
+  const slowProbe = (): FakeProbe => {
+    const probe = new FakeProbe();
+    const listIds = probe.listIds.bind(probe);
+    const fetchChat = probe.fetchChat.bind(probe);
+    probe.listIds = async (tabId) => {
+      await vi.advanceTimersByTimeAsync(20_000);
+      return listIds(tabId);
+    };
+    probe.fetchChat = async (tabId, provider, chatId) => {
+      await vi.advanceTimersByTimeAsync(15_000);
+      return fetchChat(tabId, provider, chatId);
+    };
+    return probe;
+  };
+
+  it.each(["gemini", "aistudio"])(
+    "%s, with no limit sent, finishes two chats that take 50 s",
+    async (name) => {
+      fakeClock();
+      const probe = slowProbe();
+      const report = await untilSettled(
+        runProviderHealth({ providers: [name] }, deps(probe)),
+        probe,
+      );
+      expect(row(report, name), statuses(report)).toMatchObject({ status: "ok", checked: 2 });
+      expect(row(report, name).ms).toBeGreaterThan(40_000);
+    },
+  );
+
+  it("an API provider at the same pace still gets 40 s when no limit is sent", async () => {
+    fakeClock();
+    const probe = slowProbe();
+    const report = await untilSettled(
+      runProviderHealth({ providers: ["deepseek"] }, deps(probe)),
+      probe,
+    );
+    expect(row(report, "deepseek"), statuses(report)).toMatchObject({ status: "timeout" });
+    expect(row(report, "deepseek").note).toContain("40 s");
+    expect(row(report, "deepseek").note).toContain("fetching chat 2");
+  });
+
+  it("a limit the caller sent wins for a navigation provider too", async () => {
+    fakeClock();
+    const probe = slowProbe();
+    const report = await untilSettled(
+      runProviderHealth({ providers: ["gemini"], timeoutMs: 40_000 }, deps(probe)),
+      probe,
+    );
+    expect(row(report, "gemini"), statuses(report)).toMatchObject({ status: "timeout" });
+    expect(row(report, "gemini").note).toContain("40 s");
+  });
+});
+
 describe("providerHealth: a slow provider gets a time limit", () => {
   it("stops a list that never answers, reports a timeout, and goes on", async () => {
     fakeClock();
@@ -795,9 +851,10 @@ describe("normalizeHealthOptions", () => {
   it("fills the defaults and refuses what is out of range", () => {
     expect(normalizeHealthOptions(undefined)).toMatchObject({
       chats: 2,
-      timeoutMs: 40_000,
       totalMs: 240_000,
     });
+    // no limit sent is no limit here: each provider takes its own default (HVN-149)
+    expect(normalizeHealthOptions(undefined).timeoutMs).toBeUndefined();
     expect(() => normalizeHealthOptions({ chats: 0 })).toThrow(HealthRequestError);
     expect(() => normalizeHealthOptions({ chats: 6 })).toThrow(HealthRequestError);
     expect(() => normalizeHealthOptions({ chats: 1.5 })).toThrow(HealthRequestError);

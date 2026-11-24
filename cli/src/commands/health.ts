@@ -42,7 +42,7 @@ export default defineCommand({
     },
     timeout: {
       type: "string",
-      description: "Seconds to give one provider (default: 40)",
+      description: "Seconds to give one provider (default: 40; 120 for Gemini and AI Studio)",
     },
     format: {
       type: "string",

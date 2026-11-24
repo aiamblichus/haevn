@@ -82,7 +82,7 @@ Total: seven at 3 minutes and two at 5, **31 minutes**, plus the 5 before and ab
   - **`text.empty` on ChatGPT** is most likely a finding about our transformer (it reads `.text` of the `thoughts` and `reasoning_recap` nodes, which may carry their text elsewhere), not about the site. Open a ticket for it; it does not block the release. A `text.empty` on Claude or Gemini does block.
   - `title.fallback` on the newest chat, Poe `tree.multiple-roots` (a chat break makes a root by design) and ChatGPT or Gemini warns are warns: they never change the exit code and never block.
   - A provider you know you are signed in to that shows `not signed in` is a failure of the check or of token capture, not a pass: read its note, open the site in that Chrome, and run it again.
-  - A large account can spend the 40 s on listing: `TIMEOUT` with `listing the chats`. Run that provider alone with `--timeout 120`.
+  - A large account can spend its limit listing its chats: `TIMEOUT` with `listing the chats`. Run that provider alone with `--timeout 120`. Gemini and AI Studio have 120 s by default, since they open each chat's page; the others have 40 s.
   - Exit code 1 means a provider failed or timed out, or a release-blocking one (Claude, ChatGPT, Gemini) was skipped for time: check it alone with `-p`.
 
 ## Import-only half (a peer, the dev profile)

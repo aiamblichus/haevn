@@ -102,7 +102,10 @@ export interface ProviderHealthOptions {
   providers?: string[];
   /** Chats to fetch from the head of each provider's list (default 2, at most 5). */
   chats?: number;
-  /** The limit for one provider, in ms (default 40 s, 5 s to 120 s). */
+  /**
+   * The limit for one provider, in ms (5 s to 120 s). Omitted, each provider gets its default: 120 s
+   * for a navigation provider (Gemini, AI Studio), 40 s for the rest.
+   */
   timeoutMs?: number;
   /** The limit for the whole run, in ms (default 240 s). */
   totalMs?: number;
@@ -111,6 +114,8 @@ export interface ProviderHealthOptions {
 export const DEFAULT_CHATS = 2;
 export const MAX_CHATS = 5;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 40_000;
+/** A navigation provider opens each chat's page: about 20 s, and 12 s more a chat (HVN-149). */
+export const NAVIGATION_PROVIDER_TIMEOUT_MS = 120_000;
 export const DEFAULT_TOTAL_MS = 240_000;
 
 /** The request was malformed (an unknown provider name, a number out of range). */
@@ -595,14 +600,32 @@ async function checkProvider(
 export interface ResolvedHealthOptions {
   providers?: string[];
   chats: number;
-  timeoutMs: number;
+  /** undefined when the caller sent none: each provider then takes its own default. */
+  timeoutMs?: number;
   totalMs: number;
+}
+
+/**
+ * The limit one provider gets: the caller's when it sent one, else the provider's own default
+ * (HVN-149). A navigation provider reads each chat by opening its page, so it is slow, not stuck.
+ */
+function providerTimeoutMs(provider: Provider, requested: number | undefined): number {
+  if (requested !== undefined) return requested;
+  return provider.bulkSyncConfig?.mode === "navigation"
+    ? NAVIGATION_PROVIDER_TIMEOUT_MS
+    : DEFAULT_PROVIDER_TIMEOUT_MS;
 }
 
 /** Turn what a caller sent into options in range; a bad value is a request error, not a default. */
 export function normalizeHealthOptions(input: unknown): ResolvedHealthOptions {
   const raw = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
-  const integer = (name: string, value: unknown, min: number, max: number, fallback: number) => {
+  const integer = <F extends number | undefined>(
+    name: string,
+    value: unknown,
+    min: number,
+    max: number,
+    fallback: F,
+  ): number | F => {
     if (value === undefined || value === null) return fallback;
     if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
       throw new HealthRequestError(`${name} must be a whole number from ${min} to ${max}`);
@@ -619,7 +642,7 @@ export function normalizeHealthOptions(input: unknown): ResolvedHealthOptions {
   return {
     providers,
     chats: integer("chats", raw.chats, 1, MAX_CHATS, DEFAULT_CHATS),
-    timeoutMs: integer("timeoutMs", raw.timeoutMs, 5_000, 120_000, DEFAULT_PROVIDER_TIMEOUT_MS),
+    timeoutMs: integer("timeoutMs", raw.timeoutMs, 5_000, 120_000, undefined),
     totalMs: integer("totalMs", raw.totalMs, 5_000, 600_000, DEFAULT_TOTAL_MS),
   };
 }
@@ -695,7 +718,7 @@ export async function runProviderHealth(
       const row = await checkProvider(
         { provider, baseUrl },
         options.chats,
-        Math.max(1_000, Math.min(options.timeoutMs, left)),
+        Math.max(1_000, Math.min(providerTimeoutMs(provider, options.timeoutMs), left)),
         deps,
       );
       log.info(
