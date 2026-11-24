@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { registerAllProviders } from "../src/providers/index";
 import { parseMarkdownContent } from "../src/utils/markdownImporter";
 
+function frontmatterWithSource(source: string): string {
+  return `---
+title: Source check
+source: ${source}
+---
+
+<!-- HAEVN: role="user" -->
+Hi
+`;
+}
+
 describe("markdownImporter", () => {
+  beforeAll(() => {
+    // The importer reads the provider registry, which the extension fills at start-up.
+    registerAllProviders();
+  });
+
   it("parses HAEVN markdown with YAML frontmatter", async () => {
     const markdown = `---
 title: Gemini Session
@@ -24,7 +41,7 @@ Hi! How can I help?
     const chat = await parseMarkdownContent(markdown);
 
     expect(chat.id).toBe("convo-123");
-    expect(chat.source).toBe("Gemini");
+    expect(chat.source).toBe("gemini");
     expect(chat.title).toBe("Gemini Session");
     expect(chat.models).toEqual(["gemini-2.5-pro"]);
     expect(chat.system).toBe("You are helpful");
@@ -57,7 +74,7 @@ Pong
 
     expect(chat.id).toBeTruthy();
     expect(chat.id).not.toBe("convo-123");
-    expect(chat.source).toBe("Gemini");
+    expect(chat.source).toBe("gemini");
     expect(chat.models).toEqual(["unknown"]);
   });
 
@@ -116,5 +133,17 @@ Hello again
 `;
 
     await expect(parseMarkdownContent(markdown)).rejects.toThrow("re-export without it to import");
+  });
+
+  it("stores a source that names a registered provider as the provider's id", async () => {
+    for (const written of ["Gemini", "gemini", "GEMINI"]) {
+      const chat = await parseMarkdownContent(frontmatterWithSource(written));
+      expect(chat.source).toBe("gemini");
+    }
+  });
+
+  it("keeps a source that no provider is registered under as written", async () => {
+    const chat = await parseMarkdownContent(frontmatterWithSource("My Local Tool"));
+    expect(chat.source).toBe("My Local Tool");
   });
 });
