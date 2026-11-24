@@ -55,7 +55,7 @@ For a scheduled job:
 | Code | Meaning |
 | --- | --- |
 | 0 | Done: `<dir>` is complete |
-| 75 | Not now, ask again later: no extension connected within `--wait`, the connection was lost and did not come back, the extension is busy with a restore, or another backup is writing to `<dir>.partial` |
+| 75 | Not now, ask again later: no extension connected within `--wait`, the connection was lost and did not come back, the extension is busy with a restore, a restore began while the run was reading (the run is discarded and `<dir>` is as it was), or another backup is writing to `<dir>.partial` |
 | 1 | Failed: anything else, such as a wrong API key, a disk error, or a chat or file that could not be read. One line on stderr says which |
 
 The [CLI reference](https://github.com/aiamblichus/haevn/blob/main/cli/README.md) has the full exit-code tables.

@@ -138,7 +138,7 @@ class BackupRun {
     const later = await this.link.backupInfo();
     if (later.restoreEpoch !== info.restoreEpoch) {
       throw deferred(
-        "a restore began while the backup was reading; nothing was kept, run the backup again",
+        `a restore began while the backup was reading; this run was discarded and ${this.dir} is as it was, run the backup again`,
       );
     }
 

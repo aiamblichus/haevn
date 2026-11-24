@@ -16,7 +16,7 @@
  *   0   done: `<dir>` is complete and every file's size was checked against what the extension said
  *   75  not now, ask again: no extension connected within --wait; the connection was lost and did not
  *       return within --wait; the extension is busy (a restore is running); a restore began while
- *       the run was reading, and nothing was kept; another `haevn backup` holds `<dir>.partial`
+ *       the run was reading, so the run was discarded and `<dir>` is as it was; another `haevn backup` holds `<dir>.partial`
  *   1   failed: anything else (a wrong key, an extension or daemon that is too old, a disk error, a
  *       chat or file that could not be read). One line on stderr says which.
  * On 75 and on 1 `<dir>` is as it was and no `.partial` is left.
