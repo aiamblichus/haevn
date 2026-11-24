@@ -643,10 +643,10 @@ export namespace ChatRepository {
     /** A chat is deleted only if it was soft-deleted at least this long ago. */
     gracePeriodMs?: number;
     /**
-     * Asked after the rows are gone and before the media folders are removed: false keeps the
-     * folders (HVN-146). A restore, an import or a sync that began since writes media before its
-     * row, so the folder may hold files of a chat that is about to come back. A folder kept for a
-     * chat that stays gone is removed by the media sweep.
+     * Asked after the rows are gone and before each media folder is removed: false keeps that
+     * folder and the ones after it (HVN-146). A restore, an import or a sync that began since writes
+     * media before its row, so the folder may hold files of a chat that is about to come back. A
+     * folder kept for a chat that stays gone is removed by the media sweep.
      */
     mayDeleteMedia?: () => Promise<boolean>;
   }
@@ -753,7 +753,7 @@ export namespace ChatRepository {
       if (failedChunks > 0) throw firstFailure;
       return doomed;
     } catch (error) {
-      log.error(`Failed to hard-delete chats ${chatIds.join(", ")}`, error);
+      log.error(`Failed to hard-delete ${chatIds.length} chats`, error);
       throw new Error(
         `Failed to hard-delete chats: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -777,20 +777,27 @@ export namespace ChatRepository {
       const { getMediaStorageService } = await import("./mediaStorage");
       const mediaStorage = getMediaStorageService();
 
-      // The last look before the folders go. A restore, an import or a sync can still begin a
-      // moment after it, before deleteChatDir runs: that sliver is accepted, and a folder that
-      // stays behind for a chat that does not come back is collected by the media sweep.
-      if (mayDeleteMedia && !(await mayDeleteMedia())) {
-        log.info(
-          `Kept the media folders of ${doomed.length} chats: another operation is writing chats; the media sweep collects what is left`,
-        );
-        return;
+      // One folder at a time, each after its own look, so a look is never older than the
+      // deleteChatDir that follows it. What is left is that call itself: a writer would have to
+      // begin and reach its first media file inside it. A folder kept for a chat that does not come
+      // back is collected by the media sweep once its files are a day old.
+      let removed = 0;
+      let failed = 0;
+      let kept = 0;
+      for (const chatId of doomed) {
+        if (mayDeleteMedia && !(await mayDeleteMedia())) {
+          kept = doomed.length - removed - failed;
+          break;
+        }
+        if (await mediaStorage.deleteChatDir(chatId)) removed++;
+        else failed++;
       }
-
-      // Run OPFS deletions in parallel
-      const results = await Promise.all(doomed.map((chatId) => mediaStorage.deleteChatDir(chatId)));
-      const failed = results.filter((ok) => !ok).length;
-      log.info(`Cleaned up OPFS media for ${doomed.length - failed} of ${doomed.length} chats`);
+      if (kept > 0) {
+        log.info(
+          `Kept the media folders of ${kept} of ${doomed.length} chats: another operation is writing chats`,
+        );
+      }
+      log.info(`Cleaned up OPFS media for ${removed} of ${doomed.length} chats`);
       if (failed > 0) {
         log.warn(`${failed} chat media folders could not be deleted; the media sweep will retry`);
       }

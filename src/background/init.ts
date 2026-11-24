@@ -105,13 +105,23 @@ try {
 // Initialize Janitor for soft-delete cleanup
 import { JanitorService } from "../services/janitorService";
 
+/**
+ * One Janitor run: the hard deletes, then the media sweep (after them, so the folders they leave
+ * behind are in the sweep's first look). The sweep runs when the deletes failed too, and the
+ * failure is still thrown for the caller to log: a chunk that never deletes must not stop the
+ * sweep for good (HVN-146).
+ */
+async function runJanitor(): Promise<void> {
+  try {
+    await JanitorService.cleanupSoftDeletedChats();
+  } finally {
+    await JanitorService.sweepMediaIfDue();
+  }
+}
+
 // Run Janitor cleanup on startup (fire-and-forget)
 diagnosticsService
-  .wrap("init:Janitor", async () => {
-    await JanitorService.cleanupSoftDeletedChats();
-    // After the hard deletes, so the folders they leave behind are in the sweep's first look
-    await JanitorService.sweepMediaIfDue();
-  })
+  .wrap("init:Janitor", runJanitor)
   .catch((err) => log.error("[Janitor] Cleanup failed", err));
 
 // The same rhythm sweeps the orphans of bulk exports in OPFS (HVN-62).
@@ -124,14 +134,9 @@ const JANITOR_ALARM_NAME = "janitor-cleanup";
 chrome.alarms.create(JANITOR_ALARM_NAME, { periodInMinutes: 30 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === JANITOR_ALARM_NAME) {
-    diagnosticsService
-      .wrap("alarm:Janitor", async () => {
-        await JanitorService.cleanupSoftDeletedChats();
-        await JanitorService.sweepMediaIfDue();
-      })
-      .catch((err) => {
-        log.error("[Janitor] Cleanup failed", err);
-      });
+    diagnosticsService.wrap("alarm:Janitor", runJanitor).catch((err) => {
+      log.error("[Janitor] Cleanup failed", err);
+    });
     diagnosticsService
       .wrap("alarm:ExportSweep", () => sweepOrphanedExports())
       .catch((err) => {
