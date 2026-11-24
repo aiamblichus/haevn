@@ -49,7 +49,36 @@ export type CliRequest =
   | { id: string; action: "getMetadata"; chatId: string }
   | { id: string; action: "setMetadata"; chatId: string; metadata: MetadataUpdate }
   | { id: string; action: "generateMetadata"; chatId: string }
-  | { id: string; action: "health"; options?: HealthOptions };
+  | { id: string; action: "health"; options?: HealthOptions }
+  | { id: string; action: "backupInfo" }
+  | { id: string; action: "backupList"; after?: string; limit: number };
+
+/** What the extension answers to `backupInfo` (HVN-134): the protocol both sides must agree on. */
+export interface BackupInfo {
+  protocol: number;
+  haevnVersion: string;
+  /** The Dexie schema version of the archive. */
+  dbSchema: number;
+  liveChats: number;
+}
+
+/** A media file of a chat as `backupList` names it: the name as stored in OPFS, and its size. */
+export interface BackupListedMedia {
+  name: string;
+  bytes: number;
+}
+
+export interface BackupListedChat {
+  id: string;
+  source: string;
+  media: BackupListedMedia[];
+}
+
+/** One page of the live chats, in key order; `next` is the `after` of the following page. */
+export interface BackupListPage {
+  chats: BackupListedChat[];
+  next?: string;
+}
 
 /**
  * The pipe: how bulk bytes cross the daemon (HVN-133). A frame is still one JSON message; the

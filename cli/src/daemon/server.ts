@@ -122,6 +122,11 @@ export interface DaemonOptions {
   /** For tests: the two limits above. */
   pipeFirstByteTimeoutMs?: number;
   pipeIdleTimeoutMs?: number;
+  /**
+   * Called when a socket offers a wrong API key: an extension configured with another key. A
+   * command that runs its own daemon (`haevn backup`) reads it as "wrong key", not "nobody came".
+   */
+  onAuthFailure?: () => void;
 }
 
 // ─── Counter for request IDs ──────────────────────────────────────────────────
@@ -234,6 +239,7 @@ export async function startDaemon(
         if (msg.type !== "auth" || msg.apiKey !== apiKey) {
           ws.send(JSON.stringify({ type: "authError", message: "Invalid API key" }));
           ws.close(4001, "Unauthorized");
+          if (msg.type === "auth") options.onAuthFailure?.();
           return;
         }
         authenticated = true;
