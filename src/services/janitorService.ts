@@ -14,6 +14,7 @@
  * and ensures we don't immediately commit to expensive file operations.
  */
 
+import { getActiveOperation } from "../background/state";
 import { SOFT_DELETE_GRACE_MS } from "../types/messaging";
 import { log } from "../utils/logger";
 import { ChatRepository } from "./chatRepository";
@@ -39,6 +40,9 @@ export namespace JanitorService {
    * Cleans up all soft-deleted chats that have passed the grace period.
    * This should be called periodically (e.g., on startup, via chrome.alarms, or on idle).
    *
+   * It does nothing while a bulk sync, an import (the ZIP import and the restore take the same
+   * lock), a bulk export or a health check holds the operation lock. A single-chat sync takes no lock.
+   *
    * @param gracePeriodMs Time in milliseconds that must pass after soft deletion before permanent cleanup
    * @returns Number of chats permanently deleted
    */
@@ -46,6 +50,15 @@ export namespace JanitorService {
     gracePeriodMs: number = DEFAULT_GRACE_PERIOD_MS,
   ): Promise<number> {
     try {
+      // A restore, an import and a bulk sync write a chat's media before its row: the chat is still
+      // soft-deleted in that gap, and the Janitor would delete the new media. They hold the lock,
+      // so the Janitor waits for its next run (HVN-146).
+      const operation = await getActiveOperation();
+      if (operation !== "idle") {
+        log.info(`[Janitor] Not cleaning up while ${operation} is running`);
+        return 0;
+      }
+
       const chatIds = await ChatRepository.getSoftDeletedChatIds(gracePeriodMs);
 
       if (chatIds.length === 0) {
@@ -56,7 +69,7 @@ export namespace JanitorService {
       log.info(`[Janitor] Found ${chatIds.length} soft-deleted chats ready for cleanup`);
 
       // Some may have been restored since the read: only the ones it deleted are counted.
-      const deleted = await ChatRepository.hardDeleteChats(chatIds);
+      const deleted = await ChatRepository.hardDeleteChats(chatIds, gracePeriodMs);
 
       log.info(`[Janitor] Successfully cleaned up ${deleted.length} chats`);
       return deleted.length;
