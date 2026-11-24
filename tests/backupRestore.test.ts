@@ -25,8 +25,11 @@ const { addOrUpdateChatInIndex, rebuildIndex } = vi.hoisted(() => ({
   addOrUpdateChatInIndex: vi.fn(async (_chatId: string) => {}),
   rebuildIndex: vi.fn(async () => {}),
 }));
-const { recalculateProviderStats } = vi.hoisted(() => ({
-  recalculateProviderStats: vi.fn(async (_provider: string) => 0),
+// The count the session recalculates is the real one (it writes `provider-count:<provider>` into
+// the cache table); the spy only records the calls.
+const { recalculateProviderStats, realRecalculate } = vi.hoisted(() => ({
+  recalculateProviderStats: vi.fn(async (_provider: string): Promise<number> => 0),
+  realRecalculate: { fn: null as null | ((provider: string) => Promise<number>) },
 }));
 const { handleGenerateThumbnails, broadcastChatSynced } = vi.hoisted(() => ({
   handleGenerateThumbnails: vi.fn(async (_chatId: string) => {}),
@@ -36,7 +39,11 @@ const { handleGenerateThumbnails, broadcastChatSynced } = vi.hoisted(() => ({
 vi.mock("../src/services/syncService", () => ({
   SyncService: { addOrUpdateChatInIndex, rebuildIndex },
 }));
-vi.mock("../src/services/cacheService", () => ({ CacheService: { recalculateProviderStats } }));
+vi.mock("../src/services/cacheService", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../src/services/cacheService")>();
+  realRecalculate.fn = original.CacheService.recalculateProviderStats;
+  return { CacheService: { ...original.CacheService, recalculateProviderStats } };
+});
 vi.mock("../src/background/handlers/galleryHandlers", () => ({ handleGenerateThumbnails }));
 vi.mock("../src/background/utils/chatSyncUtils", () => ({ broadcastChatSynced }));
 
@@ -244,7 +251,10 @@ beforeEach(async () => {
   await Promise.all(db.tables.map((table) => table.clear()));
   addOrUpdateChatInIndex.mockClear();
   rebuildIndex.mockClear();
-  recalculateProviderStats.mockClear();
+  recalculateProviderStats.mockReset();
+  recalculateProviderStats.mockImplementation((provider: string) =>
+    (realRecalculate.fn as (provider: string) => Promise<number>)(provider),
+  );
   handleGenerateThumbnails.mockClear();
   broadcastChatSynced.mockClear();
   vi.spyOn(log, "info").mockImplementation(() => {});
@@ -349,6 +359,37 @@ describe("restoreChatRecord replaces a chat that exists", () => {
     expect((await db.chats.where("deleted").equals(0).primaryKeys()) as string[]).toEqual(["c1"]);
   });
 
+  it("replaces the chat whole or not at all: a write that fails late undoes the earlier ones", async () => {
+    const db = getDB();
+    await db.chats.put(chatRow("c1", { title: "Old title" }));
+    await db.chatMessages.bulkPut([message("c1", "old1")]);
+    const thumbnail = (await db.thumbnails.add({
+      chatId: "c1",
+      messageId: "old1",
+    } as never)) as number;
+    await db.mediaContent.put({ id: thumbnail, data: "old" } as never);
+    const before = await dumpArchive();
+    // The embedding is the last write of the transaction: the chat, its messages and the
+    // thumbnail cleanup have been done by then
+    vi.spyOn(db.chatEmbeddings, "put").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      restoreChatRecord(
+        "c1",
+        streamOf(
+          recordText({
+            chat: chatRow("c1", { title: "New title" }),
+            messages: [message("c1", "m1")],
+            metadata: metadataOf("c1"),
+            embedding: embeddingOf("c1"),
+          }),
+        ),
+      ),
+    ).rejects.toThrow("disk full");
+
+    expect(await dumpArchive()).toEqual(before);
+  });
+
   it("makes the chat live even when the record's own row says it was deleted", async () => {
     const db = getDB();
     const deletedInBackup = chatRow("c1", { deleted: 1, deletedAt: 55 });
@@ -382,6 +423,21 @@ describe("restoreChatRecord replaces a chat that exists", () => {
     expect((await db.chatMessages.where("chatId").equals("c1").toArray()).map((m) => m.id)).toEqual(
       ["m1", "m2"],
     );
+  });
+
+  it("lets a message row of the table win over the same message inline in a held chat's row", async () => {
+    const db = getDB();
+    const held = chatRow("c1", {
+      messages: { m1: message("c1", "m1", "inline text"), m2: message("c1", "m2", "only inline") },
+    });
+
+    await restoreChatRecord(
+      "c1",
+      streamOf(recordText({ chat: held, messages: [message("c1", "m1", "table text")] })),
+    );
+
+    const rows = await db.chatMessages.where("chatId").equals("c1").toArray();
+    expect(rows).toEqual([message("c1", "m1", "table text"), message("c1", "m2", "only inline")]);
   });
 
   it("reads a record cut into small chunks, multi-byte text and a megabyte message included", async () => {
@@ -818,6 +874,31 @@ describe("the restore session and its lock", () => {
     expect(await getDB().chats.get("c1")).toEqual(chatRow("c1"));
   });
 
+  it("refuses a chat and a media file when the pipe announces no length, and writes nothing", async () => {
+    await beginRestore({ chats: 2 });
+    const text = recordText({ chat: chatRow("c1"), messages: [message("c1", "m1")] });
+    const before = await dumpArchive();
+
+    const chat = await thrownBy(
+      restoreChat({
+        chatId: "c1",
+        index: false,
+        openBody: async () => ({ stream: streamOf(text), bytes: null }),
+      }),
+    );
+    const media = await thrownBy(
+      restoreMedia({
+        chatId: "c1",
+        name: "m1_0.png",
+        bytes: 3,
+        openBody: async () => ({ stream: bytesStream(enc("png")), bytes: null }),
+      }),
+    );
+
+    expect([chat.code, media.code]).toEqual(["PIPE_FAILED", "PIPE_FAILED"]);
+    expect(await dumpArchive()).toEqual(before);
+  });
+
   it("refuses a media file the pipe carries at another length than the request announced", async () => {
     await beginRestore({ chats: 1 });
 
@@ -850,8 +931,30 @@ describe("the restore session and its lock", () => {
     await restoreChat({ chatId: "c2", openBody: chatBody("c2"), index: true });
     await finishRestore({ rebuildIndex: false });
 
-    expect(withoutChats(await dumpArchive(), ["c1", "c2"])).toEqual(
-      withoutChats(before, ["c1", "c2"]),
+    // The one write outside the restored ids is the derived count of the provider it touched, and
+    // it is the true count of live chats, not a stale or a made-up one.
+    const after = await dumpArchive();
+    const countRow = (after.tables.cache as Array<{ id: string; value: unknown }>).find(
+      (row) => row.id === "provider-count:claude",
+    );
+    const liveClaude = await getDB()
+      .chats.where("deleted")
+      .equals(0)
+      .filter((c) => c.source === "claude")
+      .count();
+    expect(liveClaude).toBe(4); // other1, other2, c1 and c2
+    expect(countRow?.value).toBe(liveClaude);
+    const withoutCount = (dump: typeof after) => ({
+      ...dump,
+      tables: {
+        ...dump.tables,
+        cache: (dump.tables.cache as Array<{ id: string }>).filter(
+          (row) => row.id !== "provider-count:claude",
+        ),
+      },
+    });
+    expect(withoutChats(withoutCount(after), ["c1", "c2"])).toEqual(
+      withoutChats(withoutCount(before), ["c1", "c2"]),
     );
     expect(await getActiveOperation()).toBe("idle");
   });
@@ -861,6 +964,8 @@ describe("the idle timer", () => {
   beforeEach(() => {
     // Only the timers the session sets: the fake IndexedDB and Dexie keep their own clocks
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The real count asks the stats worker, whose own time limit would be a fake timer here
+    recalculateProviderStats.mockImplementation(async () => 0);
   });
 
   it("frees the lock when no request comes for the idle limit, and closes the session", async () => {

@@ -86,6 +86,8 @@ const PIPE = "0123456789abcdef0123456789abcdef";
 let fs: FakeOpfs;
 /** What each pipe id serves, and every request the extension made to the daemon. */
 let pipes: Map<string, Uint8Array>;
+/** Pipe ids the stub serves without a Content-Length, as a daemon that forgot it would. */
+let unannounced: Set<string>;
 let requests: Array<{ url: string; method: string; authorization: string | null }>;
 
 function stubPipeFetch(): void {
@@ -101,7 +103,8 @@ function stubPipeFetch(): void {
       const body = pipes.get(id);
       if (!body || init?.method !== "GET") return new Response("no such pipe", { status: 404 });
       pipes.delete(id); // a pipe id works once
-      return new Response(body, { status: 200, headers: { "Content-Length": `${body.length}` } });
+      const headers = unannounced.has(id) ? {} : { "Content-Length": `${body.length}` };
+      return new Response(body, { status: 200, headers });
     }),
   );
 }
@@ -132,6 +135,7 @@ function chatRecord(chatId: string): Uint8Array {
 beforeEach(async () => {
   FakeWebSocket.instances = [];
   pipes = new Map();
+  unannounced = new Set();
   requests = [];
   fs = new FakeOpfs();
   fs.install();
@@ -294,6 +298,25 @@ describe("restore over the bridge", () => {
     expect(refused).toMatchObject({ success: false, code: "BAD_REQUEST" });
     expect(accepted).toMatchObject({ success: true });
     expect((await getDB().chats.toArray()).map((c) => c.id)).toEqual(["c1"]);
+  });
+
+  it("answers PIPE_FAILED, and writes nothing, when the pipe carries no Content-Length", async () => {
+    const { getDB } = await import("../src/services/db");
+    const bridge = await connectedBridge();
+    pipes.set(PIPE, chatRecord("c1"));
+    unannounced.add(PIPE);
+    await bridge.ask({ action: "restoreBegin", chats: 1 });
+
+    const reply = await bridge.ask({
+      action: "restoreChat",
+      chatId: "c1",
+      pipeId: PIPE,
+      index: false,
+    });
+
+    expect(reply).toMatchObject({ success: false, code: "PIPE_FAILED" });
+    expect(String(reply.error)).toContain("no length");
+    expect(await getDB().chats.count()).toBe(0);
   });
 
   it("answers PIPE_FAILED when the daemon refuses the pipe", async () => {

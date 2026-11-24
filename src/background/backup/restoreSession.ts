@@ -118,6 +118,11 @@ export async function restoreChat(options: {
 }): Promise<{ replaced: boolean }> {
   return withSession(async (open) => {
     const { stream, bytes } = await options.openBody();
+    // The announced length is the only thing that shows a record cut exactly between two lines, so
+    // a pipe that announces none is refused, not read on trust.
+    if (bytes === null) {
+      throw new BackupError("PIPE_FAILED", "the pipe announced no length for the record");
+    }
     const { replaced, chat } = await restoreChatRecord(options.chatId, stream, bytes);
 
     // The chat is saved, whole. What follows is bookkeeping, and a failure in it is logged and
@@ -161,10 +166,13 @@ export async function restoreMedia(options: {
 }): Promise<{ bytes: number }> {
   return withSession(async () => {
     const { stream, bytes: announced } = await options.openBody();
-    if (announced !== null && announced !== options.bytes) {
+    // A pipe that announces no length is refused like one that announces another
+    if (announced !== options.bytes) {
       throw new BackupError(
         "PIPE_FAILED",
-        `the pipe carries ${announced} bytes, and the request announced ${options.bytes}`,
+        announced === null
+          ? "the pipe announced no length for the file"
+          : `the pipe carries ${announced} bytes, and the request announced ${options.bytes}`,
       );
     }
     return {

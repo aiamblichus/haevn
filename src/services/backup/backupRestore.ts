@@ -133,6 +133,10 @@ export async function restoreMediaFile(
     throw new BackupError("BAD_REQUEST", "bytes must be the size of the file");
   }
 
+  // The file is created before the stream is read, so a write that fails for a name the folder
+  // did not have leaves an empty file under it. Nothing refers to it: the media sweep removes it,
+  // and a re-run of the restore replaces it. A name that existed keeps its old bytes (the writable
+  // publishes only on close).
   const writable = await createWritableStream(`${MEDIA_ROOT_PATH}/${folder}/${name}`);
   let written = 0;
   try {
