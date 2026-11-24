@@ -51,6 +51,46 @@ export type CliRequest =
   | { id: string; action: "generateMetadata"; chatId: string }
   | { id: string; action: "health"; options?: HealthOptions };
 
+/**
+ * The pipe: how bulk bytes cross the daemon (HVN-133). A frame is still one JSON message; the
+ * bytes of a file or a chat record go by HTTP, through the daemon, between the CLI's open
+ * request and the extension's `fetch`.
+ *
+ *   POST /pipe/out            the CLI asks, a byte stream comes back (extension → CLI)
+ *   POST /pipe/in             the CLI sends a byte stream (CLI → extension), a frame comes back
+ *   POST|GET /pipe/<pipeId>   the extension's side of the same request
+ *
+ * Every call carries `Authorization: Bearer <apiKey>`.
+ */
+
+/** 128 random bits as 32 hex digits. Valid for one request of the extension's, then gone. */
+export type PipeId = string;
+
+/**
+ * What the CLI sends to open a pipe: any action, with its own fields. On `/pipe/in` the action
+ * travels in a header, which is latin-1: escape every non-ASCII character as `\uXXXX`.
+ */
+export interface PipeActionBody {
+  action: string;
+  [field: string]: unknown;
+}
+
+/** The frame the daemon forwards to the extension for a pipe action: the CLI's body, an `id` and a `pipeId`. */
+export type PipeForwardedRequest = PipeActionBody & { id: string; pipeId: PipeId };
+
+/** What the daemon itself says when it fails a pipe request (no extension, a bad body, a timeout, a cut stream). */
+export interface DaemonErrorBody {
+  ok: false;
+  error: string;
+}
+
+/** `GET /health`, no key needed. `pipe` is the pipe protocol the daemon speaks; absent on an older daemon. */
+export interface HealthResponse {
+  ok: true;
+  extensionConnected: boolean;
+  pipe?: number;
+}
+
 /** What `haevn health` asks the extension for. */
 export interface HealthOptions {
   /** Provider names; omitted means every web provider. */
