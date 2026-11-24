@@ -9,7 +9,7 @@ HAEVN supports multiple export formats.
 
 ## Export formats
 
-- **HAEVN Archive (.zip)** — canonical, lossless backup with chats + media + manifest.
+- **HAEVN Archive (.zip)** — an export of your chats with media and a manifest, for moving, reading and sharing. It is not a backup: for backups, see [Backup and Restore](/user-guide/backup-restore/).
 - **HAEVN JSON (.json)** — single-chat canonical JSON export.
 - **HAEVN Markdown (.md)** — single-chat readable transcript export.
 - **Pi Session (.jsonl)** — single-chat export for Pi-compatible session files.
@@ -47,10 +47,10 @@ To export a selection of conversations:
 
 ## Exporting your entire archive
 
-Click **Export All** in the Archive toolbar to download your complete archive as a ZIP file. For large archives, ZIP generation runs in the background — the download will start automatically when it's ready.
+Click **Export All** in the Archive toolbar to download an export of your whole archive as a ZIP file. For large archives, ZIP generation runs in the background — the download will start automatically when it's ready.
 
 <Aside type="tip">
-  **Backing up your archive:** Use Export All periodically. The resulting HAEVN archive ZIP can be re-imported into HAEVN on another machine using the [Import](/user-guide/import/) feature.
+  **Backing up your archive:** use `haevn backup`, not Export All. An export moves your conversations to another machine or tool, but re-importing it does not put them back exactly as they were. The [Backup and Restore](/user-guide/backup-restore/) page covers the backup and how to restore it. The archive ZIP can still be re-imported on another machine with the [Import](/user-guide/import/) feature.
 </Aside>
 
 ## What's included in exports

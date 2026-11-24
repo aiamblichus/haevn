@@ -44,7 +44,7 @@ const EXPORTER_CHOICES: ExporterChoice[] = [
   {
     id: "haevn_zip",
     label: "HAEVN Archive (.zip)",
-    description: "Canonical backup export with chat JSON, media assets, and manifest.",
+    description: "Archive export with canonical chat JSON, media assets, and manifest.",
     supportsMultiChat: true,
   },
   {

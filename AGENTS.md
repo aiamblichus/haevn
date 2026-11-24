@@ -2,7 +2,7 @@
 
 **HAEVN** (a psychopomp for digital consciousness) is a Chrome Manifest V3 extension, plus a terminal CLI (`cli/`), that syncs AI conversations from many LLM platforms into one local archive. It keeps the full context of each conversation (branches, multi-modal content, metadata) in a canonical `HAEVN.Chat` format.
 
-**Core value:** own your AI conversation history. Search across platforms. Export for backup. Never lose context.
+**Core value:** own your AI conversation history. Search across platforms. Back up unattended. Restore exactly. Never lose context.
 
 **Providers** (`src/providers/`): Claude, ChatGPT, Gemini, Poe, Open WebUI, Qwen, DeepSeek, AI Studio, Grok (synced from the web), and Claude Code, Codex, Pi (imported from local session files).
 

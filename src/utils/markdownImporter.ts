@@ -11,6 +11,7 @@ import type {
   TextPart,
   UserPromptPart,
 } from "../model/haevn_model";
+import { getAllProviders } from "../providers/provider";
 
 async function sha256Hex(text: string): Promise<string> {
   try {
@@ -87,6 +88,18 @@ function parseTimestampValue(value: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * The registered provider id that a front matter `source` names, matched without regard to case,
+ * so `Gemini` and `gemini` are one platform (HVN-145). A value no provider is registered under is
+ * kept as written. The registry is filled by registerAllProviders(), which every context that
+ * imports a Markdown file runs at start-up.
+ */
+function sourceProviderId(source: string): string {
+  const wanted = source.toLowerCase();
+  const provider = getAllProviders().find((candidate) => candidate.name.toLowerCase() === wanted);
+  return provider ? provider.name : source;
+}
+
 function parseYamlFrontmatter(content: string): {
   header: ParsedHeader;
   body: string;
@@ -120,7 +133,9 @@ function parseYamlFrontmatter(content: string): {
 
   const sourceValue = record.source;
   const source =
-    typeof sourceValue === "string" && sourceValue.trim() ? sourceValue.trim() : "unknown";
+    typeof sourceValue === "string" && sourceValue.trim()
+      ? sourceProviderId(sourceValue.trim())
+      : "unknown";
 
   const conversationValue =
     record.conversation_id ?? record.conversationId ?? record["conversation-id"];

@@ -1,0 +1,136 @@
+---
+title: Backup and Restore
+description: Back up your whole archive to a folder with haevn backup, and put it back with haevn restore.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Your archive lives in your browser. If you uninstall the extension, clear your browser data or lose the machine, the archive goes with it. `haevn backup` copies the whole archive into a folder you choose. It is built to run on a schedule with nobody watching, and `haevn restore` puts that folder back into HAEVN.
+
+A backup and an export are different things. The backup is the folder `haevn backup` writes: it restores exactly, and it is for losing a machine. An [export](/user-guide/export/), such as the ZIP from Export All, is for moving, reading and sharing. It is not a backup.
+
+## What a backup keeps
+
+Every live chat is written as one JSON-lines file, and every media file is copied as it is stored in the extension. The folder holds the archive in full: chats, messages and branches, media, AI metadata and embeddings.
+
+A backup does **not** keep your settings or API keys, and it does not keep chats you have deleted.
+
+The layout:
+
+```text
+<dir>/
+  manifest.json        written last: its presence means the backup is complete
+  index.jsonl          one line per chat: id, source, file, size, SHA-256, and its media files
+  chats/<name>.jsonl   line 1 is the chat row with its metadata and embedding, then one line per message row
+  media/<name>/<file>  the files of the chat's media folder, byte for byte
+```
+
+<Aside type="caution">
+  The folder is your conversations in plain text. HAEVN sends it nowhere. Put it where you would put the conversations themselves.
+</Aside>
+
+## Make a backup
+
+```bash
+haevn backup ~/backups/haevn            # the archive, into that directory
+haevn backup ~/backups/haevn --wait 120 # give Chrome two minutes to connect
+```
+
+It needs Chrome open with the HAEVN extension and its CLI bridge switched on, and the API key saved in `~/.haevn/config.json`. If no daemon is listening, it starts its own and stops it when it is done. A daemon that is already running is used as it is, so restart it after an upgrade.
+
+A run writes into `<dir>.partial` and swaps it for `<dir>` only when every file has arrived and its size matches what the extension said. A failed run leaves the previous backup as it was, with no `.partial` behind. One chat or file that cannot be read fails the whole run. A chat you delete while the run is going is left out and listed in the manifest's `vanished`.
+
+`<dir>` must be empty, missing, or a previous backup, and not a symbolic link. A directory that holds anything else is refused.
+
+Options:
+
+- `--wait <s>`: seconds to wait for the extension to connect, or to come back after the connection was lost. Default 60.
+
+There is no limit on the whole run. A connection that keeps dropping can cost up to `--wait` each time, so a scheduled job should be bounded by its runner's own time limit. A run that gets SIGTERM ends cleanly.
+
+### Exit codes
+
+For a scheduled job:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Done: `<dir>` is complete |
+| 75 | Not now, ask again later: no extension connected within `--wait`, the connection was lost and did not come back, the extension is busy with a restore, or another backup is writing to `<dir>.partial` |
+| 1 | Failed: anything else, such as a wrong API key, a disk error, or a chat or file that could not be read. One line on stderr says which |
+
+The [CLI reference](https://github.com/aiamblichus/haevn/blob/main/cli/README.md) has the full exit-code tables.
+
+## Restore a backup
+
+```bash
+haevn restore ~/backups/haevn --dry-run      # see what it would do
+haevn restore ~/backups/haevn                # asks before it changes anything
+haevn restore ~/backups/haevn --chat <id>    # bring back one chat
+```
+
+Restore puts the chats of a backup back into the HAEVN of the Chrome your terminal is connected to. Every chat in the backup goes back to exactly how it was when the backup was taken: its messages and branches, its media, its AI title, description and category, its embedding, and the date it was last synced.
+
+Chats that are not in your archive are added. That includes a chat you deleted after the backup, which comes back. Chats that are not in the backup are left alone, and restore never deletes anything.
+
+<Aside type="caution">
+  **On an archive you are still using, a full restore rolls back.** A chat that is in both is replaced by the backup's older copy, and what it gained since (new messages, a title you corrected, new metadata) is lost. A web chat can be synced again. A Claude Code, Codex or Pi session whose file you no longer have cannot. To get one chat back, use `--chat`. Always look at `--dry-run` first.
+</Aside>
+
+Before it writes anything, restore checks the backup. The manifest must be a haevn backup of a version this CLI reads, the extension's archive must not be older than the backup, and every file's size and SHA-256 must match `index.jsonl`. A damaged backup is refused with nothing written, and the message names the files.
+
+Then it shows what it will do and asks. The answer is no unless it is `y` or `yes`:
+
+```text
+Restore from /restored/haevn/archive
+  backup taken 2026-11-23 03:00, 2,812 chats, 1.7 GB (haevn 1.9.0)
+
+  1,204  chats are in your archive now: each is replaced by the backup's copy.
+         37 of them were synced again since the backup.
+         Anything that changed since the backup (new messages, edited titles,
+         new AI metadata) is lost from these chats.
+  1,608  chats are not in your archive now (new here, or deleted since the
+         backup): each is added back.
+
+  Chats that are not in the backup are not touched. Nothing is deleted.
+
+Restore 2,812 chats into the haevn connected to this terminal? [y/N]
+```
+
+The rollback paragraph appears only when something would be replaced. A chat counts as "in your archive now" only when it is live there, so a chat you deleted counts as added.
+
+Options:
+
+- `--chat <id>`: restore only this chat. Repeat the flag for more. An id the backup does not hold is refused before anything is written.
+- `--dry-run`: check the backup and print the block above, without the question. It writes nothing and exits 0. It still needs the extension, to know which chats are in your archive.
+- `--yes`: do not ask. Required when there is no terminal: without it, a restore that cannot ask exits 1.
+- `--wait <s>`: as for `backup`. Default 60.
+
+It needs Chrome open with the HAEVN extension and its CLI bridge on, and the API key saved in `~/.haevn/config.json`. The extension holds its operation lock for the length of the run, so a sync, an import or an export waits.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Done: every selected chat and media file is in the archive. With `--dry-run`, the backup is whole and nothing was written |
+| 75 | Not now, ask again later: no extension connected within `--wait`, the extension is busy with a sync, an import or another restore, or the connection was lost and did not come back |
+| 1 | Failed: anything else, such as a damaged backup, an extension older than the backup, no `--yes` without a terminal, an answer of no, a wrong API key, or a chat the extension refused. One line on stderr says which |
+
+The [CLI reference](https://github.com/aiamblichus/haevn/blob/main/cli/README.md) has the full exit-code tables.
+
+When a run ends after the extension had begun, whatever the code, the line on stderr says so. Run the same command again to finish the restore: an interrupted restore leaves every chat either restored or as it was.
+
+If every chat is in but the search index could not be brought up to date, the run exits 1 and says so. Search may miss chats until the index is rebuilt. Run `haevnDebug.rebuildIndex()` in the archive page's console, or run the same command again.
+
+## Restoring on a new machine
+
+<Steps>
+1. Install the `haevn` CLI from the [CLI page](/user-guide/cli/). Use a version that has `backup` and `restore`.
+
+2. Install the HAEVN extension in Chrome, open its archive page, and switch on the CLI bridge in Settings. Copy the API key into `~/.haevn/config.json`.
+
+3. Run `haevn restore <dir> --dry-run` and read what it says. Then run `haevn restore <dir>` and answer `y`.
+
+4. Set your settings again by hand. Settings and keys are not in a backup, so the metadata endpoint, Open WebUI instances and the rest must be configured again.
+
+5. Give search time. It fills in as the index is rebuilt after the restore. Thumbnails come back as they are made.
+</Steps>

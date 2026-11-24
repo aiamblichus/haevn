@@ -5,7 +5,7 @@ description: Import conversation exports and local coding-session JSONL files in
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-HAEVN can import conversations from external sources — useful for seeding your archive with existing exports before you start using the sync extension, or for restoring from a backup.
+HAEVN can import conversations from external sources — useful for seeding your archive with existing exports before you start using the sync extension, or for bringing in an archive export from another machine. To put back a backup made with `haevn backup`, see [Backup and Restore](/user-guide/backup-restore/).
 
 ## Supported import formats
 
@@ -16,7 +16,7 @@ HAEVN can import conversations from external sources — useful for seeding your
 | **Codex** | JSONL file | Local session files in your `.codex/sessions/` directory |
 | **PI** | JSONL file | Local session files in your `.pi/sessions/` directory |
 | **OpenRouter** | JSON file | An OpenRouter chatroom export; every chatroom in it is imported as a chat (see the [OpenRouter page](/platforms/openrouter/)) |
-| **HAEVN backup** | ZIP | From a previous HAEVN export |
+| **HAEVN archive export** | ZIP | Export All in the Archive, or a multi-chat export |
 | **HAEVN Markdown** | `.md` | YAML-frontmatter markdown transcript |
 
 <Aside>
