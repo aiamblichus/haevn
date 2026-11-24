@@ -86,6 +86,9 @@ const PIPE = "0123456789abcdef0123456789abcdef";
 let fs: FakeOpfs;
 /** What each pipe id serves, and every request the extension made to the daemon. */
 let pipes: Map<string, Uint8Array>;
+/** Pipe ids the daemon takes a backup's bytes on (a POST), each once, and the bytes it took. */
+let sinks: Set<string>;
+let received: Map<string, Uint8Array>;
 /** Pipe ids the stub serves without a Content-Length, as a daemon that forgot it would. */
 let unannounced: Set<string>;
 let requests: Array<{ url: string; method: string; authorization: string | null }>;
@@ -100,6 +103,12 @@ function stubPipeFetch(): void {
         authorization: new Headers(init?.headers).get("Authorization"),
       });
       const id = url.split("/pipe/")[1];
+      if (init?.method === "POST") {
+        if (!sinks.has(id)) return new Response("no such pipe", { status: 404 });
+        sinks.delete(id);
+        received.set(id, new Uint8Array(await (init.body as Blob).arrayBuffer()));
+        return new Response(null, { status: 200 });
+      }
       const body = pipes.get(id);
       if (!body || init?.method !== "GET") return new Response("no such pipe", { status: 404 });
       pipes.delete(id); // a pipe id works once
@@ -135,6 +144,8 @@ function chatRecord(chatId: string): Uint8Array {
 beforeEach(async () => {
   FakeWebSocket.instances = [];
   pipes = new Map();
+  sinks = new Set();
+  received = new Map();
   unannounced = new Set();
   requests = [];
   fs = new FakeOpfs();
@@ -150,6 +161,7 @@ beforeEach(async () => {
     storage: {
       session: { get: async () => ({}), set: async () => {}, remove: async () => {} },
     },
+    runtime: { getManifest: () => ({ version: "9.9.9-test" }) },
   });
   stubPipeFetch();
   const { getDB } = await import("../src/services/db");
@@ -352,5 +364,93 @@ describe("restore over the bridge", () => {
     });
 
     expect(reply).toMatchObject({ success: false, code: "PIPE_FAILED" });
+  });
+});
+
+// HVN-143: while a restore is open, the backup actions answer BUSY before they read a row or send a
+// byte, so a backup taken mid-restore cannot pair a restored media file with the chat row it replaced.
+
+type Bridge = Awaited<ReturnType<typeof connectedBridge>>;
+
+const BACKUP_CHAT_PIPE = "11111111111111111111111111111111";
+const BACKUP_MEDIA_PIPE = "22222222222222222222222222222222";
+const BUSY_TEXT = "A restore is running. Try again when it ends.";
+
+/** Puts one chat and one media file into the archive, through the restore actions themselves. */
+async function restoreOneChat(bridge: Bridge): Promise<void> {
+  const chatPipe = "fedcba9876543210fedcba9876543210";
+  pipes.set(PIPE, new TextEncoder().encode("png!"));
+  pipes.set(chatPipe, chatRecord("c1"));
+  await bridge.ask({ action: "restoreBegin", chats: 1 });
+  await bridge.ask({
+    action: "restoreMedia",
+    chatId: "c1",
+    name: "m1_0.png",
+    bytes: 4,
+    pipeId: PIPE,
+  });
+  await bridge.ask({ action: "restoreChat", chatId: "c1", pipeId: chatPipe, index: false });
+  await bridge.ask({ action: "restoreFinish", rebuildIndex: false });
+}
+
+describe("the backup actions while a restore is open (HVN-143)", () => {
+  it.each([
+    ["backupInfo", { action: "backupInfo" }],
+    ["backupList", { action: "backupList", limit: 10 }],
+    ["backupChat", { action: "backupChat", chatId: "c1", pipeId: BACKUP_CHAT_PIPE }],
+    [
+      "backupMedia",
+      { action: "backupMedia", chatId: "c1", name: "m1_0.png", pipeId: BACKUP_MEDIA_PIPE },
+    ],
+  ])("answers BUSY to %s while a restore is open, and sends nothing to the pipe", async (_action, request) => {
+    const bridge = await connectedBridge();
+    await restoreOneChat(bridge);
+    await bridge.ask({ action: "restoreBegin", chats: 1 });
+    // Both pipes are open: without the check, the backup would send the chat and the file
+    sinks.add(BACKUP_CHAT_PIPE);
+    sinks.add(BACKUP_MEDIA_PIPE);
+    requests = [];
+
+    const reply = await bridge.ask(request);
+
+    expect(reply).toMatchObject({ success: false, code: "BUSY", error: BUSY_TEXT });
+    expect(requests).toEqual([]);
+    expect(received.size).toBe(0);
+  });
+
+  it("answers the four backup actions once the restore has closed, and sends the chat and the file", async () => {
+    const bridge = await connectedBridge();
+    await restoreOneChat(bridge);
+    await bridge.ask({ action: "restoreBegin", chats: 1 });
+    await bridge.ask({ action: "restoreFinish", rebuildIndex: false });
+    sinks.add(BACKUP_CHAT_PIPE);
+    sinks.add(BACKUP_MEDIA_PIPE);
+    requests = [];
+
+    const info = await bridge.ask({ action: "backupInfo" });
+    const list = await bridge.ask({ action: "backupList", limit: 10 });
+    const chat = await bridge.ask({ action: "backupChat", chatId: "c1", pipeId: BACKUP_CHAT_PIPE });
+    const media = await bridge.ask({
+      action: "backupMedia",
+      chatId: "c1",
+      name: "m1_0.png",
+      pipeId: BACKUP_MEDIA_PIPE,
+    });
+
+    expect(info).toMatchObject({
+      success: true,
+      data: { liveChats: 1, haevnVersion: "9.9.9-test" },
+    });
+    expect(list).toMatchObject({
+      success: true,
+      data: { chats: [{ id: "c1", media: [{ name: "m1_0.png", bytes: 4 }] }] },
+    });
+    expect(chat).toMatchObject({
+      success: true,
+      data: { bytes: received.get(BACKUP_CHAT_PIPE)?.length },
+    });
+    expect(media).toMatchObject({ success: true, data: { bytes: 4 } });
+    expect(received.get(BACKUP_MEDIA_PIPE)).toEqual(new TextEncoder().encode("png!"));
+    expect(requests.map((request) => request.method)).toEqual(["POST", "POST"]);
   });
 });

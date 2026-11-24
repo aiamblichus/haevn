@@ -1133,3 +1133,35 @@ describe("what the session does around each chat", () => {
     expect((await getDB().chats.toArray()).map((c) => c.id)).toEqual(["c1"]);
   });
 });
+
+describe("the idle close and the index (HVN-143)", () => {
+  beforeEach(() => {
+    // Only the timers the session sets, as in "the idle timer" above
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    recalculateProviderStats.mockImplementation(async () => 0);
+  });
+
+  // The CLI killed outright runs no `restoreFinish`: the idle close is all that is left of the run,
+  // and it must rebuild what the run owes exactly as the finish would.
+  it("rebuilds the index when a big run goes idle after a chat was saved without indexing", async () => {
+    await beginRestore({ chats: 21 });
+    await restoreChat({ chatId: "c1", openBody: chatBody("c1"), index: false });
+
+    await vi.advanceTimersByTimeAsync(RESTORE_IDLE_MS);
+
+    expect(await getActiveOperation()).toBe("idle");
+    expect(addOrUpdateChatInIndex).not.toHaveBeenCalled();
+    expect(rebuildIndex).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not rebuild when a small run goes idle, its chats indexed as they were saved", async () => {
+    await beginRestore({ chats: 1 });
+    await restoreChat({ chatId: "c1", openBody: chatBody("c1"), index: true });
+
+    await vi.advanceTimersByTimeAsync(RESTORE_IDLE_MS);
+
+    expect(await getActiveOperation()).toBe("idle");
+    expect(addOrUpdateChatInIndex.mock.calls).toEqual([["c1"]]);
+    expect(rebuildIndex).not.toHaveBeenCalled();
+  });
+});

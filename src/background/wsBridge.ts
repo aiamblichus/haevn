@@ -71,6 +71,7 @@ import { parseMarkdownContent } from "../utils/markdownImporter";
 import {
   beginRestore,
   finishRestore,
+  isRestoreOpen,
   type RestoreBeginResult,
   type RestoreFinishResult,
   restoreChat,
@@ -1064,10 +1065,25 @@ async function handleHealth(
   }
 }
 
+/**
+ * The answer of a backup action while a restore is open (HVN-143). A backup taken mid-restore can
+ * pair a restored media file with the chat row it replaced, so the four backup actions wait for the
+ * restore to end. Each one checks this before it reads a row or sends a byte.
+ */
+function restoreRunningAnswer(id: string): WsResponse<never> {
+  return {
+    id,
+    success: false,
+    error: "A restore is running. Try again when it ends.",
+    code: "BUSY",
+  };
+}
+
 /** The backup protocol's first answer: what a run needs to plan itself (HVN-134). */
 async function handleBackupInfo(
   id: string,
 ): Promise<WsResponse<BackupSummary & { haevnVersion: string }>> {
+  if (isRestoreOpen()) return restoreRunningAnswer(id);
   const summary = await backupSummary();
   const haevnVersion = chrome.runtime.getManifest().version || "unknown";
   return { id, success: true, data: { ...summary, haevnVersion } };
@@ -1077,6 +1093,7 @@ async function handleBackupList(
   id: string,
   req: Extract<WsRequest, { action: "backupList" }>,
 ): Promise<WsResponse<BackupChatPage>> {
+  if (isRestoreOpen()) return restoreRunningAnswer(id);
   const { after, limit } = req;
   if (!Number.isInteger(limit) || limit < 1 || limit > BACKUP_PAGE_MAX) {
     return {
@@ -1096,6 +1113,7 @@ async function handleBackupChat(
   id: string,
   req: Extract<WsRequest, { action: "backupChat" }>,
 ): Promise<WsResponse<{ bytes: number }>> {
+  if (isRestoreOpen()) return restoreRunningAnswer(id);
   try {
     requirePipeId(req.pipeId);
     const bytes = await sendToPipe(req.pipeId, await chatRecordBlob(req.chatId));
@@ -1112,6 +1130,7 @@ async function handleBackupMedia(
   id: string,
   req: Extract<WsRequest, { action: "backupMedia" }>,
 ): Promise<WsResponse<{ bytes: number }>> {
+  if (isRestoreOpen()) return restoreRunningAnswer(id);
   try {
     requirePipeId(req.pipeId);
     const bytes = await sendToPipe(req.pipeId, await mediaFile(req.chatId, req.name));

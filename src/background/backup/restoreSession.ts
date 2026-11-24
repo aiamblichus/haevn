@@ -11,9 +11,11 @@
  *  - `finishRestore` releases the lock, recalculates the provider counts the restore changed, and
  *    starts one index rebuild when the run asked for it or owes one.
  *  - An idle timer closes the session when no request has come for `RESTORE_IDLE_MS`, so a CLI that
- *    vanishes cannot hold the lock for ever. It does not run while a request is in flight (a big
- *    chat may take longer than the limit to write). A service-worker restart clears the lock and
- *    this module's state together (`clearStaleOperationLocks`).
+ *    vanishes cannot hold the lock for ever. The close is the finish's, index rebuild included when
+ *    one is owed (a CLI killed outright never sends the finish). It does not run while a request is
+ *    in flight (a big chat may take longer than the limit to write). A service-worker restart clears
+ *    the lock and this module's state together (`clearStaleOperationLocks`).
+ *  - `isRestoreOpen` tells the backup actions that a restore is open, so they answer BUSY (HVN-143).
  *
  * The session is in memory on purpose: a restore that loses it is re-run, and every chat it wrote
  * was written whole.
@@ -37,7 +39,10 @@ interface RestoreSession {
   chats: number;
   /** Whether chats are indexed as they are saved: a big run is indexed once, at the end. */
   indexPerChat: boolean;
-  /** A chat asked to be indexed and was not, because the run is big. A rebuild is owed. */
+  /**
+   * A chat of a big run was saved and is not in the index, so a rebuild is owed. Set by every such
+   * chat whatever its `index` says: the rebuild is the only thing that indexes it.
+   */
   indexOwed: boolean;
   /** The first indexing failure; reported by `finishRestore`. */
   indexError?: string;
@@ -107,9 +112,9 @@ export async function beginRestore(options: { chats: number }): Promise<RestoreB
 }
 
 /**
- * Replaces one chat from a record stream. `index` asks for the chat to be indexed now; the session
- * overrides it for a big run (and owes a rebuild at the end), so a client that forgets the rule
- * leaves no chat out of the index.
+ * Replaces one chat from a record stream. `index` asks for the chat to be indexed now. The session
+ * overrides it for a big run: no chat there is indexed as it is saved, and each one is owed the
+ * rebuild at the end, so a client that forgets the rule leaves no chat out of the index.
  */
 export async function restoreChat(options: {
   chatId: string;
@@ -130,16 +135,15 @@ export async function restoreChat(options: {
     const provider = chat.source ? extractProviderName(chat.source) : null;
     if (provider) open.providers.add(provider);
 
-    if (options.index) {
-      if (open.indexPerChat) {
-        try {
-          await SyncService.addOrUpdateChatInIndex(options.chatId);
-        } catch (error) {
-          log.warn(`[RestoreSession] Failed to index chat ${options.chatId}:`, error);
-          open.indexError ??= errorMessage(error);
-        }
-      } else {
-        open.indexOwed = true;
+    if (!open.indexPerChat) {
+      // Owed whether or not the client asked: an idle close runs no finish to rebuild it (HVN-143)
+      open.indexOwed = true;
+    } else if (options.index) {
+      try {
+        await SyncService.addOrUpdateChatInIndex(options.chatId);
+      } catch (error) {
+        log.warn(`[RestoreSession] Failed to index chat ${options.chatId}:`, error);
+        open.indexError ??= errorMessage(error);
       }
     }
 
@@ -193,6 +197,14 @@ export async function finishRestore(options: {
     );
   }
   return closeSession(open, options.rebuildIndex);
+}
+
+/**
+ * True while a restore is open or being opened. The backup actions answer BUSY while it is, so a
+ * backup never reads a chat and its media from the middle of a restore (HVN-143).
+ */
+export function isRestoreOpen(): boolean {
+  return session !== null || opening;
 }
 
 // ─── Internals ────────────────────────────────────────────────────────────────

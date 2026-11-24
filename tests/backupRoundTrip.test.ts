@@ -46,6 +46,7 @@ vi.mock("../src/utils/logger", () => ({
 
 import { runBackup } from "../cli/src/backup/engine";
 import { type RestoreResult, runRestore } from "../cli/src/backup/restoreEngine";
+import { callFrame } from "../cli/src/daemon/client";
 import { startDaemon } from "../cli/src/daemon/server";
 import { EXIT_DEFER, EXIT_FAILED, ExitError } from "../cli/src/utils/exit";
 import { setActiveOperation } from "../src/background/state";
@@ -497,6 +498,30 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
     expect((err as ExitError).exitCode).toBe(EXIT_DEFER);
     expect((err as ExitError).message).toMatch(/bulkSync/);
     expect(await getDB().chats.count()).toBe(0);
+  }, 60_000);
+
+  it("defers (75) while a restore is open, and leaves no backup behind", async () => {
+    await seedArchive();
+    const port = await connect();
+    const endpoint = { port, apiKey: KEY };
+    const dir = path.join(root, "backup");
+    // The restore opens through the daemon and the bridge, as `haevn restore` opens it
+    await callFrame(endpoint, { action: "restoreBegin", chats: 1 });
+
+    try {
+      const err = await backUp(port, dir).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(ExitError);
+      expect((err as ExitError).exitCode).toBe(EXIT_DEFER);
+      expect((err as ExitError).message).toMatch(/restore is running/);
+      expect(fs.existsSync(dir)).toBe(false);
+      expect(fs.existsSync(`${dir}.partial`)).toBe(false);
+    } finally {
+      await callFrame(endpoint, { action: "restoreFinish", rebuildIndex: false });
+    }
   }, 60_000);
 
   it("fails (1) when the index could not be brought up to date, with every chat in", async () => {
