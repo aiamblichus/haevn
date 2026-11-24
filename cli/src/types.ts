@@ -82,6 +82,11 @@ export interface BackupInfo {
   /** The Dexie schema version of the archive. */
   dbSchema: number;
   liveChats: number;
+  /**
+   * How many restores have opened (HVN-144). A run compares it between its two answers. Absent from
+   * an extension that predates it, and then the run compares nothing.
+   */
+  restoreEpoch?: number;
 }
 
 /** A media file of a chat as `backupList` names it: the name as stored in OPFS, and its size. */

@@ -453,4 +453,28 @@ describe("the backup actions while a restore is open (HVN-143)", () => {
     expect(received.get(BACKUP_MEDIA_PIPE)).toEqual(new TextEncoder().encode("png!"));
     expect(requests.map((request) => request.method)).toEqual(["POST", "POST"]);
   });
+
+  // A backup compares the counter between its first answer and its last (HVN-144): a restore that
+  // opened and closed in between is seen there, though no action of the run met it open.
+  it("answers a restore counter that moves when a restore opens, and not when one is refused (HVN-144)", async () => {
+    const bridge = await connectedBridge();
+    const epoch = async (): Promise<number> => {
+      const reply = await bridge.ask({ action: "backupInfo" });
+      return (reply.data as { restoreEpoch: number }).restoreEpoch;
+    };
+
+    const first = await epoch();
+    expect(typeof first).toBe("number");
+    expect(await epoch()).toBe(first);
+
+    await restoreOneChat(bridge);
+    const second = await epoch();
+    expect(second).toBe(first + 1);
+
+    const { acquireOperationLock } = await import("../src/background/state");
+    await acquireOperationLock("bulkSync");
+    const refused = await bridge.ask({ action: "restoreBegin", chats: 1 });
+    expect(refused).toMatchObject({ success: false, code: "BUSY" });
+    expect(await epoch()).toBe(second);
+  });
 });

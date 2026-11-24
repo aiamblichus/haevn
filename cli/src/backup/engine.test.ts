@@ -311,6 +311,16 @@ describe("haevn backup, a run that finishes (exit 0)", () => {
     const result = await backup(s, { waitMs: 3_000 });
     expect(result.chats).toBe(3);
   });
+
+  it("an extension that predates the restore counter: neither answer carries it, and the run is kept", async () => {
+    const s = await setup(three, { restoreEpoch: null });
+
+    const result = await backup(s);
+
+    expect(result.chats).toBe(3);
+    expect(s.extension.asked.filter((q) => q === "backupInfo")).toHaveLength(2);
+    expectConsistent(s.dir);
+  });
 });
 
 // ─── The retries ──────────────────────────────────────────────────────────────
@@ -383,6 +393,26 @@ describe("haevn backup, not now (exit 75)", () => {
 
     expect(ended.code).toBe(75);
     expect(ended.message).toContain("a restore is running");
+    expectPreviousKept(s.dir, before);
+  });
+
+  it("a restore opens and closes between two reads of the run: the counter moved, and the run is not kept", async () => {
+    const s: Setup = await setup(three, {
+      fault: (frame): Fault | undefined => {
+        // The restore comes and goes while the run reads its second chat, where no action meets it
+        if (frame.action === "backupChat" && frame.chatId === "claude:a1") {
+          s.extension.restoreBegan();
+        }
+        return undefined;
+      },
+    });
+    const before = plantPrevious(s.dir);
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(75);
+    expect(ended.message).toContain("a restore began while the backup was reading");
+    expect(s.extension.asked.filter((q) => q === "backupInfo")).toHaveLength(2);
     expectPreviousKept(s.dir, before);
   });
 

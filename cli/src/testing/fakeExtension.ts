@@ -47,6 +47,8 @@ export interface FakeExtensionOptions {
   /** The API key it offers. */
   key?: string;
   info?: { protocol?: number; haevnVersion?: string; dbSchema?: number } | "unknown-action";
+  /** The restore counter `backupInfo` answers (HVN-144); null for an extension that predates it. */
+  restoreEpoch?: number | null;
   fault?: (frame: Frame, n: number) => Fault | undefined;
   /** How long before the first connection attempt. */
   connectAfterMs?: number;
@@ -81,6 +83,8 @@ export class FakeExtension {
   readonly receivedRecords = new Map<string, Buffer>();
   readonly receivedMedia = new Map<string, Buffer>();
   private session = false;
+  /** The restore counter `backupInfo` answers; null when the extension predates it (HVN-144). */
+  restoreEpoch: number | null;
 
   constructor(
     private readonly port: number,
@@ -88,6 +92,12 @@ export class FakeExtension {
     private readonly options: FakeExtensionOptions = {},
   ) {
     this.key = options.key ?? "test-key";
+    this.restoreEpoch = options.restoreEpoch === undefined ? 0 : options.restoreEpoch;
+  }
+
+  /** A restore opened: the counter moves, as the extension's does when `restoreBegin` locks. */
+  restoreBegan(): void {
+    if (this.restoreEpoch !== null) this.restoreEpoch += 1;
   }
 
   /** Keep trying to connect, as the extension's alarm does. */
@@ -174,6 +184,7 @@ export class FakeExtension {
             haevnVersion: info?.haevnVersion ?? "9.9.9-test",
             dbSchema: info?.dbSchema ?? 21,
             liveChats: this.chats.length,
+            ...(this.restoreEpoch === null ? {} : { restoreEpoch: this.restoreEpoch }),
           },
         });
         return;
@@ -229,6 +240,7 @@ export class FakeExtension {
           return;
         }
         this.session = true;
+        this.restoreBegan();
         this.restoreEvents.push({ kind: "begin", chats: frame.chats as number });
         this.reply(ws, frame, {
           success: true,

@@ -75,6 +75,7 @@ import {
   type RestoreBeginResult,
   type RestoreFinishResult,
   restoreChat,
+  restoreEpoch,
   restoreMedia,
 } from "./backup/restoreSession";
 import { buildTextExportArtifact } from "./export/textExportArtifact";
@@ -1079,14 +1080,18 @@ function restoreRunningAnswer(id: string): WsResponse<never> {
   };
 }
 
-/** The backup protocol's first answer: what a run needs to plan itself (HVN-134). */
+/**
+ * The backup protocol's first answer: what a run needs to plan itself (HVN-134). The restore
+ * counter is what the run compares with its last answer (HVN-144); `BACKUP_PROTOCOL` stays 1.
+ */
 async function handleBackupInfo(
   id: string,
-): Promise<WsResponse<BackupSummary & { haevnVersion: string }>> {
+): Promise<WsResponse<BackupSummary & { haevnVersion: string; restoreEpoch: number }>> {
   if (isRestoreOpen()) return restoreRunningAnswer(id);
   const summary = await backupSummary();
   const haevnVersion = chrome.runtime.getManifest().version || "unknown";
-  return { id, success: true, data: { ...summary, haevnVersion } };
+  const epoch = await restoreEpoch();
+  return { id, success: true, data: { ...summary, haevnVersion, restoreEpoch: epoch } };
 }
 
 async function handleBackupList(

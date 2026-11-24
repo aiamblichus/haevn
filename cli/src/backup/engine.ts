@@ -133,6 +133,15 @@ class BackupRun {
       bytes += entry.bytes + entry.media.reduce((sum, m) => sum + m.bytes, 0);
     }
 
+    // A restore that opened and closed while the run was reading met none of its actions open (each
+    // checks at its start), so the counter is the only trace it leaves (HVN-144). Nothing is kept.
+    const later = await this.link.backupInfo();
+    if (later.restoreEpoch !== info.restoreEpoch) {
+      throw deferred(
+        "a restore began while the backup was reading; nothing was kept, run the backup again",
+      );
+    }
+
     fs.rmSync(path.join(this.partial, PID_FILE), { force: true });
     await writeDurable(
       path.join(this.partial, INDEX_FILE),
