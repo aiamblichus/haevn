@@ -101,7 +101,8 @@ export async function runBackup(options: BackupOptions): Promise<BackupResult> {
     session = await openDaemonOrFail(options.endpoint);
     return await new BackupRun(options, dir, session).run();
   } catch (err) {
-    fs.rmSync(partial, { recursive: true, force: true });
+    // Not another run's directory: a run that outlived the 2 h limit may find its `.partial` taken.
+    if (!heldByAnotherRun(partial)) fs.rmSync(partial, { recursive: true, force: true });
     throw toExitError(err, options.signal);
   } finally {
     await session?.stop();
@@ -385,20 +386,27 @@ class BackupRun {
     }
   }
 
-  /** Poll `/health` until the extension is connected: at once if it is, 75 with `timeout` if not within `--wait`. */
+  /**
+   * Poll `/health` until the extension is connected: at once if it is. When none is within
+   * `--wait`, the run ends: 1 if a socket offered a wrong API key meanwhile (a wrong key never mends
+   * by waiting), else 75 with `timeout`. A wrong-key socket does not matter while a good extension
+   * is connected: any page or other extension can dial the daemon's port with a key of its own.
+   */
   private async waitForExtension(timeout: string): Promise<void> {
     const deadline = Date.now() + this.options.waitMs;
     for (;;) {
-      if (this.session.authFailed()) {
-        throw failed(
-          "an extension connected with a different API key than the one in ~/.haevn/config.json: set the same key in both",
-        );
-      }
       const health = await probeHealth(this.endpoint, this.signal);
       if (!health) throw failed(`the daemon on port ${this.endpoint.port} stopped answering`);
       if (health.extensionConnected) return;
       const left = deadline - Date.now();
-      if (left <= 0) throw deferred(timeout);
+      if (left <= 0) {
+        if (this.session.authFailed()) {
+          throw failed(
+            "an extension connected with a different API key than the one in ~/.haevn/config.json: set the same key in both",
+          );
+        }
+        throw deferred(timeout);
+      }
       await sleep(Math.min(this.pollMs, left), this.signal);
     }
   }
@@ -417,9 +425,54 @@ async function openDaemonOrFail(endpoint: DaemonEndpoint): Promise<DaemonSession
 
 // ─── The directory ────────────────────────────────────────────────────────────
 
+/** What a `.partial` of ours can hold: nothing else is ours to delete. */
+const PARTIAL_NAMES = new Set([PID_FILE, INDEX_FILE, MANIFEST_FILE, CHATS_DIR, MEDIA_DIR]);
+
+/** Whether `dir` is a directory (not a link to one) holding nothing. */
+function isEmptyDirectory(dir: string): boolean {
+  return fs.lstatSync(dir).isDirectory() && fs.readdirSync(dir).length === 0;
+}
+
+/** Whether `dir` is a directory (not a link to one) with the manifest of a haevn backup. */
+function isBackup(dir: string): boolean {
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return false;
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, MANIFEST_FILE), "utf8"),
+    ) as Partial<Manifest>;
+    return manifest.format === BACKUP_FORMAT;
+  } catch {
+    return false; // no manifest, or not JSON
+  }
+}
+
+/**
+ * Every removal or rename-back of a path that a suffix names (`<dir>.old`, `<dir>.partial`) asks
+ * this first, because the suffix alone proves nothing: `notes.old` may be a person's folder. A
+ * `.old` is ours when it is empty or is a haevn backup; a `.partial` when it is empty or holds only
+ * the names a run writes. Anything else ends the run (1) with the path named.
+ */
+function requireOurs(target: string, kind: "old" | "partial"): void {
+  let ours: boolean;
+  try {
+    ours =
+      isEmptyDirectory(target) ||
+      (kind === "old"
+        ? isBackup(target)
+        : fs.lstatSync(target).isDirectory() &&
+          fs.readdirSync(target).every((name) => PARTIAL_NAMES.has(name)));
+  } catch (err) {
+    throw toExitError(err);
+  }
+  if (!ours) {
+    throw failed(`refusing to remove ${target}: it is not part of a haevn backup`);
+  }
+}
+
 /**
  * Take `<dir>.partial`. A live run's `backup.pid` in it means 75; one left by a run that died is
- * removed with it. `mkdir` is the claim, so two runs started together cannot both have it.
+ * removed with it, if it is ours to remove. `mkdir` is the claim, so two runs started together
+ * cannot both have it: the one that loses the second `mkdir` is told to come back (75).
  */
 function claimPartial(dir: string): void {
   const partial = `${dir}.partial`;
@@ -433,13 +486,14 @@ function claimPartial(dir: string): void {
       fs.mkdirSync(partial);
       break;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || tries > 0) throw toExitError(err);
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw toExitError(err);
       const owner = liveOwner(partial);
-      if (owner) {
+      if (owner || tries > 0) {
         throw deferred(
-          `another haevn backup${owner.pid ? ` (pid ${owner.pid})` : ""} is writing ${partial}`,
+          `another haevn backup${owner?.pid ? ` (pid ${owner.pid})` : ""} is writing ${partial}`,
         );
       }
+      requireOurs(partial, "partial");
       fs.rmSync(partial, { recursive: true, force: true });
     }
   }
@@ -452,6 +506,24 @@ function claimPartial(dir: string): void {
     fs.rmSync(partial, { recursive: true, force: true });
     throw toExitError(err);
   }
+}
+
+/** The pid a `.partial` names, if its pid file is there and says one. */
+function recordedPid(partial: string): number | undefined {
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(partial, PID_FILE), "utf8")) as {
+      pid?: unknown;
+    };
+    return typeof info.pid === "number" ? info.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `.partial` names another process: it is that run's, not ours to clean up. */
+function heldByAnotherRun(partial: string): boolean {
+  const pid = recordedPid(partial);
+  return pid !== undefined && pid !== process.pid;
 }
 
 /** The run that holds an existing `.partial`, or null when it is a leftover. */
@@ -480,42 +552,55 @@ function liveOwner(partial: string): { pid?: number } | null {
 
 /**
  * Before the work: a `<dir>.old` left by a swap that was killed between its renames is the previous
- * backup, and goes back; otherwise it is removed. A `<dir>` that is not empty and not a backup is
- * not ours to replace.
+ * backup, and goes back; any other `.old` of ours is removed. A `.old` that is not ours is left
+ * alone and ends the run.
  */
 function prepareDirectory(dir: string): void {
   const old = `${dir}.old`;
-  if (!fs.existsSync(dir) && fs.existsSync(old)) fs.renameSync(old, dir);
-  else fs.rmSync(old, { recursive: true, force: true });
+  if (exists(old)) {
+    requireOurs(old, "old");
+    if (!exists(dir) && isBackup(old)) fs.renameSync(old, dir);
+    else fs.rmSync(old, { recursive: true, force: true });
+  }
+  requireReplaceable(dir);
+}
 
-  let isDirectory: boolean;
+/** `<dir>` may be replaced when it is missing, empty, or a haevn backup. It is not a link. */
+function requireReplaceable(dir: string): void {
+  let stat: fs.Stats;
   try {
-    isDirectory = fs.statSync(dir).isDirectory();
+    stat = fs.lstatSync(dir);
   } catch {
-    return; // nothing there yet
+    return; // nothing there
   }
-  if (!isDirectory) throw failed(`${dir} exists and is not a directory`);
-  if (fs.readdirSync(dir).length === 0) return;
-  try {
-    const manifest = JSON.parse(
-      fs.readFileSync(path.join(dir, MANIFEST_FILE), "utf8"),
-    ) as Partial<Manifest>;
-    if (manifest.format === BACKUP_FORMAT) return;
-  } catch {
-    // no manifest, or not JSON
+  if (stat.isSymbolicLink()) {
+    throw failed(`${dir} is a symbolic link: give the directory itself, not a link to it`);
   }
+  if (!stat.isDirectory()) throw failed(`${dir} exists and is not a directory`);
+  if (isEmptyDirectory(dir) || isBackup(dir)) return;
   throw failed(
     `${dir} is not empty and is not a haevn backup (it has no ${MANIFEST_FILE}): refusing to replace it`,
   );
 }
 
+function exists(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The finished `.partial` becomes `<dir>`. The previous `<dir>` goes to `<dir>.old` first and is
  * removed last, so a kill between the renames leaves a complete `.old` (which `prepareDirectory`
- * puts back) and never a `<dir>` without a manifest.
+ * puts back) and never a `<dir>` without a manifest. `<dir>` is checked again first: the run took
+ * minutes, and what is in `<dir>` now is what gets moved and deleted.
  */
 export function swap(partial: string, dir: string, old: string): void {
-  const hadPrevious = fs.existsSync(dir);
+  requireReplaceable(dir);
+  const hadPrevious = exists(dir);
   if (hadPrevious) fs.renameSync(dir, old);
   try {
     fs.renameSync(partial, dir);

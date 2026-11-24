@@ -270,6 +270,7 @@ It needs Chrome open with the HAEVN extension and its CLI bridge on, and the API
 
 Options:
 - `--wait <s>` - Seconds to wait for the extension to connect, or to come back after the connection was lost (default 60)
+  There is no limit on the whole run: a connection that keeps dropping can cost up to `--wait` each time, so a scheduled job should be bounded by its runner's own time limit. A run that gets SIGTERM ends cleanly.
 
 Exit code, for a scheduled job:
 
@@ -277,9 +278,9 @@ Exit code, for a scheduled job:
 | --- | --- |
 | 0 | Done: `<dir>` is complete |
 | 75 | Not now, ask again later: no extension connected within `--wait` (Chrome closed or the bridge off); the connection was lost and did not return within `--wait`; the extension is busy (a restore is running); another `haevn backup` holds `<dir>.partial` |
-| 1 | Failed: anything else, such as a wrong API key, an extension or daemon that is too old, a disk error, or a chat or file that could not be read. One line on stderr says which |
+| 1 | Failed: anything else, such as a wrong API key, an extension or daemon that is too old, a disk error, or a chat or file that could not be read. One line on stderr says which. A wrong key is told apart from "nobody came" only when `--wait` ends with no extension connected, so it costs the full wait |
 
-`<dir>` must be empty, missing, or a previous backup: a directory that holds anything else is not replaced. A run that gets SIGINT or SIGTERM removes its `.partial` before it exits; one that is killed outright leaves it behind, and the next run removes it.
+`<dir>` must be empty, missing, or a previous backup, and not a symbolic link: a directory that holds anything else is refused (exit 1), and so are a `<dir>.old` or `<dir>.partial` that is not part of a haevn backup. Only files a backup writes are ever removed. A run that gets SIGINT or SIGTERM removes its `.partial` before it exits; one that is killed outright leaves it behind, and the next run removes it. A `.partial` whose `backup.pid` names a live process younger than 2 hours means another run is writing (exit 75); a run that lasts longer than 2 hours is treated as dead. Files are flushed with `fsync`, which on macOS does not force the disk's own cache: do not count on a backup surviving a power cut while it is being written; the next run makes a new one.
 
 ### `daemon` - Start the local daemon
 

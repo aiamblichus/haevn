@@ -6,6 +6,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openDaemon } from "../daemon/client.js";
 import { startDaemon } from "../daemon/server.js";
 import {
   defaultRecord,
@@ -416,7 +417,8 @@ describe("haevn backup, not now (exit 75)", () => {
       path.join(`${s.dir}.partial`, "backup.pid"),
       JSON.stringify({ pid: exited, startedAt: Date.now() }),
     );
-    fs.writeFileSync(path.join(`${s.dir}.partial`, "leftover.jsonl"), "x");
+    fs.mkdirSync(path.join(`${s.dir}.partial`, "chats"));
+    fs.writeFileSync(path.join(`${s.dir}.partial`, "chats", "half.jsonl"), "x");
 
     await backup(s);
 
@@ -538,6 +540,19 @@ describe("haevn backup, failed (exit 1)", () => {
     expect(ended.code).toBe(1);
     expect(ended.message).toContain("different API key");
     expectPreviousKept(s.dir, before);
+  });
+
+  it("a stray socket with a wrong key does not fail a run whose extension is connected", async () => {
+    const s = await setup(three, { connectAfterMs: 200 });
+    // the stray dials in first, as a web page or another extension with a key of its own may
+    const stray = new FakeExtension(s.port, [], { key: "not-the-key" });
+    extensions.push(stray);
+    stray.start();
+
+    const result = await backup(s, { waitMs: 5_000 });
+
+    expect(result.chats).toBe(3);
+    expectConsistent(s.dir);
   });
 
   it("a daemon that is already running refuses the key", async () => {
@@ -676,6 +691,145 @@ describe("haevn backup, failed (exit 1)", () => {
 
 // ─── The swap ─────────────────────────────────────────────────────────────────
 
+const PRECIOUS = "precious.txt";
+
+function plantPrecious(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, PRECIOUS), "mine\n");
+}
+
+function expectPreciousKept(dir: string): void {
+  expect(fs.readFileSync(path.join(dir, PRECIOUS), "utf8")).toBe("mine\n");
+}
+
+describe("haevn backup, what it will not delete", () => {
+  it("leaves a <dir>.old that is not a backup alone, with a backup in <dir>", async () => {
+    const s = await setup(three);
+    const before = plantPrevious(s.dir);
+    plantPrecious(`${s.dir}.old`);
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(1);
+    expect(ended.message).toContain(`${s.dir}.old`);
+    expectPreciousKept(`${s.dir}.old`);
+    expect(snapshot(s.dir)).toEqual(before);
+    expect(fs.existsSync(`${s.dir}.partial`)).toBe(false);
+  });
+
+  it("does not move a <dir>.old that is not a backup into <dir>", async () => {
+    const s = await setup(three);
+    plantPrecious(`${s.dir}.old`);
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(1);
+    expectPreciousKept(`${s.dir}.old`);
+    expect(fs.existsSync(s.dir)).toBe(false);
+    expect(fs.existsSync(`${s.dir}.partial`)).toBe(false);
+  });
+
+  it("leaves a <dir>.partial that holds anything but a run's own files alone", async () => {
+    const s = await setup(three);
+    plantPrecious(`${s.dir}.partial`);
+    const old = new Date(Date.now() - 3_600_000); // not a claim of the last minute
+    fs.utimesSync(`${s.dir}.partial`, old, old);
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(1);
+    expect(ended.message).toContain(`${s.dir}.partial`);
+    expectPreciousKept(`${s.dir}.partial`);
+    expect(fs.existsSync(s.dir)).toBe(false);
+  });
+
+  it("removes a <dir>.old that is empty or is a backup, and a <dir>.partial that is empty", async () => {
+    const s = await setup(three);
+    const before = plantPrevious(s.dir);
+    fs.mkdirSync(`${s.dir}.old`);
+    fs.mkdirSync(`${s.dir}.partial`);
+    const old = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(`${s.dir}.partial`, old, old);
+
+    await backup(s);
+
+    expectConsistent(s.dir);
+    expect(before["chats/old.jsonl"]).toBeDefined();
+    expect(fs.existsSync(`${s.dir}.old`)).toBe(false);
+    expect(fs.existsSync(`${s.dir}.partial`)).toBe(false);
+  });
+
+  it("does not replace what was put in <dir> while the run was going", async () => {
+    const dir = path.join(root, "archive");
+    const s = await setup(three, {
+      fault: (frame): Fault | undefined => {
+        if (frame.action === "backupChat" && !fs.existsSync(dir)) plantPrecious(dir);
+        return undefined;
+      },
+    });
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(1);
+    expect(ended.message).toContain("not a haevn backup");
+    expectPreciousKept(dir);
+    expect(fs.existsSync(`${dir}.partial`)).toBe(false);
+    expect(fs.existsSync(`${dir}.old`)).toBe(false);
+  });
+
+  it("refuses a <dir> that is a symbolic link, and leaves the link and its target alone", async () => {
+    const s = await setup(three);
+    const target = path.join(root, "real-backup");
+    const before = plantPrevious(target);
+    fs.symlinkSync(target, s.dir);
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(1);
+    expect(ended.message).toContain("symbolic link");
+    expect(fs.lstatSync(s.dir).isSymbolicLink()).toBe(true);
+    expect(snapshot(target)).toEqual(before);
+    expect(fs.existsSync(`${s.dir}.partial`)).toBe(false);
+  });
+
+  it("leaves the .partial of another run alone when it ends, if that run has taken it", async () => {
+    const s = await setup(three, {
+      fault: (frame): Fault | undefined => {
+        if (frame.action === "backupChat") {
+          // a second run took the directory over (this one outlived the limit on its pid file)
+          fs.writeFileSync(
+            path.join(`${s.dir}.partial`, "backup.pid"),
+            JSON.stringify({ pid: process.ppid, startedAt: Date.now() }),
+          );
+          return { error: "BUSY", message: "a restore is running" };
+        }
+        return undefined;
+      },
+    });
+
+    const ended = await endedAs(backup(s));
+
+    expect(ended.code).toBe(75);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(`${s.dir}.partial`, "backup.pid"), "utf8")).pid,
+    ).toBe(process.ppid);
+  });
+});
+
+describe("haevn backup, the daemon it starts", () => {
+  it("clears the timer that limits how long it waits to stop, so the process can exit at once", async () => {
+    const session = await openDaemon({ port: await freePort(), apiKey: KEY });
+    const set = vi.spyOn(globalThis, "setTimeout");
+    const cleared = vi.spyOn(globalThis, "clearTimeout");
+
+    await session.stop();
+
+    const limits = set.mock.results.filter((_, i) => set.mock.calls[i][1] === 3_000);
+    expect(limits).toHaveLength(1);
+    expect(cleared.mock.calls.map(([timer]) => timer)).toContain(limits[0].value);
+  });
+});
+
 describe("haevn backup, the swap", () => {
   it("puts the previous backup back when a run was killed between the two renames", async () => {
     const s = await setup(three, {}, { start: false });
@@ -709,5 +863,18 @@ describe("haevn backup, the swap", () => {
     expect(Object.keys(snapshot(dir))).toEqual(["manifest.json"]);
     expect(fs.existsSync(`${dir}.partial`)).toBe(false);
     expect(fs.existsSync(`${dir}.old`)).toBe(false);
+  });
+
+  it("does not move or delete a <dir> that is not a backup, whatever checked it before", () => {
+    const dir = path.join(root, "archive");
+    plantPrecious(dir);
+    fs.mkdirSync(`${dir}.partial`);
+    fs.writeFileSync(path.join(`${dir}.partial`, "manifest.json"), "{}\n");
+
+    expect(() => swap(`${dir}.partial`, dir, `${dir}.old`)).toThrow(/not a haevn backup/);
+
+    expectPreciousKept(dir);
+    expect(fs.existsSync(`${dir}.old`)).toBe(false);
+    expect(fs.existsSync(`${dir}.partial`)).toBe(true); // the caller removes it
   });
 });

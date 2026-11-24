@@ -290,8 +290,18 @@ export async function openDaemon(endpoint: DaemonEndpoint): Promise<DaemonSessio
     endpoint: { ...endpoint, port: daemon.port },
     ownsDaemon: true,
     authFailed: () => authFailure,
-    // A stuck socket must not keep a finished run alive.
-    stop: () => Promise.race([daemon.stop(), sleep(3_000)]),
+    // A stuck socket must not keep a finished run alive; the limit's own timer must not either.
+    stop: async () => {
+      let limit: NodeJS.Timeout | undefined;
+      const stuck = new Promise<void>((resolve) => {
+        limit = setTimeout(resolve, 3_000);
+      });
+      try {
+        await Promise.race([daemon.stop(), stuck]);
+      } finally {
+        clearTimeout(limit);
+      }
+    },
   };
 }
 
