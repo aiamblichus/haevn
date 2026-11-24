@@ -55,10 +55,11 @@ export namespace JanitorService {
 
       log.info(`[Janitor] Found ${chatIds.length} soft-deleted chats ready for cleanup`);
 
-      await ChatRepository.hardDeleteChats(chatIds);
+      // Some may have been restored since the read: only the ones it deleted are counted.
+      const deleted = await ChatRepository.hardDeleteChats(chatIds);
 
-      log.info(`[Janitor] Successfully cleaned up ${chatIds.length} chats`);
-      return chatIds.length;
+      log.info(`[Janitor] Successfully cleaned up ${deleted.length} chats`);
+      return deleted.length;
     } catch (error) {
       log.error("[Janitor] Failed to cleanup soft-deleted chats", error);
       throw error;

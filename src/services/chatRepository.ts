@@ -640,71 +640,69 @@ export namespace ChatRepository {
    * Hard-deletes one or more chats from the local archive.
    * Performs actual cleanup: removes DB rows, thumbnails, mediaContent, OPFS files, and search index entries.
    * This is called by the Janitor service after the grace period.
+   *
+   * The ids come from a read made earlier, so each row is read again inside the transaction that
+   * deletes it: a chat that is no longer soft-deleted (a restore or a sync brought it back since)
+   * is left alone, and so are its media and its search entries (HVN-138).
    * @param chatIds An array of chat IDs to permanently delete.
+   * @returns The ids that were deleted: those that were still soft-deleted.
    */
-  export async function hardDeleteChats(chatIds: string[]): Promise<void> {
-    if (chatIds.length === 0) return;
+  export async function hardDeleteChats(chatIds: string[]): Promise<string[]> {
+    if (chatIds.length === 0) return [];
     try {
       const db = getDB();
 
-      // Clean up thumbnail and mediaContent entries before deleting chats
-      try {
-        // Find all thumbnails for these chats
-        const thumbnails = await db.thumbnails.where("chatId").anyOf(chatIds).toArray();
-        const thumbnailIds = thumbnails
-          .map((t) => t.id)
-          .filter((id): id is number => id !== undefined);
+      // One transaction for the check and every row it removes: a chat saved again before this
+      // runs is seen as live, and one saved after it is written on a clean slate, never
+      // half-deleted. Nothing in here may wait on anything but Dexie.
+      const doomed = await db.transaction(
+        "rw",
+        [
+          db.chats,
+          db.chatMessages,
+          db.thumbnails,
+          db.mediaContent,
+          db.chatMetadata,
+          db.chatEmbeddings,
+          db.metadataQueue,
+          db.embeddingQueue,
+        ],
+        async () => {
+          const rows = await db.chats.bulkGet(chatIds);
+          const ids = rows
+            .filter((c): c is Chat & { id: string } => !!c?.id && c.deleted === 1)
+            .map((c) => c.id);
+          if (ids.length === 0) return ids;
 
-        if (thumbnailIds.length > 0) {
-          // Batch delete media content and thumbnails
-          await db.mediaContent.bulkDelete(thumbnailIds);
-          await db.thumbnails.bulkDelete(thumbnailIds);
-          log.info(
-            `Deleted ${thumbnailIds.length} thumbnails and mediaContent entries for ${chatIds.length} chats`,
-          );
-        }
-      } catch (e) {
-        log.warn("Failed to clean up thumbnails for deletions", e);
-        // Don't throw - continue with deletion
+          const thumbnails = await db.thumbnails.where("chatId").anyOf(ids).toArray();
+          const thumbnailIds = thumbnails
+            .map((t) => t.id)
+            .filter((id): id is number => id !== undefined);
+          if (thumbnailIds.length > 0) {
+            await db.mediaContent.bulkDelete(thumbnailIds);
+            await db.thumbnails.bulkDelete(thumbnailIds);
+          }
+          await db.chatMessages.where("chatId").anyOf(ids).delete();
+          await db.chatMetadata.bulkDelete(ids);
+          await db.chatEmbeddings.bulkDelete(ids);
+          await db.metadataQueue.bulkDelete(ids);
+          await db.embeddingQueue.bulkDelete(ids);
+          await db.chats.bulkDelete(ids);
+          return ids;
+        },
+      );
+
+      if (doomed.length < chatIds.length) {
+        log.info(
+          `Kept ${chatIds.length - doomed.length} of ${chatIds.length} chats: no longer soft-deleted`,
+        );
       }
-
-      try {
-        await db.chatMessages.where("chatId").anyOf(chatIds).delete();
-      } catch (e) {
-        log.warn("Failed to delete chatMessages for hard-deleted chats", e);
-      }
-
-      try {
-        const { removeMany } = await import("./metadataRepository");
-        await removeMany(chatIds);
-      } catch (e) {
-        log.warn("Failed to delete metadata records for hard-deleted chats", e);
-      }
-
-      try {
-        await db.chatEmbeddings.bulkDelete(chatIds);
-      } catch (e) {
-        log.warn("Failed to delete chatEmbeddings for hard-deleted chats", e);
-      }
-
-      try {
-        await db.metadataQueue.bulkDelete(chatIds);
-      } catch (e) {
-        log.warn("Failed to delete metadataQueue rows for hard-deleted chats", e);
-      }
-
-      try {
-        await db.embeddingQueue.bulkDelete(chatIds);
-      } catch (e) {
-        log.warn("Failed to delete embeddingQueue rows for hard-deleted chats", e);
-      }
-
-      await db.chats.bulkDelete(chatIds);
-      log.info(`Hard-deleted chats: ${chatIds.join(", ")}`);
+      if (doomed.length === 0) return doomed;
+      log.info(`Hard-deleted chats: ${doomed.join(", ")}`);
 
       // Update search index in bulk
       try {
-        await SearchIndexManager.removeChatsFromIndexBulk(chatIds);
+        await SearchIndexManager.removeChatsFromIndexBulk(doomed);
       } catch (e) {
         log.warn("Failed to update the search index for deletions", e);
       }
@@ -716,10 +714,10 @@ export namespace ChatRepository {
 
         // Run OPFS deletions in parallel
         const results = await Promise.all(
-          chatIds.map((chatId) => mediaStorage.deleteChatDir(chatId)),
+          doomed.map((chatId) => mediaStorage.deleteChatDir(chatId)),
         );
         const failed = results.filter((ok) => !ok).length;
-        log.info(`Cleaned up OPFS media for ${chatIds.length - failed} of ${chatIds.length} chats`);
+        log.info(`Cleaned up OPFS media for ${doomed.length - failed} of ${doomed.length} chats`);
         if (failed > 0) {
           log.warn(`${failed} chat media folders could not be deleted; the media sweep will retry`);
         }
@@ -727,6 +725,7 @@ export namespace ChatRepository {
         log.warn("Failed to clean up OPFS media for deletions", e);
         // Don't throw - deletion failures shouldn't block chat deletion
       }
+      return doomed;
     } catch (error) {
       log.error(`Failed to hard-delete chats ${chatIds.join(", ")}`, error);
       throw new Error(

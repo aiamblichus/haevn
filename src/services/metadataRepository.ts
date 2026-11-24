@@ -47,6 +47,27 @@ export async function set(
 }
 
 /**
+ * Writes `partial` only if the chat's record is still the one the caller read: it has the same
+ * `updatedAt` as `since`, or neither exists. Read and write are one transaction, so a write that
+ * lands in between (a restore, an import's seeding, a person's edit) is never written over.
+ * For a writer that holds a record for a long time first (an AI generation). Returns whether it
+ * wrote.
+ */
+export async function setIfUnchanged(
+  chatId: string,
+  since: ChatMetadataRecord | null,
+  partial: Partial<Omit<ChatMetadataRecord, "chatId">>,
+): Promise<boolean> {
+  const db = getDB();
+  return db.transaction("rw", db.chatMetadata, async () => {
+    const current = await db.chatMetadata.get(chatId);
+    if ((current?.updatedAt ?? null) !== (since?.updatedAt ?? null)) return false;
+    await set(chatId, partial);
+    return true;
+  });
+}
+
+/**
  * Seed a chat's metadata record from the `haevnMetadata` it carries (a HAEVN export writes it),
  * as a manual record, and never over a record the archive already has. Never rejects: the chat
  * is saved, and an import must not count it as failed or undo its other work over this. Returns

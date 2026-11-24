@@ -125,6 +125,41 @@ function buildMediaStoragePath(
   return `media/${safeChatId}/${safeMessageId}_${partIndex}.${extension}`;
 }
 
+/** Write one media file of an export into OPFS. False when the entry is missing or fails. */
+async function restoreMediaEntry(
+  entries: Map<string, Entry>,
+  mediaEntry: ExportManifestMediaEntry,
+): Promise<boolean> {
+  const entry = entries.get(mediaEntry.path);
+  if (!entry || entry.directory) {
+    log.warn(`[ImportWorker] Media entry missing: ${mediaEntry.path}`);
+    return false;
+  }
+
+  try {
+    const targetPath = buildMediaStoragePath(
+      mediaEntry.chatId,
+      mediaEntry.messageId,
+      mediaEntry.partIndex,
+      mediaEntry.mediaType,
+    );
+    const writable = await createWritableStream(targetPath);
+    try {
+      // Note: entry.getData() closes the writable stream internally when done,
+      // so we must NOT call writable.close() ourselves
+      await entry.getData(writable, { useWebWorkers: false });
+    } catch (writeError) {
+      // A stream that failed part-way is still open, and holds the file
+      await abortWritable(writable);
+      throw writeError;
+    }
+    return true;
+  } catch (error) {
+    log.warn(`[ImportWorker] Failed to restore media ${mediaEntry.path}:`, error);
+    return false;
+  }
+}
+
 type ImportProgressPayload = {
   processed: number;
   total: number;
@@ -229,6 +264,8 @@ async function chatExists(chatId: string): Promise<boolean> {
 /**
  * Process a single chat: save to DB and request post-processing.
  * Resolves with saved: false only for a duplicate that is not being overwritten (a skip).
+ * `beforeSave` runs after that decision and before the save, so side effects that belong to a
+ * saved chat (its media files) never happen for a skipped one.
  * Throws when the chat has no ID or cannot be saved (a failure), so the caller counts an error.
  */
 async function processChat(
@@ -236,6 +273,7 @@ async function processChat(
   raw: unknown,
   overwriteExisting: boolean,
   requestId?: string,
+  beforeSave?: () => Promise<void>,
 ): Promise<{ saved: boolean; reason?: string }> {
   if (!chat.id) {
     throw new Error("Chat missing ID");
@@ -250,6 +288,9 @@ async function processChat(
   }
 
   try {
+    // Only a chat that is going to be saved gets here: a skipped chat keeps its media untouched.
+    await beforeSave?.();
+
     // Save chat to DB using shared persistence logic
     const result = await ChatPersistence.saveChat(chat, raw);
 
@@ -513,66 +554,6 @@ async function processImport(
           sendProgress({
             processed,
             total,
-            status: "Restoring media...",
-            phase: "media",
-            processedMedia: restoredMedia,
-            totalMedia,
-            bytesWritten,
-            totalBytes,
-            requestId,
-          });
-
-          for (const mediaEntry of mediaEntries) {
-            if (workerState?.status === "cancelled") break;
-            while (workerState?.status === "paused") await yieldToEventLoop();
-
-            const entry = entries.get(mediaEntry.path);
-            if (!entry || entry.directory) {
-              log.warn(`[ImportWorker] Media entry missing: ${mediaEntry.path}`);
-              continue;
-            }
-
-            try {
-              const targetPath = buildMediaStoragePath(
-                mediaEntry.chatId,
-                mediaEntry.messageId,
-                mediaEntry.partIndex,
-                mediaEntry.mediaType,
-              );
-              const writable = await createWritableStream(targetPath);
-              try {
-                // Note: entry.getData() closes the writable stream internally when done,
-                // so we must NOT call writable.close() ourselves
-                await entry.getData(writable, { useWebWorkers: false });
-              } catch (writeError) {
-                // A stream that failed part-way is still open, and holds the file
-                await abortWritable(writable);
-                throw writeError;
-              }
-              restoredMedia += 1;
-              bytesWritten += mediaEntry.size || 0;
-            } catch (error) {
-              log.warn(`[ImportWorker] Failed to restore media ${mediaEntry.path}:`, error);
-            }
-
-            if (restoredMedia % 10 === 0 || restoredMedia === mediaEntries.length) {
-              sendProgress({
-                processed,
-                total,
-                status: `Restored media ${restoredMedia}/${totalMedia}`,
-                phase: "media",
-                processedMedia: restoredMedia,
-                totalMedia,
-                bytesWritten,
-                totalBytes,
-                requestId,
-              });
-            }
-          }
-
-          sendProgress({
-            processed,
-            total,
             status: "Importing chats...",
             phase: "chats",
             totalMedia,
@@ -625,7 +606,23 @@ async function processImport(
                   rewriteChatMediaRefs(chat, globalMediaMap);
                 }
 
-                const result = await processChat(chat, chat, overwriteExisting, requestId);
+                // The chat's media is written once the import has decided to save the chat (HVN-132), and
+                // whole: a cancel is seen between chats, never half-way through one's files
+                const chatMedia = mediaEntries.filter((me) => me.chatId === chat.id);
+                const result = await processChat(
+                  chat,
+                  chat,
+                  overwriteExisting,
+                  requestId,
+                  async () => {
+                    for (const mediaEntry of chatMedia) {
+                      if (await restoreMediaEntry(entries, mediaEntry)) {
+                        restoredMedia += 1;
+                        bytesWritten += mediaEntry.size || 0;
+                      }
+                    }
+                  },
+                );
 
                 if (result.saved) {
                   saved++;
@@ -655,6 +652,7 @@ async function processImport(
               total,
               status: `Processed ${processed}/${total} conversations (${saved} saved, ${skipped} skipped)`,
               phase: "chats",
+              processedMedia: restoredMedia,
               totalMedia,
               bytesWritten,
               totalBytes,
