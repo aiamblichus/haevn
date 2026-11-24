@@ -363,15 +363,9 @@ export async function startDaemon(
   }
 
   /** A byte moved: the first one starts the idle clock, the ones after it postpone it. */
-  function touch(s: PipeSession): void {
+  function touch(s: PipeSession, message: string): void {
     if (s.timerIsIdle && s.timer) s.timer.refresh();
-    else arm(s, idleMs, true, stalledMessage(s));
-  }
-
-  function stalledMessage(s: PipeSession): string {
-    return s.direction === "out"
-      ? "The transfer stalled: the extension stopped sending data."
-      : "The transfer stalled: the extension stopped reading data.";
+    else arm(s, idleMs, true, message);
   }
 
   /** Forget the session. After this nothing it holds can be reached through the maps. */
@@ -534,12 +528,12 @@ export async function startDaemon(
         fail(s, 502, "The extension sent bytes without a Content-Length.");
         return;
       }
-      relay(s, req, s.cliRes, length, () => {
+      relay(s, req, s.cliRes, length, { sender: "the extension", reader: "the CLI" }, () => {
         release(s);
         json(res, 200, { ok: true });
       });
     } else {
-      relay(s, s.cliReq, res, s.cliLength, () => {
+      relay(s, s.cliReq, res, s.cliLength, { sender: "the CLI", reader: "the extension" }, () => {
         s.streamDone = true;
         if (s.frame) finishUpload(s, s.frame);
         else
@@ -556,15 +550,20 @@ export async function startDaemon(
   /**
    * Copy `length` bytes from `src` to `dst`, one chunk at a time. The response head (with the
    * Content-Length) goes out with the first chunk, so a failure before it can still be an error
-   * answer. Backpressure: when `dst` is full `src` is paused and the clock stopped until it drains.
+   * answer. Backpressure: when `dst` is full `src` is paused, and the idle clock now waits for
+   * `dst` to drain, so a reader that is alive but does not read is cut like a writer that stalls.
+   * `parties` names who sends (`src`) and who reads (`dst`), for the message of a stall.
    */
   function relay(
     s: PipeSession,
     src: Readable,
     dst: http.ServerResponse,
     length: number,
+    parties: { sender: string; reader: string },
     onDone: () => void,
   ): void {
+    const senderStalled = `The transfer stalled: ${parties.sender} stopped sending data.`;
+    const readerStalled = `The transfer stalled: ${parties.reader} stopped reading data.`;
     const head = (): void => {
       dst.writeHead(200, {
         "Content-Type": "application/octet-stream",
@@ -576,14 +575,14 @@ export async function startDaemon(
       if (s.done) return;
       if (!dst.headersSent) head();
       if (dst.write(chunk)) {
-        touch(s);
+        touch(s, senderStalled);
       } else {
         src.pause();
-        disarm(s);
+        arm(s, idleMs, true, readerStalled);
         dst.once("drain", () => {
           if (s.done) return;
           src.resume();
-          touch(s);
+          arm(s, idleMs, true, senderStalled);
         });
       }
     });
