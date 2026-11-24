@@ -16,6 +16,8 @@
  *    in flight (a big chat may take longer than the limit to write). A service-worker restart clears
  *    the lock and this module's state together (`clearStaleOperationLocks`).
  *  - `isRestoreOpen` tells the backup actions that a restore is open, so they answer BUSY (HVN-143).
+ *  - `beginRestore` moves the restore counter once it holds the lock, before the session exists.
+ *    `restoreEpoch` reads it: a backup run that sees it move between its two answers ends (HVN-144).
  *
  * The session is in memory on purpose: a restore that loses it is re-run, and every chat it wrote
  * was written whole.
@@ -26,6 +28,7 @@ import { BackupError } from "../../services/backup/format";
 import { CacheService } from "../../services/cacheService";
 import { extractProviderName } from "../../services/chatService";
 import { SyncService } from "../../services/syncService";
+import { getStorageAdapter } from "../../storage";
 import { fireAndForget } from "../../utils/error_utils";
 import { log } from "../../utils/logger";
 import { INCREMENTAL_INDEX_MAX_CHATS } from "../import/importBatch";
@@ -33,6 +36,9 @@ import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "
 
 /** How long a session may wait for its next request before the extension closes it. */
 export const RESTORE_IDLE_MS = 120_000;
+
+/** The storage key of the restore counter (HVN-144). */
+const RESTORE_EPOCH_KEY = "restoreEpoch";
 
 interface RestoreSession {
   /** The chats the run announced. */
@@ -93,6 +99,15 @@ export async function beginRestore(options: { chats: number }): Promise<RestoreB
         "BUSY",
         `Another operation is running (${await getActiveOperation()}). Try the restore again when it ends.`,
       );
+    }
+    // Counted while the begin still counts as opening, and before the session exists: a backup that
+    // reads the counter after this point, or meets the session, sees this restore (HVN-144). A
+    // begin that cannot record it gives the lock back.
+    try {
+      await bumpRestoreEpoch();
+    } catch (error) {
+      await releaseOperationLock("import");
+      throw error;
     }
   } finally {
     opening = false;
@@ -207,7 +222,21 @@ export function isRestoreOpen(): boolean {
   return session !== null || opening;
 }
 
+/**
+ * How many restores have opened in this archive (HVN-144). A backup run reads it at its first
+ * `backupInfo` and again at its last: a change means a restore opened in between. It is in storage,
+ * so a service-worker restart does not reset it; a key never written reads as 0.
+ */
+export async function restoreEpoch(): Promise<number> {
+  return (await getStorageAdapter().get<number>(RESTORE_EPOCH_KEY)) ?? 0;
+}
+
 // ─── Internals ────────────────────────────────────────────────────────────────
+
+/** Adds one to the counter. Only a begin that holds the lock calls it, so the count cannot race. */
+async function bumpRestoreEpoch(): Promise<void> {
+  await getStorageAdapter().set(RESTORE_EPOCH_KEY, (await restoreEpoch()) + 1);
+}
 
 async function withSession<T>(work: (open: RestoreSession) => Promise<T>): Promise<T> {
   const open = session;

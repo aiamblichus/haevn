@@ -90,9 +90,7 @@ export class ExtensionLink {
     await this.waitForExtension(
       `no extension connected within ${waitSeconds} s (Chrome is closed, the CLI bridge is off, or the extension is reloading)`,
     );
-    const info = await this.attempt("backupInfo", () =>
-      callFrame<BackupInfo>(this.endpoint, { action: "backupInfo" }, this.signal),
-    );
+    const info = await this.backupInfo();
     if (info.protocol !== BACKUP_PROTOCOL) {
       throw failed(
         `the extension speaks backup protocol ${info.protocol} and this CLI speaks ${BACKUP_PROTOCOL}: ` +
@@ -100,6 +98,16 @@ export class ExtensionLink {
       );
     }
     return info;
+  }
+
+  /**
+   * `backupInfo`, tried again when the transfer did not get through. `connect` asks it first; a run
+   * asks again at its end and compares the restore counter with the first answer (HVN-144).
+   */
+  backupInfo(): Promise<BackupInfo> {
+    return this.attempt("backupInfo", () =>
+      callFrame<BackupInfo>(this.endpoint, { action: "backupInfo" }, this.signal),
+    );
   }
 
   /** Every live chat, page by page, in the extension's key order. */

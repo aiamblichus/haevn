@@ -21,7 +21,21 @@ const spies = vi.hoisted(() => ({
   rebuildIndex: vi.fn(async () => {}),
   recalculateProviderStats: vi.fn(async (_provider: string) => 0),
 }));
+/** A one-shot step a test runs inside the backup action that reads the next record (HVN-144). */
+const hooks = vi.hoisted(() => ({ beforeNextRecord: null as null | (() => Promise<void>) }));
 
+vi.mock("../src/services/backup/backupRead", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/services/backup/backupRead")>();
+  return {
+    ...actual,
+    chatRecordBlob: async (chatId: string) => {
+      const step = hooks.beforeNextRecord;
+      hooks.beforeNextRecord = null;
+      await step?.();
+      return actual.chatRecordBlob(chatId);
+    },
+  };
+});
 vi.mock("../src/services/settingsService", () => ({
   getCliSettings: vi.fn(async () => ({ ...settings })),
   getMetadataAIConfig: vi.fn(),
@@ -49,6 +63,7 @@ import { type RestoreResult, runRestore } from "../cli/src/backup/restoreEngine"
 import { callFrame } from "../cli/src/daemon/client";
 import { startDaemon } from "../cli/src/daemon/server";
 import { EXIT_DEFER, EXIT_FAILED, ExitError } from "../cli/src/utils/exit";
+import { beginRestore, finishRestore } from "../src/background/backup/restoreSession";
 import { setActiveOperation } from "../src/background/state";
 import { applyWsBridgeSettings, resetWsBridge } from "../src/background/wsBridge";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
@@ -522,6 +537,29 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
     } finally {
       await callFrame(endpoint, { action: "restoreFinish", rebuildIndex: false });
     }
+  }, 60_000);
+
+  it("defers (75) when a restore opens and closes inside one backup action, and leaves no backup behind", async () => {
+    await seedArchive();
+    const port = await connect();
+    const dir = path.join(root, "backup");
+    // The restore comes and goes while the run reads its records: no action of the run meets it open
+    hooks.beforeNextRecord = async () => {
+      await beginRestore({ chats: 0 });
+      await finishRestore({ rebuildIndex: false });
+    };
+
+    const err = await backUp(port, dir).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(hooks.beforeNextRecord).toBeNull();
+    expect(err).toBeInstanceOf(ExitError);
+    expect((err as ExitError).exitCode).toBe(EXIT_DEFER);
+    expect((err as ExitError).message).toMatch(/restore began/);
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(fs.existsSync(`${dir}.partial`)).toBe(false);
   }, 60_000);
 
   it("fails (1) when the index could not be brought up to date, with every chat in", async () => {
