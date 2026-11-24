@@ -213,6 +213,23 @@ haevn health -f json              # the report as JSON
 
 ---
 
+## Happy path 7 — Back up the whole archive
+
+```bash
+haevn backup ~/backups/haevn              # every live chat and its media, into that directory
+haevn backup ~/backups/haevn --wait 120   # give Chrome two minutes to connect (default 60 s)
+```
+
+`backup` is for a scheduled job, not for reading chats: it writes `<dir>/manifest.json`, `index.jsonl` (id, file, size and SHA-256 of every chat and media file), `chats/<name>.jsonl` and `media/<name>/<file>`, byte for byte as the extension stores them. Settings and API keys are **not** in it, and neither are chats the user has deleted. It writes into `<dir>.partial` and swaps it in only when every file has arrived at the size the extension listed, so a failed run leaves the previous `<dir>` as it was and no `.partial`.
+
+- **The exit code is the contract.** `0` done. `75` not now, ask again later: no extension connected within `--wait` (Chrome closed or the CLI bridge off), the connection was lost and did not come back, the extension is busy (a restore is running), or another `haevn backup` holds `<dir>.partial`. `1` failed, with one line on stderr naming the case: a wrong API key, an extension or daemon that is too old (restart the daemon), a disk error, a chat or file that could not be read. A runner defers on 75 and reports 1.
+- **Strict.** One item that cannot be read fails the run. Two things are not failures: a chat deleted while the run goes (listed in the manifest's `vanished`), and a transfer that did not get through, which is tried again twice.
+- It starts its own daemon when none listens on the port and stops it at the end; a standing daemon is used as it is. It needs the API key in `~/.haevn/config.json`, as `haevn daemon` does.
+- **Do not run it against the user's real Chrome** to try it out: it reads the whole archive (gigabytes) through the extension. A check uses the dev profile, with a scratch `HOME` holding its own `config.json` (port and key of the dev extension), so the real config is never read.
+- A directory that holds anything other than a previous backup is refused, not replaced.
+
+---
+
 ## Common agent workflows
 
 ### Investigate a user-reported issue in a specific thread

@@ -1,0 +1,683 @@
+/**
+ * `haevn backup`: the engine (HVN-135; architecture/backup-restore, "Backup: the algorithm").
+ *
+ * The CLI owns the loop and the extension answers one small request at a time: it lists the live
+ * chats, then reads each chat's record and each media file through the daemon's pipe. This module
+ * writes them into `<dir>.partial`, checks every byte count, hashes every file, writes `index.jsonl`
+ * and then `manifest.json`, and swaps the finished directory for the previous one. A run that does
+ * not finish leaves the previous `<dir>` as it was and no `.partial`.
+ *
+ * It ends one of three ways, and the unattended runner reads which: it returns (0), it throws
+ * `deferred` (75, "not now, ask again") or it throws `failed` (1). The table is in `commands/backup.ts`.
+ *
+ * Strict: one item that cannot be read fails the run. Two things are not failures: a chat that
+ * vanished between the listing and its reading (its id goes into the manifest), and a transfer that
+ * did not get through, which is tried again, at most `RETRY_DELAYS_MS.length` more times (below).
+ */
+
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
+import {
+  callFrame,
+  DaemonCallError,
+  type DaemonEndpoint,
+  type DaemonSession,
+  openDaemon,
+  pipeOut,
+  probeHealth,
+} from "../daemon/client.js";
+import type { BackupInfo, BackupListedChat, BackupListPage, PipeActionBody } from "../types.js";
+import { deferred, ExitError, failed } from "../utils/exit.js";
+import {
+  BACKUP_FORMAT,
+  BACKUP_VERSION,
+  CHATS_DIR,
+  foldName,
+  INDEX_FILE,
+  type IndexEntry,
+  type IndexMedia,
+  isSafeFileName,
+  MANIFEST_FILE,
+  type Manifest,
+  MEDIA_DIR,
+  PID_FILE,
+  StemAllocator,
+} from "./layout.js";
+
+/** The backup protocol this CLI speaks (`BACKUP_PROTOCOL` in `src/services/backup/format.ts`). */
+export const BACKUP_PROTOCOL = 1;
+
+/**
+ * The pause before each new try of an item whose transfer did not get through: a cut stream, a
+ * timeout, a pipe the extension could not use (Chrome re-sends a POST on a stale keep-alive
+ * connection, and the second try finds the pipe id spent: a 404 that a fresh pipe id cures).
+ * Two retries, so three tries in all: enough to ride out the one-off races, few enough that an item
+ * that can never get through fails the run in minutes, not hours.
+ */
+export const RETRY_DELAYS_MS = [500, 2_000];
+
+/** A live `.partial` older than this is not a run any more (a reused pid after a reboot). */
+const PARTIAL_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+
+/** A `.partial` with no pid file that is younger than this was just claimed by another run. */
+const PARTIAL_CLAIM_GRACE_MS = 60_000;
+
+const PAGE_SIZE = 100;
+
+export interface BackupOptions {
+  /** The directory the backup ends up in. */
+  dir: string;
+  /** The daemon to use, or to start in this process when nothing listens there. */
+  endpoint: DaemonEndpoint;
+  /** How long to wait for the extension to connect, or to come back, before 75. */
+  waitMs: number;
+  /** Ends the run: it fails as interrupted, and cleans up. */
+  signal?: AbortSignal;
+  /** Progress, one line at a time. */
+  log?: (line: string) => void;
+  /** For tests: the polling interval, the retry pauses and the page size. */
+  timing?: { pollMs?: number; retryDelaysMs?: number[]; pageSize?: number };
+}
+
+export interface BackupResult {
+  dir: string;
+  chats: number;
+  mediaFiles: number;
+  /** Chat records and media files together. */
+  bytes: number;
+  vanished: string[];
+  ms: number;
+}
+
+export async function runBackup(options: BackupOptions): Promise<BackupResult> {
+  const dir = path.resolve(options.dir);
+  const partial = `${dir}.partial`;
+  claimPartial(dir);
+  let session: DaemonSession | undefined;
+  try {
+    prepareDirectory(dir);
+    session = await openDaemonOrFail(options.endpoint);
+    return await new BackupRun(options, dir, session).run();
+  } catch (err) {
+    // Not another run's directory: a run that outlived the 2 h limit may find its `.partial` taken.
+    if (!heldByAnotherRun(partial)) fs.rmSync(partial, { recursive: true, force: true });
+    throw toExitError(err, options.signal);
+  } finally {
+    await session?.stop();
+  }
+}
+
+// ─── The run ──────────────────────────────────────────────────────────────────
+
+class BackupRun {
+  private readonly partial: string;
+  private readonly old: string;
+  private readonly retryDelays: number[];
+  private readonly pollMs: number;
+  private readonly pageSize: number;
+  private readonly signal?: AbortSignal;
+  private readonly endpoint: DaemonEndpoint;
+
+  constructor(
+    private readonly options: BackupOptions,
+    private readonly dir: string,
+    private readonly session: DaemonSession,
+  ) {
+    this.partial = `${dir}.partial`;
+    this.old = `${dir}.old`;
+    this.retryDelays = options.timing?.retryDelaysMs ?? RETRY_DELAYS_MS;
+    this.pollMs = options.timing?.pollMs ?? 1_000;
+    this.pageSize = options.timing?.pageSize ?? PAGE_SIZE;
+    this.signal = options.signal;
+    this.endpoint = session.endpoint;
+  }
+
+  async run(): Promise<BackupResult> {
+    const started = Date.now();
+    const waitSeconds = Math.round(this.options.waitMs / 1000);
+
+    await this.waitForExtension(
+      `no extension connected within ${waitSeconds} s (Chrome is closed, the CLI bridge is off, or the extension is reloading)`,
+    );
+    const info = await this.attempt("backupInfo", () =>
+      callFrame<BackupInfo>(this.endpoint, { action: "backupInfo" }, this.signal),
+    );
+    if (info.protocol !== BACKUP_PROTOCOL) {
+      throw failed(
+        `the extension speaks backup protocol ${info.protocol} and this CLI speaks ${BACKUP_PROTOCOL}: ` +
+          `update the ${info.protocol > BACKUP_PROTOCOL ? "CLI" : "extension"}`,
+      );
+    }
+
+    const listing = await this.listAll();
+    const names = new StemAllocator();
+    const index: IndexEntry[] = [];
+    const vanished: string[] = [];
+    let mediaFiles = 0;
+    let bytes = 0;
+
+    for (const [n, chat] of listing.entries()) {
+      this.signal?.throwIfAborted();
+      if (n > 0 && n % 250 === 0) this.options.log?.(`${n} of ${listing.length} chats`);
+      const entry = await this.backupChat(chat, names.assign(chat.id));
+      if (!entry) {
+        vanished.push(chat.id);
+        continue;
+      }
+      index.push(entry);
+      mediaFiles += entry.media.length;
+      bytes += entry.bytes + entry.media.reduce((sum, m) => sum + m.bytes, 0);
+    }
+
+    fs.rmSync(path.join(this.partial, PID_FILE), { force: true });
+    await writeDurable(
+      path.join(this.partial, INDEX_FILE),
+      index.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
+    );
+    const manifest: Manifest = {
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+      createdAt: new Date().toISOString(),
+      haevnVersion: info.haevnVersion,
+      dbSchema: info.dbSchema,
+      chats: index.length,
+      mediaFiles,
+      bytes,
+      vanished,
+    };
+    await writeDurable(
+      path.join(this.partial, MANIFEST_FILE),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+    for (const sub of [CHATS_DIR, MEDIA_DIR, ""]) syncDir(path.join(this.partial, sub));
+
+    this.signal?.throwIfAborted();
+    swap(this.partial, this.dir, this.old);
+    return {
+      dir: this.dir,
+      chats: index.length,
+      mediaFiles,
+      bytes,
+      vanished,
+      ms: Date.now() - started,
+    };
+  }
+
+  /** Every live chat, page by page, in the extension's key order. */
+  private async listAll(): Promise<BackupListedChat[]> {
+    const chats: BackupListedChat[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const page = await this.attempt("the chat list", () =>
+        callFrame<BackupListPage>(
+          this.endpoint,
+          { action: "backupList", limit: this.pageSize, ...(after === undefined ? {} : { after }) },
+          this.signal,
+        ),
+      );
+      chats.push(...page.chats);
+      if (page.next === undefined) return chats;
+      if (page.next === after)
+        throw failed("the chat list does not advance: the extension repeats a page");
+      after = page.next;
+    }
+  }
+
+  /** One chat's record and media into `.partial`; null when the chat is gone. */
+  private async backupChat(chat: BackupListedChat, stem: string): Promise<IndexEntry | null> {
+    const file = `${CHATS_DIR}/${stem}.jsonl`;
+    const record = await this.attempt(
+      `chat ${chat.id}`,
+      () => this.receive({ action: "backupChat", chatId: chat.id }, file, undefined),
+      { missingIsOk: true },
+    );
+    if (!record) return null;
+
+    const mediaDir = chat.media.length > 0 ? `${MEDIA_DIR}/${stem}` : null;
+    const seen = new Set<string>();
+    const media: IndexMedia[] = [];
+    for (const item of chat.media) {
+      if (!isSafeFileName(item.name)) {
+        throw failed(
+          `chat ${chat.id}: the extension lists a media file with the name ${JSON.stringify(item.name)}, which is not a file name`,
+        );
+      }
+      if (seen.has(foldName(item.name))) {
+        throw failed(
+          `chat ${chat.id}: two media files, one of them ${JSON.stringify(item.name)}, differ only by case or accents, and would share a file on this disk`,
+        );
+      }
+      seen.add(foldName(item.name));
+      const got = await this.attempt(`media ${item.name} of chat ${chat.id}`, () =>
+        this.receive(
+          { action: "backupMedia", chatId: chat.id, name: item.name },
+          `${mediaDir}/${item.name}`,
+          item.bytes,
+        ),
+      );
+      media.push({ name: item.name, bytes: got.bytes, sha256: got.sha256 });
+    }
+    if (mediaDir) syncDir(path.join(this.partial, mediaDir));
+    return {
+      id: chat.id,
+      source: chat.source,
+      file,
+      bytes: record.bytes,
+      sha256: record.sha256,
+      mediaDir,
+      media,
+    };
+  }
+
+  /**
+   * Ask for one record or file and write it to `relative` under `.partial`. Its length is checked
+   * against what the extension declared (a stream that ends early is a failed transfer) and, for a
+   * media file, against the listing: the daemon's late error frame never reaches this side, so the
+   * count is the only proof that all of it came.
+   */
+  private async receive(
+    action: PipeActionBody,
+    relative: string,
+    listedBytes: number | undefined,
+  ): Promise<{ bytes: number; sha256: string }> {
+    const { length, body } = await pipeOut(this.endpoint, action, this.signal);
+    const reader = body.getReader();
+    const target = path.join(this.partial, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const hash = createHash("sha256");
+    let bytes = 0;
+    const handle = await fsp.open(target, "w");
+    try {
+      for (;;) {
+        let chunk: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          chunk = await reader.read();
+        } catch (err) {
+          if (this.signal?.aborted) throw err;
+          throw new DaemonCallError(
+            "transport",
+            `the transfer was cut after ${bytes} bytes: ${errorText(err)}`,
+          );
+        }
+        if (chunk.done) break;
+        hash.update(chunk.value);
+        bytes += chunk.value.length;
+        for (let written = 0; written < chunk.value.length; ) {
+          written += (await handle.write(chunk.value, written, chunk.value.length - written))
+            .bytesWritten;
+        }
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+      await reader.cancel().catch(() => undefined);
+    }
+
+    // A record's count is checked against its Content-Length by `fetch` itself: a body that ends
+    // short (or runs long) rejects the read above, which is a failed transfer. What is left to check
+    // here is that a length was declared at all, and, for a media file, the listing.
+    if (length === null) {
+      throw new DaemonCallError("protocol", "the daemon sent bytes without a Content-Length");
+    }
+    if (listedBytes !== undefined && bytes !== listedBytes) {
+      throw failed(
+        `${describe(action)} is ${bytes} bytes and the listing said ${listedBytes}: it changed during the run`,
+      );
+    }
+    return { bytes, sha256: hash.digest("hex") };
+  }
+
+  /**
+   * One call, tried again when the transfer did not get through. What the unattended runner must
+   * know goes out as `deferred` (BUSY; no extension, now or after the connection was lost) or
+   * `failed` (everything else). A chat the extension no longer has comes back as null when the
+   * caller says a missing item is fine.
+   */
+  private async attempt<T>(
+    what: string,
+    op: () => Promise<T>,
+    flags: { missingIsOk: true },
+  ): Promise<T | null>;
+  private async attempt<T>(what: string, op: () => Promise<T>): Promise<T>;
+  private async attempt<T>(
+    what: string,
+    op: () => Promise<T>,
+    flags: { missingIsOk?: boolean } = {},
+  ): Promise<T | null> {
+    for (let tries = 0; ; tries++) {
+      this.signal?.throwIfAborted();
+      try {
+        return await op();
+      } catch (err) {
+        if (!(err instanceof DaemonCallError)) throw err;
+        switch (err.kind) {
+          case "extension":
+            if (err.code === "BUSY") throw deferred(`the extension is busy: ${err.message}`);
+            if (err.code === "UNKNOWN_ACTION") {
+              throw failed(
+                `the extension does not know ${what}: it predates the backup, update the extension`,
+              );
+            }
+            if (err.code === "NOT_FOUND" && flags.missingIsOk) return null;
+            throw failed(
+              `${what}: the extension answered ${err.code ?? "an error"}: ${err.message}`,
+            );
+          case "not-connected":
+          case "transport":
+            // The connection may be what broke: if so, wait for it before another try.
+            await this.waitForExtension(
+              `the connection to the extension was lost and did not return within ${Math.round(this.options.waitMs / 1000)} s`,
+            );
+            if (tries >= this.retryDelays.length) {
+              throw failed(`${what}: ${err.message} (${tries + 1} tries)`);
+            }
+            await sleep(this.retryDelays[tries], this.signal);
+            continue;
+          case "unauthorized":
+            throw failed(
+              `${what}: the daemon refused the API key: check the key in ~/.haevn/config.json`,
+            );
+          default:
+            throw failed(`${what}: ${err.message}`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Poll `/health` until the extension is connected: at once if it is. When none is within
+   * `--wait`, the run ends: 1 if a socket offered a wrong API key meanwhile (a wrong key never mends
+   * by waiting), else 75 with `timeout`. A wrong-key socket does not matter while a good extension
+   * is connected: any page or other extension can dial the daemon's port with a key of its own.
+   */
+  private async waitForExtension(timeout: string): Promise<void> {
+    const deadline = Date.now() + this.options.waitMs;
+    for (;;) {
+      const health = await probeHealth(this.endpoint, this.signal);
+      if (!health) throw failed(`the daemon on port ${this.endpoint.port} stopped answering`);
+      if (health.extensionConnected) return;
+      const left = deadline - Date.now();
+      if (left <= 0) {
+        if (this.session.authFailed()) {
+          throw failed(
+            "an extension connected with a different API key than the one in ~/.haevn/config.json: set the same key in both",
+          );
+        }
+        throw deferred(timeout);
+      }
+      await sleep(Math.min(this.pollMs, left), this.signal);
+    }
+  }
+}
+
+// ─── Reaching the daemon ──────────────────────────────────────────────────────
+
+async function openDaemonOrFail(endpoint: DaemonEndpoint): Promise<DaemonSession> {
+  try {
+    return await openDaemon(endpoint);
+  } catch (err) {
+    if (err instanceof DaemonCallError) throw failed(err.message);
+    throw err;
+  }
+}
+
+// ─── The directory ────────────────────────────────────────────────────────────
+
+/** What a `.partial` of ours can hold: nothing else is ours to delete. */
+const PARTIAL_NAMES = new Set([PID_FILE, INDEX_FILE, MANIFEST_FILE, CHATS_DIR, MEDIA_DIR]);
+
+/** Whether `dir` is a directory (not a link to one) holding nothing. */
+function isEmptyDirectory(dir: string): boolean {
+  return fs.lstatSync(dir).isDirectory() && fs.readdirSync(dir).length === 0;
+}
+
+/** Whether `dir` is a directory (not a link to one) with the manifest of a haevn backup. */
+function isBackup(dir: string): boolean {
+  try {
+    if (!fs.lstatSync(dir).isDirectory()) return false;
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(dir, MANIFEST_FILE), "utf8"),
+    ) as Partial<Manifest>;
+    return manifest.format === BACKUP_FORMAT;
+  } catch {
+    return false; // no manifest, or not JSON
+  }
+}
+
+/**
+ * Every removal or rename-back of a path that a suffix names (`<dir>.old`, `<dir>.partial`) asks
+ * this first, because the suffix alone proves nothing: `notes.old` may be a person's folder. A
+ * `.old` is ours when it is empty or is a haevn backup; a `.partial` when it is empty or holds only
+ * the names a run writes. Anything else ends the run (1) with the path named.
+ */
+function requireOurs(target: string, kind: "old" | "partial"): void {
+  let ours: boolean;
+  try {
+    ours =
+      isEmptyDirectory(target) ||
+      (kind === "old"
+        ? isBackup(target)
+        : fs.lstatSync(target).isDirectory() &&
+          fs.readdirSync(target).every((name) => PARTIAL_NAMES.has(name)));
+  } catch (err) {
+    throw toExitError(err);
+  }
+  if (!ours) {
+    throw failed(`refusing to remove ${target}: it is not part of a haevn backup`);
+  }
+}
+
+/**
+ * Take `<dir>.partial`. A live run's `backup.pid` in it means 75; one left by a run that died is
+ * removed with it, if it is ours to remove. `mkdir` is the claim, so two runs started together
+ * cannot both have it: the one that loses the second `mkdir` is told to come back (75).
+ */
+function claimPartial(dir: string): void {
+  const partial = `${dir}.partial`;
+  try {
+    fs.mkdirSync(path.dirname(dir), { recursive: true });
+  } catch (err) {
+    throw toExitError(err);
+  }
+  for (let tries = 0; ; tries++) {
+    try {
+      fs.mkdirSync(partial);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw toExitError(err);
+      const owner = liveOwner(partial);
+      if (owner || tries > 0) {
+        throw deferred(
+          `another haevn backup${owner?.pid ? ` (pid ${owner.pid})` : ""} is writing ${partial}`,
+        );
+      }
+      requireOurs(partial, "partial");
+      fs.rmSync(partial, { recursive: true, force: true });
+    }
+  }
+  try {
+    fs.writeFileSync(
+      path.join(partial, PID_FILE),
+      `${JSON.stringify({ pid: process.pid, startedAt: Date.now() })}\n`,
+    );
+  } catch (err) {
+    fs.rmSync(partial, { recursive: true, force: true });
+    throw toExitError(err);
+  }
+}
+
+/** The pid a `.partial` names, if its pid file is there and says one. */
+function recordedPid(partial: string): number | undefined {
+  try {
+    const info = JSON.parse(fs.readFileSync(path.join(partial, PID_FILE), "utf8")) as {
+      pid?: unknown;
+    };
+    return typeof info.pid === "number" ? info.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `.partial` names another process: it is that run's, not ours to clean up. */
+function heldByAnotherRun(partial: string): boolean {
+  const pid = recordedPid(partial);
+  return pid !== undefined && pid !== process.pid;
+}
+
+/** The run that holds an existing `.partial`, or null when it is a leftover. */
+function liveOwner(partial: string): { pid?: number } | null {
+  let info: { pid?: unknown; startedAt?: unknown };
+  try {
+    info = JSON.parse(fs.readFileSync(path.join(partial, PID_FILE), "utf8"));
+  } catch {
+    // No pid file: just claimed by a run that has not written it yet, or a leftover.
+    try {
+      return Date.now() - fs.statSync(partial).mtimeMs < PARTIAL_CLAIM_GRACE_MS ? {} : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof info.pid !== "number" || typeof info.startedAt !== "number") return null;
+  if (Date.now() - info.startedAt > PARTIAL_MAX_AGE_MS) return null;
+  try {
+    process.kill(info.pid, 0);
+  } catch (err) {
+    // ESRCH: no such process. EPERM: it exists and is somebody else's.
+    if ((err as NodeJS.ErrnoException).code !== "EPERM") return null;
+  }
+  return { pid: info.pid };
+}
+
+/**
+ * Before the work: a `<dir>.old` left by a swap that was killed between its renames is the previous
+ * backup, and goes back; any other `.old` of ours is removed. A `.old` that is not ours is left
+ * alone and ends the run.
+ */
+function prepareDirectory(dir: string): void {
+  const old = `${dir}.old`;
+  if (exists(old)) {
+    requireOurs(old, "old");
+    if (!exists(dir) && isBackup(old)) fs.renameSync(old, dir);
+    else fs.rmSync(old, { recursive: true, force: true });
+  }
+  requireReplaceable(dir);
+}
+
+/** `<dir>` may be replaced when it is missing, empty, or a haevn backup. It is not a link. */
+function requireReplaceable(dir: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(dir);
+  } catch {
+    return; // nothing there
+  }
+  if (stat.isSymbolicLink()) {
+    throw failed(`${dir} is a symbolic link: give the directory itself, not a link to it`);
+  }
+  if (!stat.isDirectory()) throw failed(`${dir} exists and is not a directory`);
+  if (isEmptyDirectory(dir) || isBackup(dir)) return;
+  throw failed(
+    `${dir} is not empty and is not a haevn backup (it has no ${MANIFEST_FILE}): refusing to replace it`,
+  );
+}
+
+function exists(target: string): boolean {
+  try {
+    fs.lstatSync(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The finished `.partial` becomes `<dir>`. The previous `<dir>` goes to `<dir>.old` first and is
+ * removed last, so a kill between the renames leaves a complete `.old` (which `prepareDirectory`
+ * puts back) and never a `<dir>` without a manifest. `<dir>` is checked again first: the run took
+ * minutes, and what is in `<dir>` now is what gets moved and deleted.
+ */
+export function swap(partial: string, dir: string, old: string): void {
+  requireReplaceable(dir);
+  const hadPrevious = exists(dir);
+  if (hadPrevious) fs.renameSync(dir, old);
+  try {
+    fs.renameSync(partial, dir);
+  } catch (err) {
+    if (hadPrevious) fs.renameSync(old, dir);
+    throw err;
+  }
+  syncDir(path.dirname(dir));
+  try {
+    fs.rmSync(old, { recursive: true, force: true });
+  } catch {
+    // The backup is in place; the next run removes what is left.
+  }
+}
+
+async function writeDurable(file: string, text: string): Promise<void> {
+  const handle = await fsp.open(file, "w");
+  try {
+    await handle.writeFile(text);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Flush a directory's entries to disk. Best effort: not every platform lets a directory be opened. */
+function syncDir(dir: string): void {
+  try {
+    const fd = fs.openSync(dir, "r");
+    try {
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    // not supported here
+  }
+}
+
+// ─── Small things ─────────────────────────────────────────────────────────────
+
+/** What ended a run, in the terms of the exit table: anything not already one is a failure. */
+function toExitError(err: unknown, signal?: AbortSignal): ExitError {
+  if (err instanceof ExitError) return err;
+  if (signal?.aborted) return failed("interrupted");
+  if (err instanceof DaemonCallError) return failed(err.message);
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (typeof code === "string" && /^E[A-Z0-9]+$/.test(code)) {
+    return failed(`disk error (${code}): ${errorText(err)}`);
+  }
+  return failed(errorText(err));
+}
+
+function describe(action: PipeActionBody): string {
+  return action.action === "backupMedia"
+    ? `media file ${String(action.name)} of chat ${String(action.chatId)}`
+    : `the record of chat ${String(action.chatId)}`;
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
