@@ -44,6 +44,15 @@ import { isImportableRoom, parseOpenRouterExport } from "../providers/openrouter
 import { transformOpenRouterRoomToHaevnChat } from "../providers/openrouter/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
 import { transformPiToHaevnChat } from "../providers/pi/transformer";
+import {
+  type BackupChatPage,
+  type BackupSummary,
+  backupSummary,
+  chatRecordBlob,
+  listBackupChats,
+  mediaFile,
+} from "../services/backup/backupRead";
+import { BACKUP_PAGE_MAX, BackupError } from "../services/backup/format";
 import type { ChatMetadataRecord } from "../services/db";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateOnRequest, setManualMetadata } from "../services/metadataService";
@@ -96,7 +105,11 @@ type WsRequest =
   | { id: string; action: "getMetadata"; chatId: string }
   | { id: string; action: "setMetadata"; chatId: string; metadata: WsMetadataUpdate }
   | { id: string; action: "generateMetadata"; chatId: string }
-  | { id: string; action: "health"; options?: WsHealthOptions };
+  | { id: string; action: "health"; options?: WsHealthOptions }
+  | { id: string; action: "backupInfo" }
+  | { id: string; action: "backupList"; after?: string; limit: number }
+  | { id: string; action: "backupChat"; chatId: string; pipeId: string }
+  | { id: string; action: "backupMedia"; chatId: string; name: string; pipeId: string };
 
 /** What `haevn health` may ask for; the same fields as the extension's providerHealth message. */
 interface WsHealthOptions {
@@ -634,6 +647,14 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleGenerateMetadata(id, req);
       case "health":
         return await handleHealth(id, req);
+      case "backupInfo":
+        return await handleBackupInfo(id);
+      case "backupList":
+        return await handleBackupList(id, req);
+      case "backupChat":
+        return await handleBackupChat(id, req);
+      case "backupMedia":
+        return await handleBackupMedia(id, req);
       default: {
         const _exhaustive: never = req;
         void _exhaustive;
@@ -1014,6 +1035,98 @@ async function handleHealth(
     }
     throw err;
   }
+}
+
+/** The backup protocol's first answer: what a run needs to plan itself (HVN-134). */
+async function handleBackupInfo(
+  id: string,
+): Promise<WsResponse<BackupSummary & { haevnVersion: string }>> {
+  const summary = await backupSummary();
+  const haevnVersion = chrome.runtime.getManifest().version || "unknown";
+  return { id, success: true, data: { ...summary, haevnVersion } };
+}
+
+async function handleBackupList(
+  id: string,
+  req: Extract<WsRequest, { action: "backupList" }>,
+): Promise<WsResponse<BackupChatPage>> {
+  const { after, limit } = req;
+  if (!Number.isInteger(limit) || limit < 1 || limit > BACKUP_PAGE_MAX) {
+    return {
+      id,
+      success: false,
+      error: `limit must be a whole number from 1 to ${BACKUP_PAGE_MAX}`,
+      code: "BAD_REQUEST",
+    };
+  }
+  if (after !== undefined && typeof after !== "string") {
+    return { id, success: false, error: "after must be a chat id", code: "BAD_REQUEST" };
+  }
+  return { id, success: true, data: await listBackupChats({ after, limit }) };
+}
+
+async function handleBackupChat(
+  id: string,
+  req: Extract<WsRequest, { action: "backupChat" }>,
+): Promise<WsResponse<{ bytes: number }>> {
+  try {
+    requirePipeId(req.pipeId);
+    const bytes = await sendToPipe(req.pipeId, await chatRecordBlob(req.chatId));
+    return { id, success: true, data: { bytes } };
+  } catch (err) {
+    if (err instanceof BackupError) {
+      return { id, success: false, error: err.message, code: err.code };
+    }
+    throw err;
+  }
+}
+
+async function handleBackupMedia(
+  id: string,
+  req: Extract<WsRequest, { action: "backupMedia" }>,
+): Promise<WsResponse<{ bytes: number }>> {
+  try {
+    requirePipeId(req.pipeId);
+    const bytes = await sendToPipe(req.pipeId, await mediaFile(req.chatId, req.name));
+    return { id, success: true, data: { bytes } };
+  } catch (err) {
+    if (err instanceof BackupError) {
+      return { id, success: false, error: err.message, code: err.code };
+    }
+    throw err;
+  }
+}
+
+/** A pipe id is 128 random bits, in base64url or hex. Nothing else goes into a URL with the key. */
+const PIPE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+function requirePipeId(pipeId: string): void {
+  if (!PIPE_ID_PATTERN.test(pipeId)) {
+    throw new BackupError("BAD_REQUEST", "pipeId is not a pipe id");
+  }
+}
+
+/**
+ * Sends one backup record or media file to the daemon's pipe, and answers its size. The request
+ * carries the CLI's Bearer key, as every request to the daemon does. This is the one place the pipe's
+ * auth lives: when the pipe lands (HVN-133) it changes here and nowhere else.
+ */
+async function sendToPipe(pipeId: string, body: Blob): Promise<number> {
+  const { port, apiKey } = await getCliSettings();
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/pipe/${pipeId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body,
+    });
+  } catch (err) {
+    throw new BackupError("PIPE_FAILED", `the daemon's pipe is not reachable: ${String(err)}`);
+  }
+  if (!res.ok) {
+    throw new BackupError("PIPE_FAILED", `the daemon's pipe answered ${res.status}`);
+  }
+  return body.size;
 }
 
 async function handleImport(
