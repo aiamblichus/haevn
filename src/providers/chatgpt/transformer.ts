@@ -98,6 +98,45 @@ function _stringifyContentAsText(msg: OpenAIMessage): string {
  */
 type DownloadedAssets = ReadonlyMap<string, UserContent>;
 
+/**
+ * The reasoning a `thoughts` node shows. Each step is its summary in bold over its text (the
+ * streamed `chunks` when `content` is blank), the steps one paragraph apart. A `reasoning_recap` is
+ * the site's label for how long the model thought ("Thought for 4s"), kept as it is. Blank when the
+ * node holds nothing.
+ */
+function thinkingTextOf(content: OpenAIMessageContent): string {
+  if (!("content_type" in content)) return "";
+  if (content.content_type === "reasoning_recap") return (content.content ?? "").trim();
+  if (content.content_type !== "thoughts") return "";
+  const steps: string[] = [];
+  for (const step of content.thoughts ?? []) {
+    const summary = (step.summary ?? "").trim();
+    const body = (step.content ?? "").trim() || (step.chunks ?? []).join("").trim();
+    const text = [summary && `**${summary}**`, body].filter(Boolean).join("\n\n");
+    if (text) steps.push(text);
+  }
+  return steps.join("\n\n");
+}
+
+/**
+ * An assistant node the site wrote with nothing in it: `text` with `parts: [""]`, `thoughts: []`,
+ * a recap with no label. A tool call is not blank, whatever its text. These nodes are spliced out
+ * of the tree (HVN-147): a message with no part is a `message.empty-parts` finding and an empty
+ * bubble in the viewer.
+ */
+function isBlankAssistantNode(msg: OpenAIMessage): boolean {
+  const content = msg.content;
+  if (!content || !("content_type" in content)) return false;
+  if ((msg.author?.role || "assistant") !== "assistant" || msg.metadata?.command) return false;
+  if (content.content_type === "text") {
+    return (content.parts ?? []).every((p) => typeof p === "string" && !p.trim());
+  }
+  if (content.content_type === "thoughts" || content.content_type === "reasoning_recap") {
+    return !thinkingTextOf(content);
+  }
+  return false;
+}
+
 function messagePartsFromContent(
   content: OpenAIMessageContent,
   assets: ChatGPTAssetsMap,
@@ -182,19 +221,11 @@ function messagePartsFromContent(
     };
   }
 
-  if (contentType === "thoughts") {
-    const thoughtsContent = content as { text?: string | null };
-    const text = thoughtsContent.text || "";
+  if (contentType === "thoughts" || contentType === "reasoning_recap") {
+    // A node with no reasoning to show gets no part (HVN-147): an empty one is a `text.empty` finding.
+    const text = thinkingTextOf(content);
     return {
-      responseParts: [{ part_kind: "thinking", content: text } as ThinkingPart],
-    };
-  }
-
-  if (contentType === "reasoning_recap") {
-    const recapContent = content as { text?: string | null };
-    const text = recapContent.text || "";
-    return {
-      responseParts: [{ part_kind: "thinking", content: text } as ThinkingPart],
+      responseParts: text ? [{ part_kind: "thinking", content: text } as ThinkingPart] : [],
     };
   }
 
@@ -249,7 +280,7 @@ function messagePartsFromContent(
     return { responseParts: parts };
   }
 
-  if (contentType === "tether_Browse_display") {
+  if (contentType === "tether_browsing_display") {
     const disp = content as { summary?: string | null; result?: string };
     const summary = disp.summary || "";
     const result = disp.result || "";
@@ -335,13 +366,29 @@ export function transformOpenAIToHaevn(
     conversationId: string;
   }>[] = [];
 
+  // The blank assistant nodes leave the tree: a child of one hangs from its nearest kept ancestor.
+  const blank = new Set<string>();
+  for (const node of Object.values(nodes)) {
+    if (node.message && isBlankAssistantNode(node.message as OpenAIMessage)) blank.add(node.id);
+  }
+  const keptAncestor = (id: string | null | undefined): string | undefined => {
+    const seen = new Set<string>();
+    let cursor = id || undefined;
+    while (cursor && blank.has(cursor) && !seen.has(cursor)) {
+      seen.add(cursor);
+      cursor = nodes[cursor]?.parent || undefined;
+    }
+    return cursor;
+  };
+
   for (const node of Object.values(nodes)) {
     const msg = node.message as OpenAIMessage | null;
     if (!msg) continue; // Skip structural nodes
+    if (blank.has(node.id)) continue;
 
     treeNodes.push({
       id: node.id,
-      parentId: node.parent || undefined,
+      parentId: keptAncestor(node.parent),
       data: {
         node,
         msg,
@@ -556,6 +603,14 @@ export function transformOpenAIToHaevn(
     };
   });
 
+  // A current node that was spliced out becomes its nearest kept ancestor; a branch that was blank
+  // all the way up has none, and the last root stands in.
+  let currentId = conversation.current_node;
+  if (currentId && blank.has(currentId)) {
+    const kept = keptAncestor(currentId);
+    currentId = kept && messages[kept] ? kept : "";
+  }
+
   const convId = conversationIdOf(raw);
   const chat: Chat = {
     id: convId,
@@ -565,7 +620,7 @@ export function transformOpenAIToHaevn(
     models: ["ChatGPT"],
     system: "",
     params: {},
-    currentId: conversation.current_node || rootIds[rootIds.length - 1] || "",
+    currentId: currentId || rootIds[rootIds.length - 1] || "",
     messages,
     tags: ["chatgpt"],
     timestamp: toMs(conversation.create_time) || Date.now(),
