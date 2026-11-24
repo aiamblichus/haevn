@@ -39,14 +39,14 @@ The dev studio is summoned with Goetia from `/studio/dev`, not maintained in thi
 
 - **Claude Code**: `as-claude prior` from the repository root starts the Prior (`tessera`); other seats work the same way (`as-claude <role|persona>`).
 - **pi**: `as-pi prior`.
-- Builders and journeymen run in isolated worktrees under `.claude/worktrees/` (gitignored), which start from committed state. A fresh worktree needs `pnpm install` (and `pnpm -C cli install` for CLI work) before any gate.
+- Builders and journeymen run in isolated worktrees under `.claude/worktrees/` (gitignored), which start from committed state. A fresh worktree needs `pnpm install` and `pnpm -C cli install` before any gate: the root `pnpm test` runs `tests/backupRoundTrip.test.ts`, which imports the CLI's sources and so its `ws`.
 
 ## Completion gate
 
 A task is done when these pass on the final tree:
 
 ```bash
-pnpm test                    # tests, single run (`pnpm run test:watch` watches)
+pnpm test                    # tests, single run (`pnpm run test:watch` watches); needs `pnpm -C cli install` first
 pnpm run lint                # biome, src/ only
 pnpm run typecheck           # tsc --noEmit over src/
 pnpm run build               # the extension, into dist/

@@ -621,6 +621,10 @@ export async function startDaemon(
     process.stderr.write("[haevn daemon] Shutting down…\n");
     for (const s of [...sessions]) fail(s, 503, "The daemon is shutting down.");
     extensionSocket?.close();
+    // A WebSocket that never authenticated (Chrome opens a second one beside the extension's) is
+    // not an HTTP connection to `server`, so `close()` leaves it open for ever, and the process that
+    // started this daemon (`haevn backup`, `haevn restore`) cannot exit while it is.
+    for (const client of wss.clients) if (client !== extensionSocket) client.terminate();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 

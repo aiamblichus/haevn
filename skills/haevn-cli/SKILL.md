@@ -21,7 +21,7 @@ Treat `haevn` as a layered workflow:
 2. `search` to find exact message hits.
 3. `branches` to understand branch topology.
 4. `get` to extract the exact branch you want.
-5. `export` for full chat backup.
+5. `export` for a full copy of one chat (the whole archive is `backup`, Happy path 7).
 
 ---
 
@@ -220,13 +220,35 @@ haevn backup ~/backups/haevn              # every live chat and its media, into 
 haevn backup ~/backups/haevn --wait 120   # give Chrome two minutes to connect (default 60 s)
 ```
 
-`backup` is for a scheduled job, not for reading chats: it writes `<dir>/manifest.json`, `index.jsonl` (id, file, size and SHA-256 of every chat and media file), `chats/<name>.jsonl` and `media/<name>/<file>`, byte for byte as the extension stores them. Settings and API keys are **not** in it, and neither are chats the user has deleted. It writes into `<dir>.partial` and swaps it in only when every file has arrived at the size the extension listed, so a failed run leaves the previous `<dir>` as it was and no `.partial`.
+`backup` is for a scheduled job, not for reading chats: it writes `<dir>/manifest.json`, `index.jsonl` (id, file, size and SHA-256 of every chat and media file), `chats/<name>.jsonl` and `media/<name>/<file>`, byte for byte as the extension stores them. Settings and API keys are **not** in it, and neither are chats the user has deleted. It writes into `<dir>.partial` and swaps it in only when every file has arrived at the size the extension listed, so a failed run leaves the previous `<dir>` as it was and no `.partial`. The directory is your conversations in plain text. haevn sends it nowhere; put it where you would put the conversations themselves. `restore` (Happy path 8) puts it back.
 
 - **The exit code is the contract.** `0` done. `75` not now, ask again later: no extension connected within `--wait` (Chrome closed or the CLI bridge off), the connection was lost and did not come back, the extension is busy (a restore is running), or another `haevn backup` holds `<dir>.partial`. `1` failed, with one line on stderr naming the case: a wrong API key, an extension or daemon that is too old (restart the daemon), a disk error, a chat or file that could not be read. A runner defers on 75 and reports 1.
 - **Strict.** One item that cannot be read fails the run. Two things are not failures: a chat deleted while the run goes (listed in the manifest's `vanished`), and a transfer that did not get through, which is tried again twice.
 - It starts its own daemon when none listens on the port and stops it at the end; a standing daemon is used as it is. It needs the API key in `~/.haevn/config.json`, as `haevn daemon` does.
 - **Do not run it against the user's real Chrome** to try it out: it reads the whole archive (gigabytes) through the extension. A check uses the dev profile, with a scratch `HOME` holding its own `config.json` (port and key of the dev extension), so the real config is never read.
 - A directory that holds anything other than a previous backup is refused, not replaced.
+
+---
+
+## Happy path 8 — Put a backup back (`restore`)
+
+```bash
+haevn restore ~/backups/haevn --dry-run     # check the backup, say what would be replaced and added; writes nothing
+haevn restore ~/backups/haevn               # shows that, asks [y/N], then restores
+haevn restore ~/backups/haevn --chat <id>   # one chat (repeat the flag for more)
+haevn restore ~/backups/haevn --yes         # no question: needed when there is no terminal
+```
+
+`restore` writes into the user's real archive, so it is the one verb here that an agent never runs against the user's own Chrome without being asked to. Its rules are three: a chat or media file whose id exists is replaced by the backup's copy; what is missing is added; nothing else is touched (the one other write is the derived chat count of each provider it touched). It deletes nothing, and **a chat deleted since the backup comes back**.
+
+- **On an archive in use, a full restore is a rollback.** Each chat that is in both is replaced by the older copy: new messages, a corrected title and new AI metadata are lost from it. A web chat can be synced again; a Claude Code, Codex or Pi session whose file is gone cannot. Use `--chat` to bring back one chat, and read `--dry-run` first. The prompt says it with counts; the rollback paragraph shows only when something would be replaced.
+- **A new machine** is: install the extension, switch on the CLI bridge, put its API key in `~/.haevn/config.json`, run `haevn restore`. Settings and keys are not in a backup (set the metadata endpoint and Open WebUI instances by hand). Search fills in as the index rebuilds; thumbnails return as they are made.
+- **Checked before any write:** the manifest says `haevn-backup` and a version this CLI reads; the extension's archive schema is not older than the backup's; every file's size and SHA-256 match `index.jsonl`. A damaged backup is exit 1 with nothing written, and the line names the files.
+- **No terminal, no `--yes`: exit 1**, naming `--dry-run` and `--yes`. `--dry-run` needs no consent.
+- **The exit code:** `0` done. `75` not now: no extension within `--wait`, the extension busy (another operation holds its lock, or a restore is open), or the connection lost and not back. `1` failed, one line on stderr: a damaged or unknown backup, an older extension, no consent, a wrong key, a chat the extension refused.
+- **An interrupted restore** leaves every chat restored or as it was. The line says so: run the same command again to finish it. Transfers that did not get through are tried again twice; `BUSY`, `BAD_REQUEST` and `NO_SESSION` never are. If every chat is in but the search index could not be brought up to date, the run exits 1 and says so: search may miss chats until it is rebuilt (`haevnDebug.rebuildIndex()` in the archive page's console, or run the same command again, which replaces the chats again with the backup's copy).
+- It takes the extension's operation lock for the run, so a sync, an import or an export answers `BUSY` meanwhile. A check against the dev profile uses a scratch `HOME` and port, as for `backup`.
+- `/pipe/in` carries the action in the `X-Haevn-Request` header, so every non-ASCII character of a chat id or media name is sent as `\uXXXX`.
 
 ---
 

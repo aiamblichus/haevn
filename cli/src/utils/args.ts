@@ -33,3 +33,28 @@ export function flagText(
   }
   return parsed;
 }
+
+/**
+ * Every value of a flag that may be given more than once (`--chat a --chat b`, or `--chat=a`), in the
+ * order typed, read from the raw arguments: the parser keeps one value, and takes a value that
+ * starts with `-` for a flag. A flag typed last with no value is an error, not an empty list.
+ */
+export function repeatedFlag(
+  rawArgs: readonly string[] | undefined,
+  names: readonly string[],
+): string[] {
+  const raw = rawArgs ?? [];
+  const values: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const token = raw[i];
+    const joined = names.find((name) => token.startsWith(`${name}=`));
+    if (joined !== undefined) {
+      values.push(token.slice(joined.length + 1));
+    } else if (names.includes(token)) {
+      if (i + 1 >= raw.length) throw new Error(`${token} needs a value.`);
+      values.push(raw[++i]);
+    }
+  }
+  if (values.some((value) => value === "")) throw new Error(`${names[0]} needs a value.`);
+  return values;
+}

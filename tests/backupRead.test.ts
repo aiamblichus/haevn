@@ -163,8 +163,8 @@ describe("a chat's record", () => {
 
 describe("the list of live chats", () => {
   it("lists live chats in key order, each with its source and its media folder's files", async () => {
-    await seedChat(chatRow("c2", { source: "chatgpt" }));
-    await seedChat(chatRow("c1", { source: "claude" }));
+    await seedChat(chatRow("c2", { source: "chatgpt", lastSyncedTimestamp: 7_000 }));
+    await seedChat(chatRow("c1", { source: "claude", lastSyncedTimestamp: 5_000 }));
     fs.put("media/c1/m1_0.png", "abcd");
     fs.put("media/c1/m2_0.jpg", "xy");
 
@@ -174,14 +174,28 @@ describe("the list of live chats", () => {
       {
         id: "c1",
         source: "claude",
+        lastSyncedTimestamp: 5_000,
         media: [
           { name: "m1_0.png", bytes: 4 },
           { name: "m2_0.jpg", bytes: 2 },
         ],
       },
-      { id: "c2", source: "chatgpt", media: [] },
+      { id: "c2", source: "chatgpt", lastSyncedTimestamp: 7_000, media: [] },
     ]);
     expect(page.next).toBeUndefined();
+  });
+
+  it("names the stored lastSyncedTimestamp, so a restore can say which chats changed since", async () => {
+    await seedChat(chatRow("c1", { lastSyncedTimestamp: 1_234 }));
+    const row = chatRow("c2");
+    await seedChat(row);
+    // A row from before the field existed has none, and is listed without the key
+    await getDB().chats.put({ ...row, lastSyncedTimestamp: undefined as unknown as number });
+
+    const listed = (await listBackupChats({ limit: 10 })).chats;
+
+    expect(listed[0]).toMatchObject({ id: "c1", lastSyncedTimestamp: 1_234 });
+    expect("lastSyncedTimestamp" in listed[1]).toBe(false);
   });
 
   it("a soft-deleted chat is not listed", async () => {

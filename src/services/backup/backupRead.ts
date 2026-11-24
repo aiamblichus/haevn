@@ -28,6 +28,11 @@ export interface BackupMediaFile {
 export interface BackupChatListing {
   id: string;
   source: string;
+  /**
+   * When the chat was last synced, as stored: a restore compares it with the backup's copy to say
+   * how many chats changed since. Absent for a row that has none.
+   */
+  lastSyncedTimestamp?: number;
   media: BackupMediaFile[];
 }
 
@@ -69,7 +74,14 @@ export async function listBackupChats(options: {
   const chats: BackupChatListing[] = [];
   for (const chat of page) {
     const id = chatKey(chat);
-    chats.push({ id, source: chat.source, media: await listMediaFiles(id) });
+    chats.push({
+      id,
+      source: chat.source,
+      ...(typeof chat.lastSyncedTimestamp === "number"
+        ? { lastSyncedTimestamp: chat.lastSyncedTimestamp }
+        : {}),
+      media: await listMediaFiles(id),
+    });
   }
   return hasMore ? { chats, next: chats[chats.length - 1].id } : { chats };
 }
