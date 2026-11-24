@@ -89,7 +89,7 @@ For the exact HAEVN Markdown schema (YAML frontmatter + role delimiters), see [R
 
 ## What happens during import
 
-- Each conversation is added to your archive with its original timestamps and metadata
+- Each conversation is added to your archive with its messages' original timestamps. It is marked as synced at the time of the import, its AI metadata is taken from the file only when the chat has none here yet, and it brings no embeddings. To put an archive back exactly as it was, use [`haevn restore`](/user-guide/backup-restore/)
 - Attachments and images are extracted and stored in OPFS
 - Existing chats are overwritten by default (use `--no-overwrite` in CLI to skip existing IDs)
 - The search index is rebuilt after all conversations are imported (unless `--skip-index` in CLI)
