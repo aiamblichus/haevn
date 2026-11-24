@@ -1,6 +1,11 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setActiveOperation } from "../src/background/state";
+import {
+  beginSingleSync,
+  endSingleSync,
+  setActiveOperation,
+  singleSyncsInFlight,
+} from "../src/background/state";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import { ChatRepository } from "../src/services/chatRepository";
 import { getDB } from "../src/services/db";
@@ -359,5 +364,62 @@ describe("ChatRepository.hardDeleteChats leaves a chat that is no longer soft-de
     expect(left).toEqual(ids.slice(100, 200));
     expect(unindexed.sort()).toEqual([...ids.slice(0, 100), ...ids.slice(200)]);
     expect(dirsDeleted.sort()).toEqual([...ids.slice(0, 100), ...ids.slice(200)]);
+  });
+
+  // HVN-146: an operation that begins after the rows are gone keeps the media folders.
+  describe("when an operation begins after the rows are deleted and before the media folders go", () => {
+    const begins: Record<string, { start: () => Promise<void>; stop: () => Promise<void> }> = {
+      "a restore (the operation lock)": {
+        start: () => setActiveOperation("import"),
+        stop: () => setActiveOperation("idle"),
+      },
+      "a single-chat sync": {
+        start: async () => beginSingleSync(),
+        stop: async () => endSingleSync(),
+      },
+    };
+
+    for (const [name, { start, stop }] of Object.entries(begins)) {
+      it(`keeps the media folders when ${name} begins, and the rows stay deleted`, async () => {
+        await seedFullChat("gone", 1);
+        // The search index is the step between the row transaction and the media delete.
+        vi.spyOn(SearchIndexManager, "removeChatsFromIndexBulk").mockImplementation(async (ids) => {
+          unindexed.push(...ids);
+          await start();
+        });
+        try {
+          expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+          expect(await rowsOf("gone")).toBe(0);
+          expect(unindexed).toEqual(["gone"]);
+          expect(dirsDeleted).toEqual([]);
+        } finally {
+          await stop();
+        }
+      });
+    }
+
+    it("removes the media folders when nothing began", async () => {
+      await seedFullChat("gone", 1);
+
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+
+      expect(dirsDeleted).toEqual(["gone"]);
+    });
+  });
+
+  it("does nothing while a single-chat sync is in flight, and deletes at the next run", async () => {
+    await seedFullChat("gone", 1);
+    beginSingleSync();
+    try {
+      expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(0);
+      expect(await getDB().chats.get("gone")).toMatchObject({ deleted: 1 });
+      expect(dirsDeleted).toEqual([]);
+    } finally {
+      endSingleSync();
+    }
+    expect(singleSyncsInFlight()).toBe(0);
+
+    expect(await JanitorService.cleanupSoftDeletedChats(0)).toBe(1);
+    expect(dirsDeleted).toEqual(["gone"]);
   });
 });

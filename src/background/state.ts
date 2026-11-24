@@ -161,6 +161,27 @@ export async function setActiveOperation(operation: ActiveOperation): Promise<vo
   await storage.set(ACTIVE_OPERATION_KEY, operation);
 }
 
+// Single-chat syncs (the popup's and the CLI's) take no operation lock: they are short, and they
+// run beside one another. The Janitor must still know one is running, because a sync writes a
+// chat's media before its row (HVN-146). The count lives in the service worker's memory on
+// purpose: a sync does not outlive the worker, so neither should its count.
+let singleSyncs = 0;
+
+/** A single-chat sync starts. Pair it with {@link endSingleSync} in a `finally`. */
+export function beginSingleSync(): void {
+  singleSyncs += 1;
+}
+
+/** A single-chat sync ends, however it ended. */
+export function endSingleSync(): void {
+  singleSyncs = Math.max(0, singleSyncs - 1);
+}
+
+/** How many single-chat syncs are running now. */
+export function singleSyncsInFlight(): number {
+  return singleSyncs;
+}
+
 /**
  * Attempts to acquire the operation lock.
  * @param operation The operation requesting the lock

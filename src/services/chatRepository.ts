@@ -639,6 +639,18 @@ export namespace ChatRepository {
   /** Chats per transaction in {@link hardDeleteChats}: bounds one transaction and what a failure rolls back. */
   const HARD_DELETE_CHUNK_SIZE = 100;
 
+  export interface HardDeleteOptions {
+    /** A chat is deleted only if it was soft-deleted at least this long ago. */
+    gracePeriodMs?: number;
+    /**
+     * Asked after the rows are gone and before the media folders are removed: false keeps the
+     * folders (HVN-146). A restore, an import or a sync that began since writes media before its
+     * row, so the folder may hold files of a chat that is about to come back. A folder kept for a
+     * chat that stays gone is removed by the media sweep.
+     */
+    mayDeleteMedia?: () => Promise<boolean>;
+  }
+
   /**
    * Hard-deletes one or more chats from the local archive.
    * Performs actual cleanup: removes DB rows, thumbnails, mediaContent, OPFS files, and search index entries.
@@ -653,14 +665,15 @@ export namespace ChatRepository {
    * the other chunks are still deleted. The search index and the media of the chats that went are
    * cleaned up, and then the call throws if any chunk failed.
    * @param chatIds An array of chat IDs to permanently delete.
-   * @param gracePeriodMs When given, a chat is deleted only if it was soft-deleted at least this long ago.
+   * @param options The grace period and the media check, both optional.
    * @returns The ids that were deleted: those that were still soft-deleted (and past the grace).
    */
   export async function hardDeleteChats(
     chatIds: string[],
-    gracePeriodMs?: number,
+    options: HardDeleteOptions = {},
   ): Promise<string[]> {
     if (chatIds.length === 0) return [];
+    const { gracePeriodMs, mayDeleteMedia } = options;
     try {
       const db = getDB();
       const doomed: string[] = [];
@@ -735,7 +748,7 @@ export namespace ChatRepository {
       }
       if (doomed.length > 0) {
         log.info(`Hard-deleted chats: ${doomed.join(", ")}`);
-        await cleanUpAfterHardDelete(doomed);
+        await cleanUpAfterHardDelete(doomed, mayDeleteMedia);
       }
       if (failedChunks > 0) throw firstFailure;
       return doomed;
@@ -748,7 +761,10 @@ export namespace ChatRepository {
   }
 
   /** What follows the commit of a hard delete: the search index and the OPFS media of the chats that went. */
-  async function cleanUpAfterHardDelete(doomed: string[]): Promise<void> {
+  async function cleanUpAfterHardDelete(
+    doomed: string[],
+    mayDeleteMedia: HardDeleteOptions["mayDeleteMedia"],
+  ): Promise<void> {
     // Update search index in bulk
     try {
       await SearchIndexManager.removeChatsFromIndexBulk(doomed);
@@ -760,6 +776,16 @@ export namespace ChatRepository {
     try {
       const { getMediaStorageService } = await import("./mediaStorage");
       const mediaStorage = getMediaStorageService();
+
+      // The last look before the folders go. A restore, an import or a sync can still begin a
+      // moment after it, before deleteChatDir runs: that sliver is accepted, and a folder that
+      // stays behind for a chat that does not come back is collected by the media sweep.
+      if (mayDeleteMedia && !(await mayDeleteMedia())) {
+        log.info(
+          `Kept the media folders of ${doomed.length} chats: another operation is writing chats; the media sweep collects what is left`,
+        );
+        return;
+      }
 
       // Run OPFS deletions in parallel
       const results = await Promise.all(doomed.map((chatId) => mediaStorage.deleteChatDir(chatId)));
