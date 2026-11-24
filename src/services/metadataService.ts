@@ -540,6 +540,27 @@ export async function resetStuckQueueItems(): Promise<void> {
   }
 }
 
+/**
+ * Stores an embedding the queue made and takes its chat off the queue, unless the chat's metadata
+ * changed while the vector was being made (HVN-139): a vector of the old text must not stand for
+ * the new. The chat then goes back to pending, so the next tick embeds the text as it is now.
+ * Check, store and dequeue are one transaction, so a write cannot land between them.
+ */
+async function putEmbeddingIfCurrent(record: ChatEmbeddingRecord): Promise<boolean> {
+  const db = getDB();
+  return db.transaction("rw", [db.chatMetadata, db.chatEmbeddings, db.embeddingQueue], async () => {
+    const current = await db.chatMetadata.get(record.chatId);
+    if (!current || buildEmbeddingInputFingerprint(current) !== record.inputFingerprint) {
+      log.info(`[MetadataService] Dropped an embedding of ${record.chatId}: its metadata changed`);
+      await db.embeddingQueue.update(record.chatId, { status: "pending" });
+      return false;
+    }
+    await db.chatEmbeddings.put(record);
+    await db.embeddingQueue.delete(record.chatId);
+    return true;
+  });
+}
+
 export async function processEmbeddingQueueTick(): Promise<void> {
   const db = getDB();
   const [metadataConfig, starmapConfig] = await Promise.all([
@@ -612,7 +633,7 @@ export async function processEmbeddingQueueTick(): Promise<void> {
         const metadata = byChatId.get(chatId);
         if (!metadata) continue;
 
-        await db.chatEmbeddings.put({
+        await putEmbeddingIfCurrent({
           chatId,
           vector,
           vectorDim: vector.length,
@@ -621,7 +642,6 @@ export async function processEmbeddingQueueTick(): Promise<void> {
           inputFingerprint: buildEmbeddingInputFingerprint(metadata),
           updatedAt: Date.now(),
         });
-        await dequeueEmbeddingGeneration(chatId);
       }
     }
   } catch (err) {
@@ -839,6 +859,9 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   if (!config.enabled) throw new Error("AI metadata generation is not enabled");
   if (!config.url) throw new Error("AI metadata URL is not configured");
 
+  // What the generation starts from: it writes only if the record is still this one (HVN-139)
+  const before = await MetadataRepository.get(chatId);
+
   const chat = await getDB().chats.get(chatId);
   if (!chat) throw new Error(`Chat ${chatId} not found`);
   // Written with an empty excerpt otherwise (HVN-31): the request is refused until the move reaches it
@@ -915,7 +938,7 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   };
 
   const now = Date.now();
-  await MetadataRepository.set(chatId, {
+  const written = await MetadataRepository.setIfUnchanged(chatId, before, {
     title: parsed.title ?? "",
     description: parsed.description ?? "",
     synopsis: parsed.synopsis ?? "",
@@ -928,6 +951,11 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
 
   const saved = await MetadataRepository.get(chatId);
   if (!saved) throw new Error(`Failed to read back metadata for chat ${chatId}`);
+  if (!written) {
+    // Someone wrote the metadata while the model was answering: theirs is newer, so it stays.
+    log.info(`[MetadataService] Kept the metadata written meanwhile for chat ${chatId}`);
+    return saved;
+  }
   await queueEmbeddingGeneration(chatId);
   return saved;
 }
