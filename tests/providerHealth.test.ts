@@ -432,6 +432,53 @@ describe("providerHealth: what each step can find", () => {
   });
 });
 
+describe("providerHealth: a chat sync would not keep (HVN-148)", () => {
+  // Sync stores a Claude chat only when it holds text (hasTextContent), so the check does not rule
+  // on such a chat: it is named as a warning and not counted as checked.
+  it("a Claude chat that holds no messages is a warning, and the chat beside it is still checked", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("claude");
+    probe.script("claude", (s) => {
+      const empty = { ...claudeRaw(sentinels("claude0")), chat_messages: [] };
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: empty };
+    });
+    const report = await runProviderHealth({ providers: ["claude"] }, deps(probe));
+    const claude = row(report, "claude");
+    expect(claude, statuses(report)).toMatchObject({ status: "warn", checked: 1 });
+    expect(claude.findings).toEqual([
+      expect.objectContaining({ code: "chat.skipped", level: "warn", count: 1, chats: 1 }),
+    ]);
+    expect(claude.shapes).toHaveLength(2);
+    expect(claude.shapes[0].messages).toBe(0);
+  });
+
+  it("a Claude chat whose messages all have empty text is skipped the same way", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("claude");
+    probe.script("claude", (s) => {
+      const raw = claudeRaw(sentinels("claude0"));
+      raw.chat_messages[0].text = "";
+      raw.chat_messages[1].text = "";
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: raw };
+    });
+    const report = await runProviderHealth({ providers: ["claude"], chats: 1 }, deps(probe));
+    expect(row(report, "claude"), statuses(report)).toMatchObject({ status: "warn", checked: 0 });
+    expect(row(report, "claude").findings.map((f) => f.code)).toEqual(["chat.skipped"]);
+  });
+
+  it("another provider's empty chat is still a failure: its sync stores that chat, so the check does not excuse it", async () => {
+    const probe = new FakeProbe();
+    const [first] = idsFor("deepseek");
+    probe.script("deepseek", (s) => {
+      const raw = { ...(RAW_BY_PROVIDER.deepseek(sentinels("deepseek0")) as object), messages: [] };
+      (s.chats as Record<string, FetchedChat>)[first] = { success: true, data: raw };
+    });
+    const report = await runProviderHealth({ providers: ["deepseek"], chats: 1 }, deps(probe));
+    expect(row(report, "deepseek"), statuses(report)).toMatchObject({ status: "fail", checked: 1 });
+    expect(row(report, "deepseek").findings.map((f) => f.code)).toContain("messages.none");
+  });
+});
+
 describe("providerHealth: a slow provider gets a time limit", () => {
   it("stops a list that never answers, reports a timeout, and goes on", async () => {
     fakeClock();

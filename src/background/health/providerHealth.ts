@@ -17,7 +17,8 @@
 // errors scrubbed of ids, URLs and quoted text. The sampled chats' ids are held in memory for
 // the length of one provider's check, to scrub them out of any error message that quotes them.
 
-import type { Chat } from "../../model/haevn_model";
+import type { Chat, HAEVN } from "../../model/haevn_model";
+import { hasTextContent } from "../../providers/claude/transformer";
 import { getAllProviders, type Provider } from "../../providers/provider";
 import {
   type ChatShape,
@@ -57,6 +58,7 @@ export type OperationCode =
   | "validate.failed"
   | "transform.threw"
   | "transform.empty"
+  | "chat.skipped"
   | "check.crashed";
 
 export interface HealthFinding {
@@ -313,6 +315,15 @@ function needsForegroundTab(provider: Provider): boolean {
 }
 
 /**
+ * Whether sync would leave this chat out of the archive (HVN-148). Sync keeps a Claude chat only
+ * when it holds text (`hasTextContent`, applied to Claude alone in chatSyncUtils, bulkSync.worker
+ * and the Claude import), so the check does not rule on it. No other provider's sync skips a chat.
+ */
+function syncSkips(provider: Provider, chat: Chat): boolean {
+  return provider.name === "claude" && !hasTextContent(chat as HAEVN.Chat);
+}
+
+/**
  * The providers whose failure blocks a release (decision 5 of the provider health decisions).
  * They are checked first, in this order, so a run that runs out of time skips the others and never
  * these. The CLI keeps the same list for its exit code (`cli/src/commands/health.ts`).
@@ -516,9 +527,21 @@ async function checkProvider(
         addOperationFinding(tally, "transform.empty", "fail", "the transformer returned no chat");
         continue;
       }
-      row.checked++;
-      addFindings(tally, checkChat(transformed, { now: deps.now() }));
       row.shapes.push(...transformed.map(describeChat));
+      const kept = transformed.filter((chat) => {
+        if (!syncSkips(provider, chat)) return true;
+        addOperationFinding(
+          tally,
+          "chat.skipped",
+          "warn",
+          "sync skips this chat: it holds no text",
+        );
+        return false;
+      });
+      if (kept.length > 0) {
+        row.checked++;
+        addFindings(tally, checkChat(kept, { now: deps.now() }));
+      }
     }
   })();
 
