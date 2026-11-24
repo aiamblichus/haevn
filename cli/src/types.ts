@@ -66,7 +66,10 @@ export type CliRequest =
 /** 128 random bits as 32 hex digits. Valid for one request of the extension's, then gone. */
 export type PipeId = string;
 
-/** What the CLI sends to open a pipe: any action, with its own fields. */
+/**
+ * What the CLI sends to open a pipe: any action, with its own fields. On `/pipe/in` the action
+ * travels in a header, which is latin-1: escape every non-ASCII character as `\uXXXX`.
+ */
 export interface PipeActionBody {
   action: string;
   [field: string]: unknown;
@@ -74,9 +77,6 @@ export interface PipeActionBody {
 
 /** The frame the daemon forwards to the extension for a pipe action: the CLI's body, an `id` and a `pipeId`. */
 export type PipeForwardedRequest = PipeActionBody & { id: string; pipeId: PipeId };
-
-/** The extension's answer to a pipe action is an ordinary `CliResponse`; on `/pipe/out` only a failure is passed on (as 422). */
-export type PipeFrameResponse = CliResponse;
 
 /** What the daemon itself says when it fails a pipe request (no extension, a bad body, a timeout, a cut stream). */
 export interface DaemonErrorBody {

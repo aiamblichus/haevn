@@ -801,3 +801,83 @@ describe("the pipe: the service worker's cross-origin fetch", () => {
     expect(refused.headers.get("access-control-allow-origin")).toBe("*");
   });
 });
+
+describe("the pipe: a peer that is alive but does not read, and an extension that leaves mid-stream", () => {
+  it("cuts an out transfer when the CLI stops reading its response", async () => {
+    const daemon = await start({ pipeFirstByteTimeoutMs: 5_000, pipeIdleTimeoutMs: 150 });
+    const extension = await connectExtension(daemon.port);
+    const { pipeId, cli } = await openOut(daemon.port, extension);
+
+    const sent = extensionPost(daemon.port, pipeId, randomBytes(64 * MB));
+    const res = await cli; // the head is here, and nobody reads the body
+    expect(res.status).toBe(200);
+
+    // 64 MB cannot sit in the sockets between the two: the daemon waits for the reader to
+    // drain, the reader does not, and the clock ends the transfer.
+    await expect(sent).rejects.toThrow();
+    await expect(res.arrayBuffer()).rejects.toThrow();
+  }, 15_000);
+
+  it("answers 504 for an in transfer when the extension stops reading the body, and names it", async () => {
+    const daemon = await start({ pipeFirstByteTimeoutMs: 5_000, pipeIdleTimeoutMs: 150 });
+    const extension = await connectExtension(daemon.port);
+    const { pipeId, cli } = await openIn(daemon.port, extension, randomBytes(64 * MB));
+
+    const got = await fetch(url(daemon.port, `/pipe/${pipeId}`), { headers: bearer });
+    expect(got.status).toBe(200); // the extension holds the response and does not read it
+
+    const answer = await cli;
+    expect(answer.status).toBe(504);
+    const body = (await answer.json()) as { error: string };
+    expect(body.error).toContain("the extension stopped reading");
+    await expect(got.arrayBuffer()).rejects.toThrow();
+  }, 15_000);
+
+  it.each([
+    1024,
+    64 * 1024,
+  ])("answers 504 for an in transfer when the CLI stops sending after %i bytes, and names the CLI", async (firstBytes) => {
+    const daemon = await start({ pipeFirstByteTimeoutMs: 5_000, pipeIdleTimeoutMs: 150 });
+    const extension = await connectExtension(daemon.port);
+
+    const forwarded = nextFrame(extension);
+    const upload = rawRequest(daemon.port, "POST", "/pipe/in", {
+      ...bearer,
+      [PIPE_REQUEST_HEADER]: JSON.stringify({ action: "restoreMedia" }),
+      "Content-Length": 8 * MB,
+    });
+    const answered = new Promise<{ status: number; body: string }>((resolve) => {
+      upload.once("response", (res) => {
+        let body = "";
+        res.on("data", (c) => {
+          body += c;
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+    });
+    upload.write(randomBytes(firstBytes)); // then silence
+    const frame = await forwarded;
+    const got = await fetch(url(daemon.port, `/pipe/${frame.pipeId}`), { headers: bearer });
+    expect(got.status).toBe(200);
+
+    const { status, body } = await answered;
+    expect(status).toBe(504);
+    expect(body).toContain("the CLI stopped sending");
+    upload.destroy();
+  });
+
+  it("fails an in transfer when the extension disconnects mid-stream", async () => {
+    const daemon = await start();
+    const extension = await connectExtension(daemon.port);
+    const { pipeId, cli } = await openIn(daemon.port, extension, randomBytes(8 * MB));
+
+    const got = await fetch(url(daemon.port, `/pipe/${pipeId}`), { headers: bearer });
+    expect(got.status).toBe(200); // the body is under way, and held back by the unread response
+    extension.close();
+
+    const answer = await cli;
+    expect(answer.status).toBe(504);
+    expect(await answer.json()).toMatchObject({ ok: false });
+    await expect(got.arrayBuffer()).rejects.toThrow();
+  });
+});
