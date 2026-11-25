@@ -4,6 +4,7 @@
  */
 
 import { log } from "../../utils/logger";
+import { charsOf, shapeOf } from "../../utils/logShape";
 import { RateLimiter } from "../../utils/rateLimit";
 import {
   ChatHistoryListWithSearchPaginationResponse,
@@ -109,7 +110,8 @@ async function executeQuery<TVariables, TResponse>(body: Query<TVariables>): Pro
     throw new Error(`Incomplete Poe tokens. Missing: ${missing.join(", ")}`);
   }
 
-  log.debug(`[PoeApi] Executing ${body.queryName}`, { body });
+  // The variables hold the person's text (a message, a chat's title): the log names their fields.
+  log.debug(`[PoeApi] Executing ${body.queryName}`, { variables: shapeOf(body.variables) });
 
   const response = await poeRateLimiter.schedule(() =>
     fetch("https://poe.com/api/gql_POST", {
@@ -121,15 +123,18 @@ async function executeQuery<TVariables, TResponse>(body: Query<TVariables>): Pro
 
   if (!response.ok) {
     const text = await response.text();
-    log.error(`[PoeApi] ${body.queryName} failed:`, text.substring(0, 500));
+    log.error(`[PoeApi] ${body.queryName} failed:`, {
+      status: response.status,
+      body: charsOf(text),
+    });
     throw new Error(`Poe GraphQL request failed: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
-  log.debug(`[PoeApi] Response for ${body.queryName}:`, data);
+  log.debug(`[PoeApi] Response for ${body.queryName}:`, { response: shapeOf(data) });
 
   if (data.errors) {
-    log.error("[PoeApi] GraphQL errors:", data.errors);
+    log.error("[PoeApi] GraphQL errors:", { errors: shapeOf(data.errors) });
     throw new Error(`GraphQL error: ${data.errors[0]?.message || "Unknown error"}`);
   }
 

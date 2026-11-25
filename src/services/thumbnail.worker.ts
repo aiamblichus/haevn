@@ -11,6 +11,7 @@ import type {
 } from "../types/workerMessages";
 import { arrayBufferToBase64 } from "../utils/binary_utils";
 import { log } from "../utils/logger";
+import { messageShape } from "../utils/logShape";
 import type { Thumbnail } from "./db";
 import { HaevnDatabase } from "./db";
 
@@ -768,7 +769,7 @@ self.onmessage = async (event: MessageEvent<ThumbnailWorkerMessage>) => {
       }
 
       default:
-        log.warn("[ThumbnailWorker] Unknown message type:", message);
+        log.warn("[ThumbnailWorker] Unknown message type:", messageShape(message));
     }
   } catch (error) {
     const errorResponse: ThumbnailWorkerResponse = {

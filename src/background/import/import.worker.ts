@@ -17,6 +17,7 @@ import type {
   ImportWorkerResponse,
 } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
+import { errorShape, fileNameShape, messageShape } from "../../utils/logShape";
 
 // Use the shared database class - worker gets its own instance
 const db = new HaevnDatabase();
@@ -636,7 +637,7 @@ async function processImport(
                   } as ImportWorkerResponse);
                 }
               } catch (error) {
-                log.error("[ImportWorker] Error processing HAEVN export chat:", error);
+                log.error("[ImportWorker] Error processing HAEVN export chat:", errorShape(error));
                 errors++;
                 self.postMessage({
                   type: "failed",
@@ -907,7 +908,7 @@ async function processImport(
       } as ImportWorkerResponse);
     }
   } catch (error) {
-    log.error("[ImportWorker] Error during import:", error);
+    log.error("[ImportWorker] Error during import:", errorShape(error));
     self.postMessage({
       type: "error",
       error: error instanceof Error ? error.message : "Unknown error occurred",
@@ -964,13 +965,13 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
 
         if (msg.file) {
           log.info("[ImportWorker] Received file:", {
-            name: msg.file.name,
+            name: fileNameShape(msg.file.name),
             type: msg.file.type,
             size: msg.file.size,
           });
         } else if (msg.fileData) {
           log.info("[ImportWorker] Received fileData:", {
-            name: msg.fileData.name,
+            name: fileNameShape(msg.fileData.name),
             type: msg.fileData.type,
             size: msg.fileData.size,
             dataByteLength: msg.fileData.data.byteLength,
@@ -1071,7 +1072,7 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
 
       default: {
         const exhaustiveCheck: never = msg;
-        log.error("[ImportWorker] Unknown message type:", exhaustiveCheck);
+        log.error("[ImportWorker] Unknown message type:", messageShape(exhaustiveCheck));
         self.postMessage({
           type: "error",
           error: `Unknown message type: ${exhaustiveCheck}`,
@@ -1080,7 +1081,7 @@ self.onmessage = async (event: MessageEvent<ImportWorkerMessage>) => {
       }
     }
   } catch (error) {
-    log.error("[ImportWorker] Error handling message:", error);
+    log.error("[ImportWorker] Error handling message:", errorShape(error));
     self.postMessage({
       type: "error",
       error: error instanceof Error ? error.message : "Unknown error occurred",

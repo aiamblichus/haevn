@@ -29,6 +29,7 @@ import {
   type FindingLevel,
 } from "../../providers/shared/chatInvariants";
 import { log } from "../../utils/logger";
+import { scrubMessage } from "../../utils/logShape";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -180,33 +181,9 @@ export interface HealthDeps {
 
 // ─── Scrubbing ───────────────────────────────────────────────────────────────
 
-const MAX_NOTE_LENGTH = 200;
-
-/** An identifier-like quoted word (a property name in a TypeError) is kept; other quotes are not. */
-const KEEPABLE_QUOTED = /^[A-Za-z_$][\w$]{0,39}$/;
-
-/**
- * Make an error message safe to put in a report: it must hold no chat id, no URL (the path or
- * query can carry an id), no quoted run of the payload (a JSON.parse error quotes the text it
- * choked on) and no long token (an organization id, a cursor).
- */
-export function scrubMessage(message: string, knownIds: readonly string[] = []): string {
-  let text = message;
-  for (const id of knownIds) {
-    if (id.length === 0) continue;
-    for (const form of new Set([id, encodeURIComponent(id)])) {
-      text = text.split(form).join("<id>");
-    }
-  }
-  text = text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
-  text = text.replace(/(['"`])((?:(?!\1).){0,400}?)\1/g, (whole, quote: string, inner: string) =>
-    KEEPABLE_QUOTED.test(inner) ? whole : `${quote}…${quote}`,
-  );
-  text = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>");
-  text = text.replace(/[A-Za-z0-9_-]{20,}/g, "<id>");
-  text = text.replace(/\s+/g, " ").trim();
-  return text.length > MAX_NOTE_LENGTH ? `${text.slice(0, MAX_NOTE_LENGTH)}…` : text;
-}
+// `scrubMessage` lives in `utils/logShape` (HVN-157: the logger uses it too); the report keeps
+// its old import path.
+export { scrubMessage };
 
 function errorText(err: unknown): string {
   if (err instanceof Error) return `${err.name === "Error" ? "" : `${err.name}: `}${err.message}`;

@@ -19,6 +19,16 @@ import { DEFAULT_LOGGER_CONFIG, type LoggerConfig, LogLevel } from "../utils/log
 // Storage keys
 const STORAGE_KEY_CONFIG = "logger:config";
 const STORAGE_KEY_ENTRIES = "logger:entries";
+const STORAGE_KEY_FORMAT = "logger:format";
+
+/**
+ * The format of the persisted entries. Raise it when entries stored by an older version must not
+ * be kept: the next start clears them once and writes this number.
+ *
+ * 1: no entry carries chat content (HVN-157). Entries stored before it hold message text,
+ * titles, system prompts and search queries.
+ */
+const LOG_FORMAT_VERSION = 1;
 
 // Debounce timer for persistence
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -58,6 +68,14 @@ class LoggerService {
         const result = await this.storage.get(STORAGE_KEY_CONFIG);
         if (result[STORAGE_KEY_CONFIG]) {
           this.config = { ...DEFAULT_LOGGER_CONFIG, ...result[STORAGE_KEY_CONFIG] };
+        }
+
+        // Entries stored in an older format are cleared once, before anything reads them
+        const formatResult = await this.storage.get(STORAGE_KEY_FORMAT);
+        const storedFormat = formatResult[STORAGE_KEY_FORMAT];
+        if (typeof storedFormat !== "number" || storedFormat < LOG_FORMAT_VERSION) {
+          await this.storage.remove(STORAGE_KEY_ENTRIES);
+          await this.storage.set({ [STORAGE_KEY_FORMAT]: LOG_FORMAT_VERSION });
         }
 
         // Load persisted logs

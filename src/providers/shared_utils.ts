@@ -3,6 +3,7 @@
 // Note: ExportOptions types live in specific modules (extractors/formatters).
 
 import { log } from "../utils/logger";
+import { fileNameShape } from "../utils/logShape";
 // Shared timestamp utilities
 import { formatLocalTime as formatLocalTimeUtil } from "../utils/time_utils";
 
@@ -102,7 +103,7 @@ export function createDownloadPromise(messageData: DownloadMessageData): Promise
       }
 
       if (response?.success) {
-        log.info(`[Download] File downloaded successfully:`, messageData.filename);
+        log.info(`[Download] File downloaded successfully:`, fileNameShape(messageData.filename));
         resolve();
       } else {
         const error = response?.error || "Download failed";

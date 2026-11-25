@@ -2,6 +2,7 @@
  * PI session JSONL importer.
  */
 
+import { errorShape } from "../../utils/logShape";
 import type {
   PiLine,
   PiMessageLine,
@@ -80,7 +81,7 @@ export async function parsePiJsonl(content: string): Promise<PiRawExtraction> {
         }
       }
     } catch (error) {
-      console.warn("Failed to parse PI JSONL line:", error);
+      console.warn("Failed to parse PI JSONL line:", errorShape(error));
     }
   }
 

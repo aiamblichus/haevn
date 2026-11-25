@@ -1,4 +1,5 @@
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { detectPlatform } from "../shared/platformDetector";
 import { generateFallbackId } from "../shared_utils";
 import { deepseekApi } from "./api_client";
@@ -38,7 +39,7 @@ export async function fetchDeepseekConversation(
 
   log.info("[DeepSeek] Fetched conversation via API", {
     chatSessionId,
-    title: session.title,
+    title: charsOf(session.title),
     messageCount: messages.length,
   });
 

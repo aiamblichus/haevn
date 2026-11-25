@@ -1,6 +1,7 @@
 import { ChatRepository } from "../../services/chatRepository";
 import * as MetadataRepository from "../../services/metadataRepository";
 import {
+  apiErrorForLog,
   embeddingEndpointChanged,
   enqueueAllMissing,
   generateOnRequest,
@@ -74,7 +75,8 @@ export async function handleGenerateChatMetadata(
     const record = await generateOnRequest(message.chatId);
     sendResponse({ success: true, data: record });
   } catch (err) {
-    log.error("[MetadataHandlers] generateChatMetadata failed", err);
+    // The endpoint's error body can echo the prompt, an excerpt of the chat: the log has the status
+    log.error("[MetadataHandlers] generateChatMetadata failed", apiErrorForLog(err));
     sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

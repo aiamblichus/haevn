@@ -8,6 +8,7 @@ import { getProvider } from "../providers/provider";
 import type { ContentScriptResponse } from "../types/messaging";
 import { isContentScriptRequest } from "../types/messaging";
 import { log } from "../utils/logger";
+import { charsOf, shapeOf } from "../utils/logShape";
 import { originAndPath } from "../utils/network_utils";
 import { detectCurrentPlatform, getConversationId } from "../utils/platform";
 
@@ -79,7 +80,8 @@ chrome.runtime.onMessage.addListener(
         return;
       }
 
-      log.debug("[HAEVN][Content] Received message:", message.action, message);
+      // The message can carry an access token or a custom title: the log names its fields only.
+      log.debug("[HAEVN][Content] Received message:", message.action, shapeOf(message));
 
       if (!("action" in message)) {
         return;
@@ -226,7 +228,7 @@ function handleExtractData(
 
       log.info("[HAEVN][Content] Extracted data summary:", {
         platform: platform.name,
-        title: (data as Record<string, unknown>)?.title,
+        title: charsOf((data as Record<string, unknown>)?.title),
         messageCount: Array.isArray((data as Record<string, unknown>)?.messages)
           ? ((data as Record<string, unknown>).messages as unknown[]).length
           : undefined,

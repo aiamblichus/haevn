@@ -3,6 +3,7 @@
 // The extractor must scroll turns into view and expand collapsed panels to access content.
 
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { detectPlatform } from "../shared/platformDetector";
 import { chatIdsFromLinks, LIBRARY_SELECTORS, waitForLibraryRows } from "./library";
 import type {
@@ -496,7 +497,7 @@ export async function extractAIStudioConversationData(
   };
 
   log.info("[AI Studio Extractor] Extracted conversation data:", {
-    title,
+    title: charsOf(title),
     conversationId,
     messageCount: messages.length,
     userMessages: messages.filter((m) => m.role === "user").length,

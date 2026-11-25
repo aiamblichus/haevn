@@ -27,6 +27,7 @@ import type {
   ThumbnailWorkerResponse,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { charsOf, errorKind, errorShape, fileNameShape, scrubMessage } from "../utils/logShape";
 import { ensureSafeMessage } from "../utils/messageSafety";
 import { deleteFileFromOpfs, getFile, readFileFromOpfs } from "../utils/opfs";
 
@@ -348,10 +349,11 @@ function handleWorkerMessage(
           : "error" in data && typeof data.error === "string"
             ? data.error
             : "Worker error";
+      // A search error can quote the query, an import error the text it choked on (HVN-157)
       log.error(`[Offscreen] Worker returned error, rejecting promise:`, {
         workerType,
         requestId,
-        error: errorMessage,
+        error: workerType === "search" ? charsOf(errorMessage) : scrubMessage(errorMessage),
       });
       pending.reject(new Error(errorMessage));
     } else {
@@ -551,7 +553,7 @@ async function routeToWorker(
           log.debug(`[Offscreen] Posting message to search worker:`, {
             requestId,
             messageType: message.type,
-            query: "query" in message ? message.query : undefined,
+            query: "query" in message ? charsOf(message.query) : undefined,
           });
           postMessageWithTransfer(worker, message as SearchWorkerMessage, transferList);
           break;
@@ -605,7 +607,7 @@ async function routeToWorker(
         log.info(`[Offscreen] Posting streaming search message to worker:`, {
           requestId,
           messageType: message.type,
-          query: "query" in message ? message.query : undefined,
+          query: "query" in message ? charsOf(message.query) : undefined,
           hasWorker: !!worker,
         });
         postMessageWithTransfer(worker, message as SearchWorkerMessage, transferList);
@@ -696,7 +698,8 @@ async function handleWorkerRequest(message: OffscreenWorkerRequest): Promise<Off
   ) {
     log.info("[Offscreen] Preparing staged file for import worker:", {
       operation,
-      stagedFilePath: importMessage.stagedFilePath,
+      // The staged path ends in the name of the file the person picked
+      stagedFilePath: fileNameShape(importMessage.stagedFilePath),
     });
     const stagedFile = await readFileFromOpfs(importMessage.stagedFilePath);
     const name = importMessage.originalFileName || stagedFile.name || "import.zip";
@@ -738,11 +741,11 @@ async function handleWorkerRequest(message: OffscreenWorkerRequest): Promise<Off
     };
     return response;
   } catch (error: unknown) {
+    // Not the message in full and not the stack (it opens with the message): see the rejection above
     log.error(`[Offscreen] Worker request failed:`, {
       workerType,
       requestId,
-      error: error instanceof Error ? error.message : String(error),
-      errorStack: error instanceof Error ? error.stack : undefined,
+      error: workerType === "search" ? errorKind(error) : errorShape(error),
     });
     const response: OffscreenResponse = {
       success: false,

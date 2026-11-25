@@ -15,6 +15,7 @@ import { HaevnDatabase } from "../../services/db";
 import type { AllProviderRawData } from "../../types/messaging";
 import type { BulkSyncWorkerMessage } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
+import { messageShape } from "../../utils/logShape";
 import { handleWorkerResponse } from "../../utils/media_utils";
 import { transformRawDataToHaevn } from "../utils/platformTransform";
 import { isOlderRun } from "./runId";
@@ -249,7 +250,7 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
       }
 
       default: {
-        log.error("[BulkSyncWorker] Unknown message type:", msg);
+        log.error("[BulkSyncWorker] Unknown message type:", messageShape(msg));
         self.postMessage({
           type: "error",
           // msg is `never` here by the type, but this is what an unexpected message looks like

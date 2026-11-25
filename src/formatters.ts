@@ -22,6 +22,7 @@ import {
   messageNumber,
   otherBranchCount,
 } from "./utils/messageBranches";
+import { originAndPath } from "./utils/network_utils";
 
 export type ExporterId = "haevn_zip" | "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
 
@@ -272,7 +273,7 @@ export async function downloadUrlAttachment(
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      log.warn(`Failed to download attachment from ${url}: ${response.statusText}`);
+      log.warn(`Failed to download attachment from ${originAndPath(url)}: ${response.statusText}`);
       return null;
     }
     const blob = await response.blob();
@@ -284,7 +285,7 @@ export async function downloadUrlAttachment(
       media_type: mediaType,
     };
   } catch (error) {
-    log.error(`Error downloading attachment from ${url}:`, error);
+    log.error(`Error downloading attachment from ${originAndPath(url)}:`, error);
     return null;
   }
 }

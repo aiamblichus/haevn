@@ -31,6 +31,7 @@ import {
   type BulkExportWorkerResponse,
 } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
+import { charsOf, messageShape } from "../../utils/logShape";
 import {
   createWritableStream,
   getFile,
@@ -178,7 +179,9 @@ async function stageChat(chat: Chat, options: ExportOptions, state: WorkerState)
   }
   const chatId = chat.id;
   if (!chatId) {
-    log.warn(`[BulkExportWorker] Skipping a chat without an id (title: ${chat.title})`);
+    log.warn(
+      `[BulkExportWorker] Skipping a chat without an id (title: ${charsOf(chat.title)}, source: ${chat.source})`,
+    );
     return;
   }
   const chatJson = JSON.stringify(chat);
@@ -918,7 +921,7 @@ self.onmessage = async (event: MessageEvent<BulkExportWorkerMessage>) => {
 
       default: {
         const exhaustiveCheck: never = msg;
-        log.error("[BulkExportWorker] Unknown message type:", exhaustiveCheck);
+        log.error("[BulkExportWorker] Unknown message type:", messageShape(exhaustiveCheck));
         self.postMessage({
           type: "error",
           error: `Unknown message type: ${exhaustiveCheck}`,

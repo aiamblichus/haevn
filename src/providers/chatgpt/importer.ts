@@ -1,6 +1,7 @@
 import type { Entry } from "@zip.js/zip.js";
 import { arrayBufferToBase64 } from "../../utils/binary_utils";
 import { log } from "../../utils/logger";
+import { fileNameShape } from "../../utils/logShape";
 import { createZipReader, readEntryArrayBuffer, readEntryText } from "../../utils/zipReader";
 import type { ChatGPTAssetsMap, OpenAIConversation, OpenAIConversationNode } from "./model";
 
@@ -119,7 +120,9 @@ async function resolveAssetFromZip(
       if (arr && arr.length > 0) {
         const chosen = arr[0];
         const filename = chosen.filename.split("/").pop();
-        log.info(`[Importer][ChatGPT] Resolved ${pointer} -> ${chosen.filename} (top-level)`);
+        log.info(
+          `[Importer][ChatGPT] Resolved ${pointer} -> ${fileNameShape(chosen.filename)} (top-level)`,
+        );
         return { entry: chosen, filename };
       }
 
@@ -129,7 +132,7 @@ async function resolveAssetFromZip(
         const chosen = arr[0];
         const filename = chosen.filename.split("/").pop();
         log.info(
-          `[Importer][ChatGPT] Resolved ${pointer} -> ${chosen.filename} (dalle-generations)`,
+          `[Importer][ChatGPT] Resolved ${pointer} -> ${fileNameShape(chosen.filename)} (dalle-generations)`,
         );
         return { entry: chosen, filename };
       }
@@ -148,7 +151,9 @@ async function resolveAssetFromZip(
       }
       if (chosen) {
         const filename = chosen.filename.split("/").pop();
-        log.info(`[Importer][ChatGPT] Resolved ${pointer} -> ${chosen.filename} (user subdir)`);
+        log.info(
+          `[Importer][ChatGPT] Resolved ${pointer} -> ${fileNameShape(chosen.filename)} (user subdir)`,
+        );
         return { entry: chosen, filename };
       }
 
@@ -239,7 +244,7 @@ export async function* parseChatGPTBackupZip(
             filename: name,
           };
         } catch (e) {
-          log.warn("[Importer][ChatGPT] Failed to read asset", entry.filename, e);
+          log.warn("[Importer][ChatGPT] Failed to read asset", fileNameShape(entry.filename), e);
         }
       }
       yield { conversation: conv, assets };

@@ -13,6 +13,7 @@ import type {
   SearchIndexRebuildStatus,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { charsOf, shapeOf } from "../utils/logShape";
 import { logNoResponse } from "../utils/noResponse";
 import "./debug";
 import { ExportModal } from "../components/ExportModal";
@@ -321,14 +322,14 @@ const App = () => {
           case "searchStreamingStarted":
             // Search started - results will arrive via searchStreamingResults
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
-              log.info(`[Options] Search streaming started for query: "${event.query}"`, {
+              log.info(`[Options] Search streaming started for query: ${charsOf(event.query)}`, {
                 filterProvider: event.filterProvider,
               });
               setIsSearching(true);
             } else {
               log.warn(`[Options] Received start for different query:`, {
-                receivedQuery: event.query,
-                currentQuery: searchQuery,
+                receivedQuery: charsOf(event.query),
+                currentQuery: charsOf(searchQuery),
                 receivedFilterProvider: event.filterProvider,
                 currentFilterProvider: filterProvider,
               });
@@ -339,7 +340,7 @@ const App = () => {
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
               const results = (event.results || []) as SearchResult[];
               log.debug(`[Options] Received search results batch:`, {
-                query: event.query,
+                query: charsOf(event.query),
                 filterProvider: event.filterProvider,
                 batchSize: results.length,
                 results: results.map((r) => ({
@@ -367,8 +368,8 @@ const App = () => {
               }
             } else {
               log.warn(`[Options] Received results for different query:`, {
-                receivedQuery: event.query,
-                currentQuery: searchQuery,
+                receivedQuery: charsOf(event.query),
+                currentQuery: charsOf(searchQuery),
                 receivedFilterProvider: event.filterProvider,
                 currentFilterProvider: filterProvider,
               });
@@ -378,7 +379,7 @@ const App = () => {
             // Search complete
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
               log.info(`[Options] Search streaming complete:`, {
-                query: event.query,
+                query: charsOf(event.query),
                 filterProvider: event.filterProvider,
                 totalResults: event.totalResults,
                 chatsScanned: event.chatsScanned,
@@ -409,8 +410,8 @@ const App = () => {
               }
             } else {
               log.warn(`[Options] Received completion for different query:`, {
-                receivedQuery: event.query,
-                currentQuery: searchQuery,
+                receivedQuery: charsOf(event.query),
+                currentQuery: charsOf(searchQuery),
                 receivedFilterProvider: event.filterProvider,
                 currentFilterProvider: filterProvider,
               });
@@ -421,9 +422,9 @@ const App = () => {
             if (event.query === searchQuery && (event.filterProvider || "all") === filterProvider) {
               if (!event.queryProblem) {
                 log.error(`[Options] Search streaming failed:`, {
-                  query: event.query,
+                  query: charsOf(event.query),
                   filterProvider: event.filterProvider,
-                  error: event.error,
+                  error: charsOf(event.error),
                 });
               }
               setIsSearching(false);
@@ -437,11 +438,11 @@ const App = () => {
               else setStatus(`Search failed: ${event.error}`, "error");
             } else {
               log.warn(`[Options] Received failure for different query:`, {
-                receivedQuery: event.query,
-                currentQuery: searchQuery,
+                receivedQuery: charsOf(event.query),
+                currentQuery: charsOf(searchQuery),
                 receivedFilterProvider: event.filterProvider,
                 currentFilterProvider: filterProvider,
-                error: event.error,
+                error: charsOf(event.error),
               });
             }
             break;
@@ -484,7 +485,7 @@ const App = () => {
     }
 
     log.info(`[Options] Search params changed:`, {
-      query: searchQuery,
+      query: charsOf(searchQuery),
       filterProvider,
       rerun: searchRerunKey,
     });
@@ -513,7 +514,7 @@ const App = () => {
     // Debounce search start
     const timer = setTimeout(async () => {
       try {
-        log.info(`[Options] Starting search after debounce: "${searchQuery}"`);
+        log.info(`[Options] Starting search after debounce: ${charsOf(searchQuery)}`);
         // Cancel any previous search first
         await cancelPrevious();
 
@@ -529,7 +530,7 @@ const App = () => {
           resultsPerChat: 4, // Fetch 4, show 3 - if we have 4, we know there might be more
         };
         log.debug("[Options] Sending searchChatsStreaming request:", {
-          query: searchQuery,
+          query: charsOf(searchQuery),
           streamBatchSize: request.streamBatchSize,
           maxChatsToScan: request.maxChatsToScan,
           resultsPerChat: request.resultsPerChat,
@@ -565,7 +566,7 @@ const App = () => {
   // Reset search pagination when search query changes
   useEffect(() => {
     log.debug("[Options] Search params changed, resetting search pagination", {
-      searchQuery,
+      searchQuery: charsOf(searchQuery),
       filterProvider,
     });
     setSearchPage(1);
@@ -805,7 +806,7 @@ const App = () => {
               log.warn(`No matches found for chat ${chatId} when expanding`);
             }
           } else {
-            log.error("Failed to get all matches: invalid response", resp);
+            log.error("Failed to get all matches: invalid response", shapeOf(resp));
           }
         } catch (error) {
           log.error("Failed to load all matches:", error);

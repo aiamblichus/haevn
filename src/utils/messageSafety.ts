@@ -5,6 +5,8 @@
  * and handle oversized messages before they crash the extension.
  */
 
+import { shapeOf } from "./logShape";
+
 // Chrome's limit is 64MB, we'll use 60MB as safety margin
 const MAX_MESSAGE_SIZE_BYTES = 60 * 1024 * 1024;
 // For truncation, we'll cap individual fields at 1MB
@@ -119,7 +121,8 @@ export async function safeSendMessage(message: unknown): Promise<boolean> {
   if (!result.safe) {
     // Log to console since we can't send to background
     console.error("[MessageSafety] BLOCKED oversized message:", result.warning);
-    console.error("[MessageSafety] Truncated message preview:", result.message);
+    // The message is chat content (a message list, a chat): its fields, not their values
+    console.error("[MessageSafety] Truncated message shape:", shapeOf(result.message));
     return false;
   }
 

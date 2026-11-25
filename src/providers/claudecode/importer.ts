@@ -4,6 +4,7 @@
  * Parses Claude Code session transcript files (.jsonl) and converts them to HAEVN.Chat format.
  */
 
+import { errorShape } from "../../utils/logShape";
 import type {
   ClaudeCodeMessage,
   ClaudeCodeRawExtraction,
@@ -59,7 +60,8 @@ export async function parseClaudeCodeJsonl(content: string): Promise<ClaudeCodeR
       }
     } catch (error) {
       // Not the line itself: it is chat content (HVN-105)
-      console.warn("Failed to parse JSONL line:", { length: line.length }, error);
+      // (a JSON.parse error quotes the text it choked on: errorShape drops the quote)
+      console.warn("Failed to parse JSONL line:", { length: line.length }, errorShape(error));
       // Continue parsing remaining lines
     }
   }
