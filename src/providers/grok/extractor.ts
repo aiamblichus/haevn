@@ -195,15 +195,16 @@ export async function extractGrokConversationData(
   return fetchFullConversation(conversationId);
 }
 
-/**
- * Get list of all chat IDs (for bulk sync)
- */
-export async function extractGrokChatIds(): Promise<string[]> {
-  log.debug("[Grok Extractor] Fetching chat list");
+/** The most pages the chat list follows: 50 pages of 60 is 3,000 chats. */
+const MAX_CHAT_LIST_PAGES = 50;
 
-  // Start with a reasonable page size
-  // TODO: Implement pagination if needed (when we know the pagination mechanism)
-  const apiUrl = `${GROK_BASE_URL}/rest/app-chat/conversations?pageSize=100`;
+/**
+ * One page of the chat list. The server caps a page at 60 chats whatever pageSize asks for, and
+ * returns nextPageToken while more remain. A failed page throws: a partial list must not look whole.
+ */
+async function fetchChatListPage(pageToken?: string): Promise<GrokConversationsResponse> {
+  const tokenParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+  const apiUrl = `${GROK_BASE_URL}/rest/app-chat/conversations?pageSize=100${tokenParam}`;
 
   const response = await grokRateLimiter.schedule(() =>
     fetchWithTimeout(apiUrl, {
@@ -221,10 +222,47 @@ export async function extractGrokChatIds(): Promise<string[]> {
     throw new Error(`Failed to fetch chat list: ${response.status} ${response.statusText}`);
   }
 
-  const data = (await response.json()) as GrokConversationsResponse;
+  return (await response.json()) as GrokConversationsResponse;
+}
 
-  // Extract conversation IDs
-  const chatIds = data.conversations.map((conv) => conv.conversationId);
+/**
+ * Get list of all chat IDs (for bulk sync), following the server's pages. Each id comes back once,
+ * in the server's order. A repeated token, or the page cap, ends the walk with a warning and
+ * returns what was collected.
+ */
+export async function extractGrokChatIds(): Promise<string[]> {
+  log.debug("[Grok Extractor] Fetching chat list");
+
+  const chatIds: string[] = [];
+  const seenIds = new Set<string>();
+  const followedTokens = new Set<string>();
+  let pageToken: string | undefined;
+
+  for (let page = 1; ; page++) {
+    const data = await fetchChatListPage(pageToken);
+
+    for (const conv of data.conversations) {
+      if (!seenIds.has(conv.conversationId)) {
+        seenIds.add(conv.conversationId);
+        chatIds.push(conv.conversationId);
+      }
+    }
+
+    const nextToken = data.nextPageToken;
+    if (!nextToken) break;
+    if (followedTokens.has(nextToken)) {
+      log.warn(`[Grok Extractor] Chat list repeated a page token after ${page} pages; stopping`);
+      break;
+    }
+    if (page >= MAX_CHAT_LIST_PAGES) {
+      log.warn(
+        `[Grok Extractor] Chat list hit the ${MAX_CHAT_LIST_PAGES}-page cap; stopping with ${chatIds.length} chats`,
+      );
+      break;
+    }
+    followedTokens.add(nextToken);
+    pageToken = nextToken;
+  }
 
   log.info(`[Grok Extractor] Found ${chatIds.length} conversations`);
 
