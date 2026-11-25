@@ -118,7 +118,7 @@ export const ManifestoView = () => {
           </ul>
           <div className="manifesto-callout manifesto-callout-purple">
             <p className="manifesto-paragraph font-bold">
-              <strong>This is not a backup tool. This is a digital afterlife.</strong>
+              <strong>This is more than a backup. This is a digital afterlife.</strong>
             </p>
             <span className="manifesto-callout-glow" aria-hidden="true" />
           </div>
