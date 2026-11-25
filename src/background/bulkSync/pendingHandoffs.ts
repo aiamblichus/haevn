@@ -16,6 +16,12 @@ export interface PendingHandoffs {
   chatIds: string[];
   /** When the last hand-off or report happened (ms since epoch). */
   lastActivityAt: number;
+  /**
+   * The run's media files that were meant to be stored and were not (HVN-159): the sum of the
+   * worker's reports so far. It lives here and not in the bulk sync state because a report settles
+   * inside the queue below, while the tick loop writes that state at the same time.
+   */
+  unstoredMedia?: number;
 }
 
 const EMPTY: PendingHandoffs = { chatIds: [], lastActivityAt: 0 };
@@ -70,24 +76,45 @@ export function addPendingHandoff(chatId: string): Promise<void> {
   return exclusive(async () => {
     const current = await getPendingHandoffs();
     await getStorageAdapter().set(PENDING_KEY, {
+      ...current,
       chatIds: [...current.chatIds.filter((id) => id !== chatId), chatId],
       lastActivityAt: Date.now(),
     });
   });
 }
 
-export function settlePendingHandoff(chatId: string): Promise<void> {
+/**
+ * The worker has reported on a chat. `unstoredMedia` is the number of its media files that were
+ * not stored; it is added to the run's total here, in the queue, so two reports settled at once
+ * both count.
+ */
+export function settlePendingHandoff(chatId: string, unstoredMedia = 0): Promise<void> {
   return exclusive(async () => {
     const current = await getPendingHandoffs();
     await getStorageAdapter().set(PENDING_KEY, {
       chatIds: current.chatIds.filter((id) => id !== chatId),
       lastActivityAt: Date.now(),
+      unstoredMedia: (current.unstoredMedia ?? 0) + unstoredMedia,
     });
   });
 }
 
-export function clearPendingHandoffs(): Promise<void> {
+/**
+ * Forgets the hand-offs. `keepUnstoredMedia` is for a resume: the chats settled before the restart
+ * stay settled, so their count stays too. The run's end reads the count first (`getPendingHandoffs`)
+ * and then clears it all.
+ */
+export function clearPendingHandoffs(options?: { keepUnstoredMedia?: boolean }): Promise<void> {
   return exclusive(async () => {
+    const kept = options?.keepUnstoredMedia ? ((await getPendingHandoffs()).unstoredMedia ?? 0) : 0;
+    if (kept > 0) {
+      await getStorageAdapter().set(PENDING_KEY, {
+        chatIds: [],
+        lastActivityAt: 0,
+        unstoredMedia: kept,
+      } satisfies PendingHandoffs);
+      return;
+    }
     await getStorageAdapter().remove(PENDING_KEY);
   });
 }

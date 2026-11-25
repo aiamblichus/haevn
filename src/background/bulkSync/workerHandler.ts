@@ -48,7 +48,7 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       // to avoid conflicting progress values from stale currentIndex during batch processing
 
       // The chat is no longer the worker's: when it was the last, the sync can finish (HVN-123)
-      await onWorkerReport(message.chatId);
+      await onWorkerReport(message.chatId, message.unstoredMedia);
       break;
     }
 

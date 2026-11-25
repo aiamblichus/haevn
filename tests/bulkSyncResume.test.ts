@@ -9,6 +9,7 @@ import {
   addPendingHandoff,
   clearPendingHandoffs,
   getPendingHandoffs,
+  settlePendingHandoff,
 } from "../src/background/bulkSync/pendingHandoffs";
 import { planResume } from "../src/background/bulkSync/stateManager";
 import type { BulkSyncState } from "../src/background/bulkSync/types";
@@ -888,5 +889,93 @@ describe("a tick that was skipped is not lost (HVN-127)", () => {
     await vi.waitFor(async () => expect(await getBulkSyncState()).toBeNull());
 
     expect(vi.mocked(chrome.alarms.create)).not.toHaveBeenCalled();
+  });
+});
+
+describe("the run counts the media its chats could not store (HVN-159)", () => {
+  const report = (chatId: string, runId: string, unstoredMedia?: number) =>
+    ({
+      type: "progress",
+      chatId,
+      runId,
+      success: true,
+      unstoredMedia,
+      processed: 1,
+      failed: 0,
+      skipped: 0,
+    }) as const;
+
+  /** A run of `n` chats, all handed to the worker and none reported on. */
+  async function allOut(n: number, resumeCount = 0): Promise<string> {
+    const all = ids(n);
+    const state = runState({
+      chatIds: all,
+      total: n,
+      currentIndex: n,
+      processedChatIds: all,
+      resumeCount,
+    });
+    await setBulkSyncState(state);
+    await setActiveOperation("bulkSync");
+    await clearPendingHandoffs();
+    for (const id of all) await addPendingHandoff(id);
+    return `${STARTED}:${resumeCount}`;
+  }
+
+  it("says how many in the completion message, once the last chat is reported", async () => {
+    const run = await allOut(3);
+
+    await handleWorkerMessage(report("c1", run, 2));
+    await handleWorkerMessage(report("c2", run, 0));
+    expect(sent("bulkSyncComplete")).toHaveLength(0);
+    await handleWorkerMessage(report("c3", run, 1));
+
+    const [complete] = sent("bulkSyncComplete");
+    expect(complete).toMatchObject({ unstoredMediaCount: 3, successCount: 3, failedCount: 0 });
+    expect(complete.status).toContain("3 media files could not be stored; their links were kept.");
+    expect((await getPendingHandoffs()).unstoredMedia).toBeUndefined();
+  });
+
+  it("says nothing of it when every file was stored, and speaks of one in the singular", async () => {
+    const quiet = await allOut(1);
+    await handleWorkerMessage(report("c1", quiet));
+    expect(sent("bulkSyncComplete")[0].status).not.toContain("media");
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ unstoredMediaCount: 0 });
+
+    vi.mocked(safeSendMessage).mockClear();
+    const one = await allOut(1);
+    await handleWorkerMessage(report("c1", one, 1));
+    expect(sent("bulkSyncComplete")[0].status).toContain(
+      "1 media file could not be stored; its link was kept.",
+    );
+  });
+
+  it("does not count a report from another run", async () => {
+    const run = await allOut(2, 1);
+
+    await handleWorkerMessage(report("c1", `${STARTED}:0`, 5));
+    await handleWorkerMessage(report("c1", run, 1));
+    await handleWorkerMessage(report("c2", run, 1));
+
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ unstoredMediaCount: 2 });
+  });
+
+  it("keeps the count of the chats settled before a restart, and adds the redone ones", async () => {
+    // c1 was reported (2 not stored) before the restart; c2 was out and is fetched again
+    await interruptedRun({ n: 2, handedOver: 2, pending: ["c2"] });
+    await settlePendingHandoff("c1", 2);
+
+    await restart();
+    await driveToEnd();
+
+    expect(fetched).toEqual(["c2"]);
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ unstoredMediaCount: 2 });
+  });
+
+  it("starts a run's count at zero", async () => {
+    await settlePendingHandoff("old", 9);
+    await clearPendingHandoffs();
+
+    expect((await getPendingHandoffs()).unstoredMedia).toBeUndefined();
   });
 });

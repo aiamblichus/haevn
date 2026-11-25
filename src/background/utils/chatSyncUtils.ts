@@ -6,6 +6,7 @@ import { CacheService } from "../../services/cacheService";
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { countUnstoredMedia, unstoredMediaCodes } from "../../utils/media_utils";
 import { beginSingleSync, endSingleSync } from "../state";
 import { safeSendMessage } from "./messageUtils";
 import { transformRawDataToHaevn } from "./platformTransform";
@@ -118,6 +119,14 @@ async function transformAndSave(
 
     // Save the chat
     await SyncService.saveChat(haevnChat, rawData);
+
+    // A media file that could not be stored is a link in the saved chat: say so (ids and counts only)
+    const unstored = countUnstoredMedia(haevnChat);
+    if (unstored > 0) {
+      log.warn(
+        `[chatSyncUtils] Chat ${haevnChat.id}: ${unstored} media file(s) not stored (${unstoredMediaCodes(haevnChat).join(", ")})`,
+      );
+    }
 
     // Update sync status cache (mark as synced)
     if (haevnChat.source && haevnChat.sourceId) {

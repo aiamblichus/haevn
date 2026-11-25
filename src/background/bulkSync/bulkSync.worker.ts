@@ -16,7 +16,11 @@ import type { AllProviderRawData } from "../../types/messaging";
 import type { BulkSyncWorkerMessage } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import { messageShape } from "../../utils/logShape";
-import { handleWorkerResponse } from "../../utils/media_utils";
+import {
+  countUnstoredMedia,
+  handleWorkerResponse,
+  unstoredMediaCodes,
+} from "../../utils/media_utils";
 import { transformRawDataToHaevn } from "../utils/platformTransform";
 import { isOlderRun } from "./runId";
 
@@ -53,7 +57,7 @@ async function processSyncTask(task: {
   origin?: string;
   tabId?: number;
   runId: string;
-}): Promise<{ success: boolean; savedIds: string[]; error?: string }> {
+}): Promise<{ success: boolean; savedIds: string[]; unstoredMedia: number; error?: string }> {
   try {
     // Transform raw data to HAEVN format (CPU-intensive)
     const haevnChats = await transformRawDataToHaevn(
@@ -78,6 +82,7 @@ async function processSyncTask(task: {
     }
 
     const savedIds: string[] = [];
+    let unstoredMedia = 0;
 
     // Save each chat (I/O-intensive)
     for (const haevnChat of haevnChats) {
@@ -116,6 +121,15 @@ async function processSyncTask(task: {
 
       savedIds.push(haevnChat.id);
 
+      // A media file that could not be stored is a link in the saved chat; the run says how many
+      const unstored = countUnstoredMedia(haevnChat);
+      if (unstored > 0) {
+        unstoredMedia += unstored;
+        log.warn(
+          `[BulkSyncWorker] Chat ${haevnChat.id}: ${unstored} media file(s) not stored (${unstoredMediaCodes(haevnChat).join(", ")})`,
+        );
+      }
+
       // Request post-processing via service worker (indexing, cache updates, broadcasting). The
       // message carries a summary, not the chat: a chat with inline media can be past the 64 MB
       // message limit (HVN-121).
@@ -137,11 +151,11 @@ async function processSyncTask(task: {
       });
     }
 
-    return { success: true, savedIds };
+    return { success: true, savedIds, unstoredMedia };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log.error(`[BulkSyncWorker] Failed to process sync task for ${task.chatId}:`, error);
-    return { success: false, savedIds: [], error: errorMessage };
+    return { success: false, savedIds: [], unstoredMedia: 0, error: errorMessage };
   }
 }
 
@@ -178,6 +192,7 @@ self.onmessage = async (event: MessageEvent<BulkSyncWorkerMessage>) => {
             runId: msg.data.runId,
             success: true,
             savedIds: result.savedIds,
+            unstoredMedia: result.unstoredMedia,
             processed: workerState.processedCount,
             failed: workerState.failedCount,
             skipped: workerState.skippedCount,
