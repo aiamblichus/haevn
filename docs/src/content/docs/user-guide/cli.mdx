@@ -43,6 +43,7 @@ haevn list -l 5
 - `haevn export <chatId> -o file --format <haevn_json|haevn_markdown|pi_session_jsonl>` — export one chat.
 - `haevn import --format <claude_code|codex|pi|openrouter> <file...>` — import local JSONL session files or an OpenRouter chatroom export.
 - `haevn health` — check that each web provider you are signed in to still syncs (read-only).
+- `haevn logs` — read the extension's recent log entries (`--level`, `--context`, `--match`).
 
 ## Short message refs
 
@@ -272,6 +273,18 @@ A `fail` is a rule that makes a chat unusable (no messages, a current message th
 - `tree.multiple-roots` on Poe: a chat break starts a new root by design.
 - `text.empty` on ChatGPT is most likely a finding about HAEVN's converter (it may read the text of a reasoning node from the wrong place), not about the site. Report it; do not treat it as the site being down.
 - `roles.not-alternating` counts only two of your own messages in a row (a reply that was dropped). A model that answers in several steps, as ChatGPT does, is not one.
+
+## Read the extension's log
+
+`haevn logs` reads the extension's recent log entries from the terminal, so a sync or a health run can be checked without copying the console by hand:
+
+```bash
+haevn logs -n 200 --level warn                 # the newest warnings
+haevn logs --context background --match sync   # the service worker's entries that mention sync
+haevn logs -f json                             # the entries whole, with their data
+```
+
+`--level` keeps exactly one level, so `warn` leaves out the errors. `--match` is a case-insensitive substring. Log entries name a chat by its id and a provider by its name, but some carry text too (a chat title, a search query, a part of a reply), so read them before you share them.
 
 ## Tips
 

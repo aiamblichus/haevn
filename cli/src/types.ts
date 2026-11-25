@@ -50,6 +50,7 @@ export type CliRequest =
   | { id: string; action: "setMetadata"; chatId: string; metadata: MetadataUpdate }
   | { id: string; action: "generateMetadata"; chatId: string }
   | { id: string; action: "health"; options?: HealthOptions }
+  | { id: string; action: "logs"; options?: LogsOptions }
   | { id: string; action: "backupInfo" }
   | { id: string; action: "backupList"; after?: string; limit: number }
   | { id: string; action: "restoreBegin"; chats: number }
@@ -159,6 +160,30 @@ export interface HealthOptions {
   timeoutMs?: number;
   /** The limit for the whole run, in ms. */
   totalMs?: number;
+}
+
+/** What `haevn logs` asks the extension for: the level and context are exact, the match a substring. */
+export interface LogsOptions {
+  /** The newest entries to answer, 1 to 1000 (default 200). */
+  limit?: number;
+  level?: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  context?: string;
+  match?: string;
+}
+
+/** One entry of the extension's log buffer, as `logs` answers it. */
+export interface LogEntry {
+  id: string;
+  /** Unix time in milliseconds. */
+  timestamp: number;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR";
+  message: string;
+  /** Where it was logged: `background`, `popup`, `offscreen`, `content-tab-<id>` and so on. */
+  context: string;
+  tabId?: number;
+  url?: string;
+  data?: unknown;
+  stack?: string;
 }
 
 export type HealthStatus =

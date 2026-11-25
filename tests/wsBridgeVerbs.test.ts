@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { LogEntry } from "../src/services/loggerService";
 
 // The bridge verbs that must do what the extension's own handlers do. Everything below the
 // bridge is real (Dexie on fake-indexeddb, the metadata service); the daemon is a fake socket.
@@ -566,5 +567,57 @@ describe("list pages over the bridge (HVN-14)", () => {
       expect(reply).toMatchObject({ success: false, code: "BAD_REQUEST" });
     }
     expect(getChatsMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("logs over the bridge answer the logger's own entries (HVN-156)", () => {
+  /** An entry as the logger keeps it: `n` makes each one its own. */
+  function entry(n: number): LogEntry {
+    return {
+      id: `e${n}`,
+      timestamp: Date.parse("2026-06-01T00:00:00Z") + n,
+      level: "INFO",
+      message: `entry ${n}`,
+      context: "background",
+    };
+  }
+
+  it("passes the level, context and match to the logger, and no other filter", async () => {
+    const bridge = await connectedBridge();
+    // after the bridge is loaded: the same module instance the bridge holds
+    const { loggerService } = await import("../src/services/loggerService");
+    const getLogs = vi.spyOn(loggerService, "getLogs");
+
+    await bridge.ask({
+      action: "logs",
+      options: { limit: 5, level: "WARN", context: "background", match: "sync" },
+    });
+
+    expect(getLogs).toHaveBeenCalledWith({ level: "WARN", context: "background", match: "sync" });
+  });
+
+  it("answers the newest `limit` entries, oldest first, and 200 when no limit is asked", async () => {
+    const bridge = await connectedBridge();
+    const { loggerService } = await import("../src/services/loggerService");
+    for (let n = 1; n <= 3; n++) loggerService.addEntry(entry(n));
+
+    const two = await bridge.ask({ action: "logs", options: { limit: 2 } });
+    const all = await bridge.ask({ action: "logs" });
+
+    expect(two).toMatchObject({ success: true });
+    expect(two.data).toEqual([entry(2), entry(3)]);
+    expect(all.data).toEqual([entry(1), entry(2), entry(3)]);
+  });
+
+  it("refuses a limit that is not a whole number from 1 to 1000, and a level it does not know", async () => {
+    const bridge = await connectedBridge();
+    const { loggerService } = await import("../src/services/loggerService");
+    const getLogs = vi.spyOn(loggerService, "getLogs");
+
+    for (const options of [{ limit: 0 }, { limit: 1.5 }, { limit: 1001 }, { level: "warn" }]) {
+      const reply = await bridge.ask({ action: "logs", options });
+      expect(reply).toMatchObject({ success: false, code: "BAD_REQUEST" });
+    }
+    expect(getLogs).not.toHaveBeenCalled();
   });
 });

@@ -54,6 +54,7 @@ import {
 } from "../services/backup/backupRead";
 import { BACKUP_PAGE_MAX, BackupError } from "../services/backup/format";
 import type { ChatMetadataRecord } from "../services/db";
+import { type LogEntry, type LogFilter, loggerService } from "../services/loggerService";
 import * as MetadataRepository from "../services/metadataRepository";
 import { generateOnRequest, setManualMetadata } from "../services/metadataService";
 import { SearchQueryError } from "../services/searchQuery";
@@ -116,6 +117,7 @@ type WsRequest =
   | { id: string; action: "setMetadata"; chatId: string; metadata: WsMetadataUpdate }
   | { id: string; action: "generateMetadata"; chatId: string }
   | { id: string; action: "health"; options?: WsHealthOptions }
+  | { id: string; action: "logs"; options?: WsLogsOptions }
   | { id: string; action: "backupInfo" }
   | { id: string; action: "backupList"; after?: string; limit: number }
   | { id: string; action: "backupChat"; chatId: string; pipeId: string }
@@ -170,6 +172,19 @@ interface WsListOptions {
    * of canonical keys
    */
   includeMetadata?: WsListMetadataKey[];
+}
+
+type WsLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
+
+/**
+ * What `haevn logs` may ask for: the service's filter (the level and the context are exact, the
+ * match is a case-insensitive substring) and how many of the newest entries to answer.
+ */
+interface WsLogsOptions {
+  limit?: number;
+  level?: WsLogLevel;
+  context?: string;
+  match?: string;
 }
 
 type WsExporterId = "haevn_json" | "haevn_markdown" | "pi_session_jsonl";
@@ -668,6 +683,8 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
         return await handleGenerateMetadata(id, req);
       case "health":
         return await handleHealth(id, req);
+      case "logs":
+        return await handleLogs(id, req);
       case "backupInfo":
         return await handleBackupInfo(id);
       case "backupList":
@@ -1064,6 +1081,48 @@ async function handleHealth(
     }
     throw err;
   }
+}
+
+/** The most entries `haevn logs` may ask for: the size of the logger's buffer by default. */
+const LOGS_MAX_LIMIT = 1000;
+const LOGS_DEFAULT_LIMIT = 200;
+const LOG_LEVELS: readonly WsLogLevel[] = ["DEBUG", "INFO", "WARN", "ERROR"];
+
+/**
+ * `haevn logs` (HVN-156): the same read as the extension's `getLogs` message (haevnDebug.getLogs),
+ * through the same service, then the newest `limit` entries, oldest first. Some entries carry text
+ * (a chat title, a search query, part of a reply), so the answer is as private as the log.
+ */
+async function handleLogs(
+  id: string,
+  req: Extract<WsRequest, { action: "logs" }>,
+): Promise<WsResponse<LogEntry[]>> {
+  const { options = {} } = req;
+  const limit = options.limit ?? LOGS_DEFAULT_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > LOGS_MAX_LIMIT) {
+    return {
+      id,
+      success: false,
+      error: `limit must be a whole number, 1 to ${LOGS_MAX_LIMIT}`,
+      code: "BAD_REQUEST",
+    };
+  }
+  if (options.level !== undefined && !LOG_LEVELS.includes(options.level)) {
+    return {
+      id,
+      success: false,
+      error: "level must be DEBUG, INFO, WARN or ERROR",
+      code: "BAD_REQUEST",
+    };
+  }
+
+  const filter: LogFilter = {};
+  if (options.level !== undefined) filter.level = options.level;
+  if (options.context !== undefined) filter.context = options.context;
+  if (options.match !== undefined) filter.match = options.match;
+
+  const entries = loggerService.getLogs(filter);
+  return { id, success: true, data: entries.slice(-limit) };
 }
 
 /**
