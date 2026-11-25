@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { downloadUrlAttachment } from "../src/formatters";
 import type { BinaryContent, ImageResponsePart } from "../src/model/haevn_model";
 import {
   extractGeminiConversationTitle,
@@ -7,6 +8,8 @@ import {
 } from "../src/providers/gemini/extractor";
 import type { GeminiConversationData } from "../src/providers/gemini/model";
 import { transformGeminiToHaevn } from "../src/providers/gemini/transformer";
+import { saveChat } from "../src/services/chatPersistence";
+import { getDB } from "../src/services/db";
 import { log } from "../src/utils/logger";
 import { processExternalAssets } from "../src/utils/media_utils";
 import { originAndPath } from "../src/utils/network_utils";
@@ -63,7 +66,7 @@ function pageWith(html: string, pixels: string | null = PNG_DATA_URL): Document 
   for (const img of Array.from(doc.querySelectorAll("img")) as unknown as HTMLImageElement[]) {
     // domino resolves `src` against the page, and Chrome keeps a blob URL as it is
     Object.defineProperty(img, "src", { value: img.getAttribute("src") });
-    Object.defineProperty(img, "complete", { value: true });
+    Object.defineProperty(img, "complete", { value: true, configurable: true });
     Object.defineProperty(img, "naturalWidth", { value: 1024 });
     Object.defineProperty(img, "naturalHeight", { value: 1024 });
   }
@@ -157,13 +160,39 @@ describe("the extractor, on a page with a generated image", () => {
   });
 
   it("stops inlining when the chat's images would not fit one message", async () => {
-    const big = `data:image/png;base64,${"A".repeat(20 * 1024 * 1024)}`;
+    const big = `data:image/png;base64,${"A".repeat(15 * 1024 * 1024)}`;
     const [, assistant] = await extract(
       pageWith(USER_TURN("Draw it") + MODEL_TURN(BLOB_A, BLOB_B), big),
     );
 
-    // the first fits the 32 MB budget, the second does not and is kept as the blob URL
+    // the first fits the 28M-character budget, the second (30M together) does not: it keeps its blob URL
     expect(assistant.files.map((f) => f.url.slice(0, 10))).toEqual(["data:image", "blob:https"]);
+  });
+
+  it("keeps the blob URL when the canvas is past the browser's size limit (it answers data:,)", async () => {
+    const [, assistant] = await extract(
+      pageWith(USER_TURN("Draw it") + MODEL_TURN(BLOB_A), "data:,"),
+    );
+
+    expect(assistant.files.map((f) => f.url)).toEqual([BLOB_A]);
+  });
+
+  it("does not wait on an image that never decodes", async () => {
+    vi.useFakeTimers();
+    try {
+      const doc = pageWith(USER_TURN("Draw it") + MODEL_TURN(BLOB_A));
+      const img = doc.querySelector("generated-image img") as unknown as HTMLImageElement;
+      Object.defineProperty(img, "complete", { value: false, configurable: true });
+      Object.defineProperty(img, "decode", { value: () => new Promise(() => {}) });
+
+      const extraction = extract(doc);
+      await vi.advanceTimersByTimeAsync(6000);
+      const [, assistant] = await extraction;
+
+      expect(assistant.files.map((f) => f.url)).toEqual([BLOB_A]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("leaves a remote image's URL alone", async () => {
@@ -307,5 +336,72 @@ describe("processExternalAssets with a data: URL", () => {
   it("logs its type and not its content", () => {
     expect(originAndPath(PNG_DATA_URL)).toBe("data:image/png");
     expect(originAndPath("data:,hello")).toBe("data:");
+  });
+});
+
+describe("an image kept as a data: URL after a failed save (the fallback)", () => {
+  it("is exported whole, whatever its size (a base64 of a buffer past the stack's reach)", async () => {
+    const bytes = new Uint8Array(1_500_000).map((_, i) => i % 251);
+    let binary = "";
+    for (let at = 0; at < bytes.length; at += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+    }
+    const base64 = btoa(binary);
+
+    const downloaded = await downloadUrlAttachment(`data:image/png;base64,${base64}`, "image/png");
+
+    expect(downloaded).toMatchObject({ kind: "binary", media_type: "image/png" });
+    expect((downloaded as BinaryContent).data).toBe(base64);
+  });
+});
+
+describe("a re-sync over a chat that kept a broken image part", () => {
+  it("leaves one image part, the stored one", async () => {
+    const fs = new FakeOpfs();
+    fs.install();
+    const chatWith = (url: string): GeminiConversationData => ({
+      platform: "gemini",
+      url: "https://gemini.google.com/app/resync",
+      conversationId: "resync-1",
+      title: "Pictures",
+      messageCount: 2,
+      extractedAt: "2024-06-01T10:00:00.000Z",
+      messages: [
+        {
+          index: 1,
+          content: "Draw it",
+          timestamp: "2024-06-01T09:59:00.000Z",
+          localTime: "x",
+          role: "user",
+          files: [],
+        },
+        {
+          index: 2,
+          content: "Here is the picture.",
+          timestamp: "2024-06-01T10:00:00.000Z",
+          localTime: "x",
+          role: "assistant",
+          files: [{ url, name: ", AI generated", type: "image/png" }],
+        },
+      ],
+    });
+    const imageParts = async () => {
+      const rows = await getDB().chatMessages.where("chatId").equals("resync-1").toArray();
+      return rows.flatMap((row) =>
+        row.message.flatMap((m) =>
+          m.kind === "response"
+            ? m.parts.filter((p) => p.part_kind === "image-response").map((p) => p.content)
+            : [],
+        ),
+      );
+    };
+
+    // the first sync, as it ran before the fix: the blob could not be stored
+    await saveChat(await transformGeminiToHaevn(chatWith(BLOB_A), 7), {});
+    expect(await imageParts()).toMatchObject([{ kind: "image-url", url: BLOB_A }]);
+
+    await saveChat(await transformGeminiToHaevn(chatWith(PNG_DATA_URL), 7), {});
+
+    expect(await imageParts()).toMatchObject([{ kind: "binary", media_type: "image/png" }]);
   });
 });

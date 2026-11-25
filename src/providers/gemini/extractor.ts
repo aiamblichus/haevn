@@ -218,10 +218,19 @@ async function waitForGeminiTitle(): Promise<void> {
 
 /**
  * What one extraction may inline as data URLs, in characters. The chat travels from the page to the
- * service worker in one message, and Chrome refuses one past 64 MB; the text of the chat and the
- * rest of its data are well under 10 MB, so a chat of generated images stops inlining at this.
+ * service worker, and on to the offscreen document, as one message each time: Chrome refuses one
+ * past 64 MB, and `messageSafety` counts two bytes a character against 60 MB. 28M characters
+ * (about 15 generated images of 1024 px) stays under both with the chat's text beside them.
+ *
+ * Images past the budget, in page order (so the newest of a long image chat), keep their `blob:`
+ * URL: the sync stores that as an `image-url` part that will not load, as it did before inlining
+ * existed, and a re-sync does the same. A chat of more images than this needs smaller messages,
+ * not a bigger budget.
  */
-const INLINE_IMAGE_BUDGET_CHARS = 32 * 1024 * 1024;
+const INLINE_IMAGE_BUDGET_CHARS = 28 * 1024 * 1024;
+
+/** A blob is local, so a decode that takes longer is stuck; the extraction must not wait on it. */
+const IMAGE_DECODE_TIMEOUT_MS = 5000;
 
 interface InlineBudget {
   remaining: number;
@@ -243,7 +252,13 @@ function fileTypeOf(src: string): string {
  */
 async function drawToDataUrl(img: HTMLImageElement): Promise<string | null> {
   try {
-    if (!img.complete) await img.decode();
+    if (!img.complete) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("decode timed out")), IMAGE_DECODE_TIMEOUT_MS);
+      });
+      await Promise.race([img.decode(), timedOut]).finally(() => clearTimeout(timer));
+    }
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
     if (!width || !height) return null;
@@ -253,7 +268,9 @@ async function drawToDataUrl(img: HTMLImageElement): Promise<string | null> {
     const context = canvas.getContext("2d");
     if (!context) return null;
     context.drawImage(img, 0, 0);
-    return canvas.toDataURL("image/png");
+    const dataUrl = canvas.toDataURL("image/png");
+    // A canvas past the browser's size limit answers "data:," (an empty file), not an error
+    return dataUrl.startsWith("data:image/png") ? dataUrl : null;
   } catch (error) {
     log.warn("[Gemini] Could not read a blob image from the page:", error);
     return null;
