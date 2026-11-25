@@ -263,6 +263,16 @@ function inferMediaTypeFromBinary(
   return content.media_type || "application/octet-stream";
 }
 
+/** Base64 of the bytes, in slices: spreading a whole buffer into `fromCharCode` overflows the stack. */
+function bytesToBase64(bytes: Uint8Array): string {
+  const slice = 0x8000;
+  let binary = "";
+  for (let at = 0; at < bytes.length; at += slice) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + slice));
+  }
+  return btoa(binary);
+}
+
 /**
  * Download URL-based attachment and convert to binary
  */
@@ -278,7 +288,7 @@ export async function downloadUrlAttachment(
     }
     const blob = await response.blob();
     const arrayBuffer = await blob.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    const base64 = bytesToBase64(new Uint8Array(arrayBuffer));
     return {
       kind: "binary",
       data: base64,

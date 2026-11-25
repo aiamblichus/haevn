@@ -766,3 +766,68 @@ describe("a chat whose messages have not moved to the table yet (HVN-31)", () =>
     );
   });
 });
+
+// ---- HVN-158: an attachment kept as a URL ------------------------------------------------------
+
+/** A chat "u0" with one user message holding one URL attachment. */
+function seedUrlAttachmentChat(url: string): string[] {
+  chatRows.set("u0", {
+    id: "u0",
+    source: "gemini",
+    sourceId: "s-u0",
+    title: "u0",
+    messages: {},
+  } as unknown as Chat);
+  chatMessageRows.set("u0", [
+    {
+      id: "m1",
+      message: [
+        {
+          kind: "request",
+          parts: [{ part_kind: "user-prompt", content: [{ kind: "image-url", url }] }],
+        },
+      ],
+    },
+  ]);
+  return ["u0"];
+}
+
+describe("a URL attachment in a bulk export (HVN-158)", () => {
+  it("logs a failed attachment's origin and path, not its URL", async () => {
+    const { log } = await import("../src/utils/logger");
+    await loadWorker();
+    vi.mocked(log.warn).mockClear();
+    const SECRET = "SENTINEL-HVN158";
+    const fetched = vi.spyOn(globalThis, "fetch");
+    fetched.mockResolvedValue(new Response("", { status: 404, statusText: "Not Found" }));
+    const ids = seedUrlAttachmentChat(`https://files.example.test/a/b.png?token=${SECRET}`);
+
+    await send(startMessage("r1", "e1", ids));
+    fetched.mockRestore();
+
+    const logged = vi
+      .mocked(log.warn)
+      .mock.calls.map((call) =>
+        call.map((a) => (a instanceof Error ? `${a.message}\n${a.stack}` : String(a))).join(" "),
+      );
+    // the failure is logged, with where the file was, and nothing of its query
+    expect(logged.some((line) => line.includes("https://files.example.test/a/b.png"))).toBe(true);
+    expect(logged.filter((line) => line.includes(SECRET))).toEqual([]);
+  });
+
+  it("stages an image kept as a data: URL, whatever its size", async () => {
+    await loadWorker();
+    const bytes = new Uint8Array(1_000_000).map((_, i) => i % 251);
+    let binary = "";
+    for (let at = 0; at < bytes.length; at += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+    }
+    const ids = seedUrlAttachmentChat(`data:image/png;base64,${btoa(binary)}`);
+
+    await send(startMessage("r1", "e1", ids));
+
+    expect(manifestLines("e1", "media")).toMatchObject([
+      { chatId: "u0", size: 1_000_000 },
+    ]);
+  });
+});

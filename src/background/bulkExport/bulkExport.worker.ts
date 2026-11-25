@@ -32,6 +32,7 @@ import {
 } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import { charsOf, messageShape } from "../../utils/logShape";
+import { originAndPath } from "../../utils/network_utils";
 import {
   createWritableStream,
   getFile,
@@ -167,7 +168,7 @@ async function stageAttachment(
   const urlContent = attachment.content as { url: string };
   const downloaded = await downloadUrlAttachment(urlContent.url, attachment.mediaType);
   if (!downloaded) {
-    throw new Error(`Failed to download attachment from ${urlContent.url}`);
+    throw new Error(`Failed to download attachment from ${originAndPath(urlContent.url)}`);
   }
   const bytes = await stageBinaryContent(exportId, chatId, filename, downloaded.data, true);
   return { bytes, mediaType: downloaded.media_type };

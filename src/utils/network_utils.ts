@@ -176,8 +176,12 @@ function withAttempts(
   return head ? `${head} ${summary}` : summary;
 }
 
-/** The request's origin and path. A relative URL is cut at its query string and fragment. */
+/**
+ * The request's origin and path. A relative URL is cut at its query string and fragment. A `data:`
+ * URL is its type alone: the rest is the content itself.
+ */
 export function originAndPath(url: string): string {
+  if (url.startsWith("data:")) return url.split(/[;,]/, 1)[0];
   try {
     const parsed = new URL(url);
     return `${parsed.origin}${parsed.pathname}`;

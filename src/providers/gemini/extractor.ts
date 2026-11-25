@@ -122,6 +122,21 @@ export function extractGeminiConversationId(): string {
   }
 }
 
+/**
+ * Text the page keeps for a screen reader and shows no one. A user turn carries its prompt a
+ * second time in one of these, behind the words "You said"; the visible lines are the prompt.
+ */
+const SCREEN_READER_ONLY = ".cdk-visually-hidden, .screen-reader-user-query-label";
+
+/** The element's text without its screen-reader-only labels. */
+function visibleTextOf(element: Element): string {
+  const clone = element.cloneNode(true) as Element;
+  clone.querySelectorAll(SCREEN_READER_ONLY).forEach((el) => {
+    el.remove();
+  });
+  return clone.textContent ?? "";
+}
+
 // Title Extraction
 export function extractGeminiConversationTitle(): string {
   // Primary: Try conversation-actions header (current Gemini UI)
@@ -156,7 +171,9 @@ export function extractGeminiConversationTitle(): string {
   const firstUserQuery = document.querySelector(
     "user-query div.query-content, user-query .query-text",
   );
-  const normalizedPrompt = firstUserQuery?.textContent?.replace(/\s+/g, " ").trim() || "";
+  const normalizedPrompt = (firstUserQuery ? visibleTextOf(firstUserQuery) : "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (normalizedPrompt) {
     return normalizedPrompt.substring(0, 100).trim();
   }
@@ -198,20 +215,25 @@ async function waitForGeminiTitle(): Promise<void> {
 }
 
 // Image extraction functions
-function extractUserImages(element: Element): GeminiFileInfo[] {
-  const files: GeminiFileInfo[] = [];
-  const images = element.querySelectorAll("img");
-  images.forEach((img) => {
-    const src = (img as HTMLImageElement).src;
-    if (src) {
-      files.push({
-        url: src,
-        name: (img as HTMLImageElement).alt || undefined,
-        type: "image",
-      });
-    }
-  });
-  return files;
+
+/**
+ * What one extraction may inline as data URLs, in characters. The chat travels from the page to the
+ * service worker, and on to the offscreen document, as one message each time: Chrome refuses one
+ * past 64 MB, and `messageSafety` counts two bytes a character against 60 MB. 28M characters
+ * (about 15 generated images of 1024 px) stays under both with the chat's text beside them.
+ *
+ * Images past the budget, in page order (so the newest of a long image chat), keep their `blob:`
+ * URL: the sync stores that as an `image-url` part that will not load, as it did before inlining
+ * existed, and a re-sync does the same. A chat of more images than this needs smaller messages,
+ * not a bigger budget.
+ */
+const INLINE_IMAGE_BUDGET_CHARS = 28 * 1024 * 1024;
+
+/** A blob is local, so a decode that takes longer is stuck; the extraction must not wait on it. */
+const IMAGE_DECODE_TIMEOUT_MS = 5000;
+
+interface InlineBudget {
+  remaining: number;
 }
 
 function contentTypeFromDataUrl(dataUrl: string): string | undefined {
@@ -219,10 +241,85 @@ function contentTypeFromDataUrl(dataUrl: string): string | undefined {
   return match?.[1];
 }
 
+function fileTypeOf(src: string): string {
+  return src.startsWith("data:") ? contentTypeFromDataUrl(src) || "image/png" : "image";
+}
+
+/**
+ * The image drawn on a canvas, as a PNG data URL; null when it is not loaded or cannot be drawn.
+ * Pixels are the one thing of a `blob:` image still readable from outside the page: its CSP
+ * refuses a `fetch` of the blob, and the URL means nothing once the page is gone.
+ */
+async function drawToDataUrl(img: HTMLImageElement): Promise<string | null> {
+  try {
+    if (!img.complete) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("decode timed out")), IMAGE_DECODE_TIMEOUT_MS);
+      });
+      await Promise.race([img.decode(), timedOut]).finally(() => clearTimeout(timer));
+    }
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    if (!width || !height) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.drawImage(img, 0, 0);
+    const dataUrl = canvas.toDataURL("image/png");
+    // A canvas past the browser's size limit answers "data:," (an empty file), not an error
+    return dataUrl.startsWith("data:image/png") ? dataUrl : null;
+  } catch (error) {
+    log.warn("[Gemini] Could not read a blob image from the page:", error);
+    return null;
+  }
+}
+
+/**
+ * Where the image's bytes can be had once the page is gone. A `blob:` source becomes a data URL
+ * (the sync stores it like any download, with no tab); another source is returned as it is. A blob
+ * that cannot be read, or that no longer fits the budget, is returned as it is too: the sync then
+ * keeps the URL, as it did before.
+ */
+async function inlineBlobImage(
+  img: HTMLImageElement,
+  src: string,
+  budget: InlineBudget,
+): Promise<string> {
+  if (!src.startsWith("blob:")) return src;
+  const dataUrl = await drawToDataUrl(img);
+  if (!dataUrl) return src;
+  if (dataUrl.length > budget.remaining) {
+    log.warn("[Gemini] A blob image is left out of the sync: this chat's inline images are full");
+    return src;
+  }
+  budget.remaining -= dataUrl.length;
+  return dataUrl;
+}
+
+async function extractUserImages(
+  element: Element,
+  budget: InlineBudget,
+): Promise<GeminiFileInfo[]> {
+  const files: GeminiFileInfo[] = [];
+  for (const imageNode of Array.from(element.querySelectorAll("img"))) {
+    const img = imageNode as HTMLImageElement;
+    if (!img.src) continue;
+    const url = await inlineBlobImage(img, img.src, budget);
+    files.push({ url, name: img.alt || undefined, type: fileTypeOf(url) });
+  }
+  return files;
+}
+
 /**
  * Extract images from assistant message using URL-only extraction.
  */
-async function extractAssistantImages(element: Element): Promise<GeminiFileInfo[]> {
+async function extractAssistantImages(
+  element: Element,
+  budget: InlineBudget,
+): Promise<GeminiFileInfo[]> {
   const files: GeminiFileInfo[] = [];
   const seen = new Set<string>();
 
@@ -236,10 +333,11 @@ async function extractAssistantImages(element: Element): Promise<GeminiFileInfo[
     if (!src || seen.has(src)) continue;
     seen.add(src);
 
+    const url = await inlineBlobImage(imgElement, src, budget);
     files.push({
-      url: src,
+      url,
       name: imgElement.alt || "generated-image",
-      type: src.startsWith("data:") ? contentTypeFromDataUrl(src) || "image/png" : "image",
+      type: fileTypeOf(url),
     });
     log.info("[Gemini] Extracted generated image URL");
   }
@@ -258,10 +356,11 @@ async function extractAssistantImages(element: Element): Promise<GeminiFileInfo[
 
     if (!img.closest("generated-image")) {
       seen.add(src);
+      const url = await inlineBlobImage(img, src, budget);
       files.push({
-        url: src,
+        url,
         name: img.alt || undefined,
-        type: src.startsWith("data:") ? contentTypeFromDataUrl(src) || "image/png" : "image",
+        type: fileTypeOf(url),
       });
     }
   }
@@ -282,6 +381,7 @@ export async function extractGeminiMessages(): Promise<GeminiMessage[]> {
     }
 
     const messages: GeminiMessage[] = [];
+    const budget: InlineBudget = { remaining: INLINE_IMAGE_BUDGET_CHARS };
     let chatIndex = 1;
     // Track whether we've passed a deep-research plan response so we can attach
     // the report to the *completion* response that follows it, not the plan itself.
@@ -296,7 +396,7 @@ export async function extractGeminiMessages(): Promise<GeminiMessage[]> {
       if (tagName === "user-query") {
         author = "user";
         messageContentElem = item.querySelector("div.query-content") as HTMLElement | null;
-        files = extractUserImages(item);
+        files = await extractUserImages(item, budget);
       } else if (tagName === "model-response") {
         author = "assistant";
         // Try multiple selectors for the main content - Gemini's DOM structure varies.
@@ -322,7 +422,7 @@ export async function extractGeminiMessages(): Promise<GeminiMessage[]> {
             }, nonThoughtContent[0]);
           }
         }
-        files = await extractAssistantImages(item);
+        files = await extractAssistantImages(item, budget);
       }
 
       // Extract thinking content FIRST (assistant only) - do this before skipping
@@ -353,9 +453,16 @@ export async function extractGeminiMessages(): Promise<GeminiMessage[]> {
 
         // Also remove any hidden elements that Gemini might use for metadata or duplication
         const hiddenElements = contentClone.querySelectorAll(
-          "[hidden], [aria-hidden='true'], [style*='display: none']",
+          `[hidden], [aria-hidden='true'], [style*='display: none'], ${SCREEN_READER_ONLY}`,
         );
         hiddenElements.forEach((el) => {
+          el.remove();
+        });
+
+        // An image is a file of the message (it is stored, and the viewer shows it among the
+        // attachments), not text: left in, turndown writes it as `![alt](src)`, and a `blob:`
+        // src means nothing outside the page.
+        contentClone.querySelectorAll("generated-image, img[src^='blob:']").forEach((el) => {
           el.remove();
         });
 
