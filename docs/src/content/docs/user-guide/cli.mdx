@@ -284,7 +284,7 @@ haevn logs --context background --match sync   # the service worker's entries th
 haevn logs -f json                             # the entries whole, with their data
 ```
 
-`--level` keeps that level and the ones above it, so `warn` gives warnings and errors, and `debug` gives everything. `--match` is a case-insensitive substring. A log line names a chat by its id and a provider by its name, but until HVN-157 lands a line can also carry a chat title or some chat text, so read the output before you share it.
+`--level` keeps that level and the ones above it, so `warn` gives warnings and errors, and `debug` gives everything. `--match` is a case-insensitive substring. A log line names a chat by its id and a provider by its name, and gives sizes and counts instead of your chat text, titles or search queries; a provider's own short error message can still appear.
 
 ## Tips
 

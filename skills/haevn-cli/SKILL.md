@@ -267,7 +267,7 @@ haevn logs -f json                              # the entries as the extension h
 - **`--level`**: that level and the ones above it. `debug` gives everything, `warn` gives WARN and ERROR, `error` gives ERROR only. The level filter is the same one `haevnDebug.getLogs` uses.
 - **`--context`**: an exact context name (`background`, `popup`, `offscreen`, `content-tab-<id>`).
 - **`--match`**: a case-insensitive substring of the message, the context or the data.
-- **Private, until HVN-157 lands.** A line can carry a chat title or some chat text (a search query, part of a reply) as well as the chat's id and the provider's name. Read the output before it goes into a ticket or a chat. HVN-157 takes the text out of the log lines.
+- **No chat content.** A line names a chat by its id and a provider by its name, with sizes and counts instead of chat text, titles, search queries, file names or prompts (HVN-157). A provider's own short error message can still appear: glance at the output before it goes into a ticket.
 - The buffer is short: the extension keeps the last 1000 entries by default, so an older sync may have scrolled out. Exit code 1 when the daemon or the extension fails; 0 otherwise, also when nothing matches.
 
 ---

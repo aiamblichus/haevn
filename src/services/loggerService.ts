@@ -177,7 +177,8 @@ class LoggerService {
       message: logData.message,
       context,
       tabId: sender.tab?.id,
-      url: sender.url,
+      // Page URL without its query or fragment: a search page's query string holds typed words (HVN-157).
+      url: sender.url?.split(/[?#]/)[0],
       data: logData.data,
       stack: logData.stack,
     };

@@ -788,6 +788,18 @@ describe("no log line carries chat content (HVN-157)", () => {
     expect(leaksIn(await persistedEntries())).toEqual([]);
   });
 
+  it("keeps a page URL's query and fragment out of a content script's entry", async () => {
+    const entries = await captured(() => {
+      loggerService.addLog({ level: "INFO", message: "a content-script line" }, {
+        tab: { id: 3 } as chrome.tabs.Tab,
+        url: `https://chat.example.com/search?q=${SENTINEL}#${SENTINEL}`,
+      } as chrome.runtime.MessageSender);
+    });
+
+    expect(entries.map((e) => e.url)).toEqual(["https://chat.example.com/search"]);
+    expect(leaksIn(await persistedEntries())).toEqual([]);
+  });
+
   it("sees a leak when there is one (the check can fail)", async () => {
     const entries = await captured(() => {
       log.info("a title in the data", { title: `${SENTINEL} title` });
