@@ -18,7 +18,8 @@ describe("logShape keeps quoted content out (HVN-157)", () => {
   });
 
   it("hides the text a JSON.parse error quotes, newline included", () => {
-    const shape = JSON.stringify(errorShape(parseError(`Dear ${SENTINEL}\nI am sad`)));
-    expect(shape).not.toContain(SENTINEL);
+    // V8 quotes the first 10 characters of the text it could not parse: put the secret in them.
+    const shape = JSON.stringify(errorShape(parseError("a\nSECRETX tail")));
+    expect(shape).not.toContain("SECRETX");
   });
 });
