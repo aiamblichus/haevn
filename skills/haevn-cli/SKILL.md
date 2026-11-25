@@ -252,6 +252,26 @@ haevn restore ~/backups/haevn --yes         # no question: needed when there is 
 
 ---
 
+## Logs — the extension's log
+
+`haevn logs` reads the extension's log buffer, the service worker's recent entries, from the terminal. After a sync or a health run, read the log with it instead of asking the user to paste `haevnDebug.getLogs()` from the archive page's console.
+
+```bash
+haevn logs -n 200 --level warn                  # the newest WARN and ERROR entries
+haevn logs --context background --match sync   # the service worker's entries that mention sync
+haevn logs -f json                              # the entries as the extension holds them, with data and stacks
+```
+
+- **Output:** one line per entry, `timestamp level context message`, oldest first. `-f json` gives each entry whole.
+- **`-n`** (or `--limit`): the newest entries, 1 to 1000; the default is 200.
+- **`--level`**: that level and the ones above it. `debug` gives everything, `warn` gives WARN and ERROR, `error` gives ERROR only. The level filter is the same one `haevnDebug.getLogs` uses.
+- **`--context`**: an exact context name (`background`, `popup`, `offscreen`, `content-tab-<id>`).
+- **`--match`**: a case-insensitive substring of the message, the context or the data.
+- **Private, until HVN-157 lands.** A line can carry a chat title or some chat text (a search query, part of a reply) as well as the chat's id and the provider's name. Read the output before it goes into a ticket or a chat. HVN-157 takes the text out of the log lines.
+- The buffer is short: the extension keeps the last 1000 entries by default, so an older sync may have scrolled out. Exit code 1 when the daemon or the extension fails; 0 otherwise, also when nothing matches.
+
+---
+
 ## Common agent workflows
 
 ### Investigate a user-reported issue in a specific thread

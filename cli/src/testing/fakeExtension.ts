@@ -1,14 +1,16 @@
 /**
- * A stand-in for the extension, for the tests of `haevn backup` and `haevn restore`: it connects to a
- * real daemon over a real WebSocket, answers the backup actions from an in-memory archive, and sends
- * each record or file to the daemon's pipe with a real HTTP request, as the extension's `sendToPipe`
- * does. The restore actions read the CLI's upload from the pipe, as `readFromPipe` does, and keep
- * what they received. A test can make it fail in the ways the real one can.
+ * A stand-in for the extension, for the tests of `haevn backup`, `haevn restore` and `haevn logs`: it
+ * connects to a real daemon over a real WebSocket, answers the backup actions from an in-memory
+ * archive, and sends each record or file to the daemon's pipe with a real HTTP request, as the
+ * extension's `sendToPipe` does. The restore actions read the CLI's upload from the pipe, as
+ * `readFromPipe` does, and keep what they received. `logs` answers the entries it was given and
+ * keeps the options each request carried. A test can make it fail in the ways the real one can.
  */
 
 import { randomBytes } from "node:crypto";
 import * as http from "node:http";
 import WebSocket from "ws";
+import type { LogEntry } from "../types.js";
 
 export interface FakeMedia {
   name: string;
@@ -64,6 +66,8 @@ export interface FakeExtensionOptions {
     /** The session is gone when the next restore action comes (the extension was idle too long). */
     sessionLost?: boolean;
   };
+  /** The entries `logs` answers with, whole: the fake does not filter them or cut them to the limit. */
+  logs?: LogEntry[];
 }
 
 export type Frame = { id: string; action: string; [field: string]: unknown };
@@ -85,6 +89,8 @@ export class FakeExtension {
   private session = false;
   /** The restore counter `backupInfo` answers; null when the extension predates it (HVN-144). */
   restoreEpoch: number | null;
+  /** The options of every `logs` request, in the order they came. */
+  readonly logRequests: Array<Record<string, unknown>> = [];
 
   constructor(
     private readonly port: number,
@@ -268,6 +274,10 @@ export class FakeExtension {
             ? { indexError: this.options.restore.indexError }
             : {},
         });
+        return;
+      case "logs":
+        this.logRequests.push((frame.options as Record<string, unknown> | undefined) ?? {});
+        this.reply(ws, frame, { success: true, data: this.options.logs ?? [] });
         return;
       default:
         this.fail(ws, frame, "UNKNOWN_ACTION", "Unknown action");

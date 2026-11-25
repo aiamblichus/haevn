@@ -247,6 +247,28 @@ Notes:
 - The run takes seconds to minutes and refuses to start while a sync, import or export holds the extension's operation lock.
 - The same operation runs from the extension: `haevnDebug.providerHealth()` on the Options page.
 
+### `logs` - Read the extension's log
+
+```bash
+haevn logs -n 200 --level warn                 # the newest WARN and ERROR entries
+haevn logs --context background --match sync   # the service worker's entries that mention sync
+haevn logs -f json                             # the entries as the extension holds them
+```
+
+Reads the extension's log buffer, the service worker's recent entries, through the daemon: the same entries as `haevnDebug.getLogs()` on the Options page, for an agent that cannot reach that page. The text output is one line per entry, `timestamp level context message`, oldest first.
+
+Options:
+- `-n, --limit <n>` - The newest entries to show, 1 to 1000 (default 200)
+- `--level <level>` - Only entries at this level and above: `debug` (every entry), `info`, `warn` or `error`. `--level warn` gives WARN and ERROR, and leaves out INFO and DEBUG
+- `--context <name>` - Only entries logged in this context, by exact name (`background`, `popup`, `offscreen`, `content-tab-<id>`)
+- `--match <text>` - Only entries whose message, context or data contains the text (any case)
+- `-f, --format <fmt>` - Output format (text, json); json gives each entry whole, with its data and stack
+
+Notes:
+- **Private, until HVN-157 lands.** A line can carry a chat title or some chat text (a search query, a part of a reply or of a system prompt) as well as the chat's id and the provider's name. Read the output before it goes into a ticket. HVN-157 takes the text out of the log lines.
+- The buffer keeps the last 1000 entries by default, so an older sync may have scrolled out of it.
+- Exit code 1 when the daemon or the extension fails; 0 otherwise, also when nothing matches.
+
 ### `backup` - Back up the whole archive into a directory
 
 ```bash

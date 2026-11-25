@@ -190,7 +190,8 @@ class LoggerService {
   }
 
   /**
-   * Get logs with optional filtering.
+   * Get logs with optional filtering. `level` keeps that level and the ones above it, by LogLevel
+   * rank: `WARN` gives WARN and ERROR, and `DEBUG` gives everything.
    */
   getLogs(filter?: LogFilter): LogEntry[] {
     let filtered = [...this.logs];
@@ -200,7 +201,8 @@ class LoggerService {
     }
 
     if (filter?.level) {
-      filtered = filtered.filter((log) => log.level === filter.level);
+      const minimum = LogLevel[filter.level];
+      filtered = filtered.filter((log) => LogLevel[log.level] >= minimum);
     }
 
     if (filter?.since !== undefined) {
