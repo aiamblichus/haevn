@@ -15,6 +15,20 @@ declare function require(id: "@joplin/turndown-plugin-gfm"): { gfm: unknown };
 
 const TurndownService = require("turndown");
 
+// Gemini's sidebar, as the chat-list extraction drives it (HVN-16). Gemini changes these now
+// and then: this block is the one place to edit. Collapsed, the history scroller is
+// overflow-y: hidden with the class below and cannot grow, so the extractor opens the sidebar and,
+// because Gemini remembers the state per account, closes it again if it was the one that opened it.
+const GEMINI_SIDEBAR = {
+  scrollBlockedClass: "disable-scroll",
+  openButton: 'button[aria-label="Open sidebar"]',
+  // The same button in the collapsed rail. Expanded, that test id is "New chat": click it only
+  // when the scroller is already known to be blocked.
+  openButtonByTestId: '[data-test-id="side-nav-sparkle-button"]',
+  closeButton: 'button[aria-label="Close sidebar"]',
+  openTimeoutMs: 3000,
+} as const;
+
 export interface ExportOptions {
   customTitle?: string;
   includeMetadata?: boolean;
@@ -857,7 +871,45 @@ export function geminiChatIdOf(
   return bareConversationId(href?.match(/\/app\/([A-Za-z0-9_-]+)(?:[/?#]|$)/)?.[1]);
 }
 
+/**
+ * Every chat id in Gemini's sidebar. Opens a collapsed sidebar to list it and leaves the sidebar
+ * as it found it: a sync must not change the user's setting (HVN-16).
+ */
 export async function extractGeminiChatIds(): Promise<string[]> {
+  const sidebar = { openedByUs: false };
+  try {
+    return await scrollSidebarForChatIds(sidebar);
+  } finally {
+    if (sidebar.openedByUs) closeGeminiSidebar();
+  }
+}
+
+/** Click the sidebar's Close button. Never throws: it runs in a finally. */
+function closeGeminiSidebar(): void {
+  try {
+    const closeButton = querySelectorAllDeep(GEMINI_SIDEBAR.closeButton)[0] as
+      | HTMLElement
+      | undefined;
+    if (!closeButton) {
+      log.warn("[Extractor] The sidebar was opened for the sync, but no Close button was found.");
+      return;
+    }
+    closeButton.click();
+    log.info("[Extractor] Closed the sidebar again.");
+  } catch (err: unknown) {
+    log.warn("[Extractor] Failed to close the sidebar:", err);
+  }
+}
+
+/** The scroller cannot scroll: Gemini's collapsed rail marks it overflow hidden and disable-scroll. */
+function isSidebarScrollBlocked(scroller: HTMLElement): boolean {
+  return (
+    getComputedStyle(scroller).overflowY === "hidden" ||
+    scroller.classList.contains(GEMINI_SIDEBAR.scrollBlockedClass)
+  );
+}
+
+async function scrollSidebarForChatIds(sidebar: { openedByUs: boolean }): Promise<string[]> {
   log.info("[Extractor] Starting chat ID extraction process...");
 
   const findSidebarHistoryScroller = (): HTMLElement | null => {
@@ -885,16 +937,31 @@ export async function extractGeminiChatIds(): Promise<string[]> {
   // containing the conversation history list.
   let scrollContainer = findSidebarHistoryScroller();
 
-  // If not found, try to open the sidebar first
-  if (!scrollContainer) {
-    const menuButton = (document.querySelector('[data-test-id="side-nav-menu-button"]') ||
-      document.querySelector("button.main-menu-button")) as HTMLElement | null;
-    if (menuButton) {
-      log.info("[Extractor] Sidebar may be closed. Clicking menu button to open it.");
-      menuButton.click();
-      await new Promise((resolve) => setTimeout(resolve, 1500)); // Wait for sidebar animation
+  // A collapsed sidebar cannot scroll, so scrolling it returns the first page only (HVN-16). Open
+  // it, and wait for the scroller to unblock. A scroller with no room to scroll while entries
+  // show is the same sign, but only a reason to click when the Open button is there to click.
+  const blocked = scrollContainer ? isSidebarScrollBlocked(scrollContainer) : true;
+  const noRoomToScroll =
+    !!scrollContainer &&
+    scrollContainer.scrollHeight <= scrollContainer.clientHeight &&
+    querySelectorAllDeep('[data-test-id="conversation"]').length > 0;
+  const openButton = (
+    blocked || noRoomToScroll
+      ? (querySelectorAllDeep(GEMINI_SIDEBAR.openButton)[0] ??
+        (blocked ? querySelectorAllDeep(GEMINI_SIDEBAR.openButtonByTestId)[0] : undefined))
+      : undefined
+  ) as HTMLElement | undefined;
+  if (openButton) {
+    log.info("[Extractor] The sidebar is collapsed. Clicking Open sidebar.");
+    openButton.click();
+    sidebar.openedByUs = true;
+    const deadline = Date.now() + GEMINI_SIDEBAR.openTimeoutMs;
+    while (Date.now() < deadline) {
       scrollContainer = findSidebarHistoryScroller();
+      if (scrollContainer && !isSidebarScrollBlocked(scrollContainer)) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    scrollContainer = findSidebarHistoryScroller();
   }
 
   if (!scrollContainer) {
@@ -902,6 +969,14 @@ export async function extractGeminiChatIds(): Promise<string[]> {
     // Not an empty list: a missing sidebar must not look like an account with no chats (HVN-116).
     throw new Error(
       "Gemini's chat list: the sidebar scroll container (infinite-scroller) was not found",
+    );
+  }
+  if (isSidebarScrollBlocked(scrollContainer)) {
+    // Scrolling it would return the first page as if it were the list (HVN-16, as HVN-116).
+    throw new Error(
+      sidebar.openedByUs
+        ? "Gemini's chat list: the sidebar did not become scrollable after Open sidebar was clicked"
+        : "Gemini's chat list: the sidebar is collapsed and its Open sidebar button was not found",
     );
   }
   log.info(
