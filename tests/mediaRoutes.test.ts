@@ -325,6 +325,24 @@ describe("a link kept on purpose (linkOnly)", () => {
     expect(countUnstoredMedia(chat)).toBe(0);
   });
 
+  it("never sends credentials to a host that only looks like Google's", async () => {
+    const fetchSpy = respondWith(200);
+    vi.stubGlobal("fetch", fetchSpy);
+    const lookalikes = [
+      "https://lh3.googleusercontent.com.evil.test/gg/abc",
+      "https://lh3.googleusercontent.com@evil.test/gg/abc",
+      "https://evil.test/lh3.googleusercontent.com/gg/abc",
+      "https://evil-googleusercontent.com/gg/abc",
+    ];
+
+    const chat = await transformGeminiToHaevn(
+      conversation(lookalikes.map((url) => ({ url, type: "image/jpeg" }))),
+    );
+
+    expect(userFiles(chat)).toEqual(lookalikes.map((url) => ({ kind: "image-url", url })));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("is not fetched, marked or counted by the generic caller either", async () => {
     const fetchSpy = respondWith(200);
     vi.stubGlobal("fetch", fetchSpy);
