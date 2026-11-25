@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { extractGeminiChatIds, geminiChatIdOf } from "../src/providers/gemini/extractor";
+import { log } from "../src/utils/logger";
 
 // Sidebar entries in the shape Gemini's /app page has now (HVN-116): the entry carries
 // data-conversation-id ("c_" and the id) and holds an <a href="/app/<id>">. No jslog. Ids are synthetic.
@@ -54,260 +55,248 @@ describe("geminiChatIdOf (HVN-116)", () => {
   });
 });
 
-describe("extractGeminiChatIds lists the sidebar (HVN-116)", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
+// The list RPC (HVN-16). Gemini removed the sidebar list; the extractor now posts the MaZiqc
+// batchexecute call that filled it, as ohm measured it live (HVN-16 comment 6). Everything below is
+// synthetic: ids, tokens and entry shapes only, no real titles.
 
-  it("returns the ids of the entries when they carry no jslog", async () => {
-    vi.useFakeTimers();
-    const entries = [
-      sidebarEntry({ "data-conversation-id": "c_0123456789abcdef" }, "/app/0123456789abcdef"),
-      sidebarEntry({ "data-conversation-id": "c_fedcba9876543210" }, "/app/fedcba9876543210"),
-    ];
-    stubSidebar(entries);
+const AT_TOKEN = "SYNTHETIC-AT-TOKEN-0000000000000000000000";
 
-    const pending = extractGeminiChatIds();
-    await vi.runAllTimersAsync();
-    await expect(pending).resolves.toEqual(["0123456789abcdef", "fedcba9876543210"]);
-  });
-
-  it("throws when the sidebar has entries and none carries an id, rather than returning []", async () => {
-    vi.useFakeTimers();
-    stubSidebar([sidebarEntry({}), sidebarEntry({ jslog: "c_0123456789abcdef" })]);
-    const outcome = extractGeminiChatIds().then(
-      () => null,
-      (err: unknown) => err,
-    );
-    await vi.runAllTimersAsync();
-    const err = await outcome;
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/2 chat entries but none carries a chat id/);
-  });
-
-  it("throws when the sidebar's scroll container is missing, rather than returning []", async () => {
-    stubSidebar([], { withScroller: false });
-    const outcome = extractGeminiChatIds().then(
-      () => null,
-      (err: unknown) => err,
-    );
-    const err = await outcome;
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/scroll container/);
-  });
-});
-
-/** A fake document: an expanded sidebar holding these entries, with its scroller unless told otherwise. */
-function stubSidebar(entries: Entry[], options: { withScroller?: boolean } = {}): void {
-  const scroller = {
-    tagName: "INFINITE-SCROLLER",
-    className: "",
-    id: "",
-    scrollHeight: 0,
-    clientHeight: 0,
-    scrollTop: 0,
-    classList: { contains: () => false },
-    querySelector: () => entries[0] ?? null,
-  };
-  vi.stubGlobal("getComputedStyle", () => ({ overflowY: "scroll" }));
-  vi.stubGlobal("document", {
-    querySelectorAll: (selector: string) => {
-      if (selector === "infinite-scroller") return options.withScroller === false ? [] : [scroller];
-      if (selector === '[data-test-id="conversation"]') return entries;
-      return [];
-    },
-    querySelector: () => null,
-  });
+/** A synthetic chat id of 16 characters from a number: 0 is "c_" and "0000000000000000". */
+function chatId(n: number): string {
+  return `c_${n.toString(16).padStart(16, "0")}`;
 }
 
-const OPEN_BUTTON = 'button[aria-label="Open sidebar"]';
-const SPARKLE_BUTTON = '[data-test-id="side-nav-sparkle-button"]';
-const CLOSE_BUTTON = 'button[aria-label="Close sidebar"]';
+/** One entry of a page: 22 slots, the id first, a title, then the rest null. */
+function listEntry(id: string): unknown[] {
+  const entry: unknown[] = new Array(22).fill(null);
+  entry[0] = id;
+  entry[1] = "synthetic title";
+  entry[5] = [1700000000, 0];
+  entry[9] = 1;
+  return entry;
+}
+
+/** A batchexecute response around an inner payload, chunk-framed the way Gemini frames it. */
+function frame(inner: string): string {
+  const first = JSON.stringify([
+    ["wrb.fr", "MaZiqc", inner, null, null, null, "generic"],
+    ["di", 12],
+    ["af.httprm", 11, "x", 1],
+  ]);
+  const second = JSON.stringify([["e", 4, null, null, 120]]);
+  return `)]}'\n\n${first.length}\n${first}\n${second.length}\n${second}`;
+}
+
+/** The response of one page of the list. */
+function page(ids: string[], nextToken: string | null): string {
+  return frame(JSON.stringify([null, nextToken, ids.map(listEntry)]));
+}
+
+interface Posted {
+  url: string;
+  init: RequestInit;
+  form: URLSearchParams;
+  /** The RPC's own payload: [count, token, flags]. */
+  rpc: [number, string | null, unknown];
+}
 
 /**
- * A fake Gemini sidebar that behaves as ohm measured it live (HVN-16): collapsed, the scroller is
- * overflow hidden with class disable-scroll and scrolling it loads nothing; expanded, each scroll to
- * the bottom loads another page. The sparkle button reads "Gemini - new chat" in both states (read
- * live 2026-11-25), so it is never an opener; the toggle reads "Close sidebar" expanded. Ids are
- * synthetic.
+ * Stub the page and its network: a document whose inline scripts are these, a rail of these chat
+ * ids, and a fetch that answers each call with the next response (a string is a 200, a number is
+ * that status). Returns what was posted.
  */
-function stubGeminiSidebar(options: {
-  expanded: boolean;
-  total?: number;
-  pageSize?: number;
-  /** Open sidebar is clicked and nothing changes. */
-  neverExpands?: boolean;
-}) {
-  const total = options.total ?? 50;
-  const pageSize = options.pageSize ?? 20;
-  const first = 7;
-  const all = Array.from({ length: total }, (_, i) => {
-    const id = i.toString(16).padStart(16, "0");
-    return sidebarEntry({ "data-conversation-id": `c_${id}` }, `/app/${id}`);
-  });
-  const state = {
-    expanded: options.expanded,
-    loaded: first,
-    openClicks: 0,
-    closeClicks: 0,
-    newChatClicks: 0,
-    scrollsWhileCollapsed: 0,
-  };
-  const open = {
-    click: () => {
-      state.openClicks++;
-      if (!options.neverExpands) state.expanded = true;
-    },
-  };
-  const close = {
-    click: () => {
-      state.closeClicks++;
-      state.expanded = false;
-    },
-  };
-  const newChat = { click: () => state.newChatClicks++ };
-  const scroller = {
-    tagName: "INFINITE-SCROLLER",
-    className: "",
-    id: "",
-    clientHeight: 500,
-    classList: { contains: (name: string) => name === "disable-scroll" && !state.expanded },
-    querySelector: () => all[0],
-    get scrollHeight() {
-      return state.expanded ? 100 + state.loaded * 50 : 500;
-    },
-    get scrollTop() {
-      return 0;
-    },
-    set scrollTop(_value: number) {
-      if (!state.expanded) {
-        state.scrollsWhileCollapsed++;
-        return;
-      }
-      state.loaded = Math.min(total, state.loaded + pageSize);
-    },
-  };
-  vi.stubGlobal("getComputedStyle", () => ({ overflowY: state.expanded ? "scroll" : "hidden" }));
+function stubGemini(options: {
+  scripts?: string[];
+  rail?: string[];
+  responses: (string | number)[] | ((call: number) => string | number);
+}): Posted[] {
+  const scripts = options.scripts ?? [`window.WIZ_global_data = {"SNlM0e":"${AT_TOKEN}"};`];
+  const rail = options.rail ?? [];
   vi.stubGlobal("document", {
-    querySelectorAll: (selector: string) => {
-      if (selector === "infinite-scroller") return [scroller];
-      if (selector === '[data-test-id="conversation"]') return all.slice(0, state.loaded);
-      if (selector === OPEN_BUTTON) return !state.expanded || options.neverExpands ? [open] : [];
-      if (selector === SPARKLE_BUTTON) return [newChat];
-      if (selector === CLOSE_BUTTON) return state.expanded || options.neverExpands ? [close] : [];
-      return [];
-    },
-    querySelector: () => null,
+    scripts: scripts.map((textContent) => ({ textContent })),
+    querySelectorAll: (selector: string) =>
+      selector === '[data-test-id="conversation"][data-conversation-id]'
+        ? rail.map((id) => sidebarEntry({ "data-conversation-id": id }))
+        : [],
   });
-  return { state, total };
-}
-
-async function runExtraction() {
-  vi.useFakeTimers();
-  const outcome = extractGeminiChatIds().then(
-    (ids) => ({ ids, err: null as Error | null }),
-    (err: unknown) => ({ ids: null as string[] | null, err: err as Error }),
+  const posted: Posted[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init: RequestInit) => {
+      const form = new URLSearchParams(String(init.body));
+      const call = posted.length;
+      posted.push({
+        url,
+        init,
+        form,
+        rpc: JSON.parse(JSON.parse(form.get("f.req") ?? "null")[0][0][1]),
+      });
+      const next =
+        typeof options.responses === "function" ? options.responses(call) : options.responses[call];
+      if (typeof next === "number") return new Response("error", { status: next });
+      return new Response(next, { status: 200 });
+    }),
   );
-  await vi.runAllTimersAsync();
-  return outcome;
+  return posted;
 }
 
-describe("extractGeminiChatIds opens a collapsed sidebar (HVN-16)", () => {
+async function failureOf(run: Promise<unknown>): Promise<Error> {
+  const err = await run.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(err).toBeInstanceOf(Error);
+  return err as Error;
+}
+
+describe("extractGeminiChatIds lists chats through the list RPC (HVN-16)", () => {
   afterEach(() => {
-    vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("lists every page once the sidebar is opened, not only the first", async () => {
-    const { state, total } = stubGeminiSidebar({ expanded: false });
-    const { ids, err } = await runExtraction();
-    expect(err).toBeNull();
-    expect(ids).toHaveLength(total);
-    expect(new Set(ids).size).toBe(total);
-    expect(state.scrollsWhileCollapsed).toBe(0);
-  });
-
-  it("clicks Open sidebar once, then Close sidebar once, and leaves it collapsed", async () => {
-    const { state } = stubGeminiSidebar({ expanded: false });
-    await runExtraction();
-    expect(state.openClicks).toBe(1);
-    expect(state.closeClicks).toBe(1);
-    expect(state.expanded).toBe(false);
-    expect(state.newChatClicks).toBe(0);
-  });
-
-  it("clicks nothing when the sidebar is already expanded, and still lists every page", async () => {
-    const { state, total } = stubGeminiSidebar({ expanded: true });
-    const { ids, err } = await runExtraction();
-    expect(err).toBeNull();
-    expect(ids).toHaveLength(total);
-    expect(state.openClicks).toBe(0);
-    expect(state.closeClicks).toBe(0);
-    expect(state.newChatClicks).toBe(0);
-    expect(state.expanded).toBe(true);
-  });
-
-  it("throws when the sidebar never becomes scrollable, rather than returning the first page", async () => {
-    const { state } = stubGeminiSidebar({ expanded: false, neverExpands: true });
-    const { ids, err } = await runExtraction();
-    expect(ids).toBeNull();
-    expect(err?.message).toMatch(/did not become scrollable/);
-    expect(state.openClicks).toBe(1);
-  });
-
-  it("still clicks Close sidebar when it opened the sidebar and then threw", async () => {
-    const { state } = stubGeminiSidebar({ expanded: false, neverExpands: true });
-    await runExtraction();
-    expect(state.closeClicks).toBe(1);
-  });
-
-  it("opens the sidebar when its scroller has no room to scroll and an Open button is there", async () => {
-    // Gemini may mark the collapsed rail some other way than overflow hidden: no room to scroll
-    // while entries show, with the Open button on the page, is the same sign.
-    const entries = [sidebarEntry({ "data-conversation-id": "c_0123456789abcdef" })];
-    let openClicks = 0;
-    let closeClicks = 0;
-    const scroller = {
-      tagName: "INFINITE-SCROLLER",
-      className: "",
-      id: "",
-      scrollHeight: 500,
-      clientHeight: 500,
-      scrollTop: 0,
-      classList: { contains: () => false },
-      querySelector: () => entries[0],
-    };
-    vi.stubGlobal("getComputedStyle", () => ({ overflowY: "auto" }));
-    vi.stubGlobal("document", {
-      querySelectorAll: (selector: string) => {
-        if (selector === "infinite-scroller") return [scroller];
-        if (selector === '[data-test-id="conversation"]') return entries;
-        if (selector === OPEN_BUTTON) return [{ click: () => openClicks++ }];
-        if (selector === CLOSE_BUTTON) return [{ click: () => closeClicks++ }];
-        return [];
-      },
-      querySelector: () => null,
+  it("follows the token across two pages, keeps the order and asks for 100 a page", async () => {
+    const posted = stubGemini({
+      responses: [
+        page([chatId(1), chatId(2), chatId(3)], "TOKEN-1"),
+        page([chatId(4), chatId(5)], null),
+      ],
     });
-    const { ids, err } = await runExtraction();
-    expect(err).toBeNull();
-    expect(ids).toEqual(["0123456789abcdef"]);
-    expect(openClicks).toBe(1);
-    expect(closeClicks).toBe(1);
+
+    await expect(extractGeminiChatIds()).resolves.toEqual([
+      "0000000000000001",
+      "0000000000000002",
+      "0000000000000003",
+      "0000000000000004",
+      "0000000000000005",
+    ]);
+
+    expect(posted).toHaveLength(2);
+    expect(posted[0].rpc).toEqual([100, null, [0, null, 1]]);
+    expect(posted[1].rpc).toEqual([100, "TOKEN-1", [0, null, 1]]);
+    expect(posted[0].url).toContain("rpcids=MaZiqc");
+    expect(posted[0].init.method).toBe("POST");
+    expect(posted[0].init.credentials).toBe("include");
+    expect(posted[0].init.headers).toEqual({
+      "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+    });
+    expect(posted[0].form.get("at")).toBe(AT_TOKEN);
   });
 
-  it("throws when the sidebar is collapsed and there is no Open button, and clicks nothing", async () => {
-    const { state } = stubGeminiSidebar({ expanded: false });
-    const doc = document.querySelectorAll.bind(document);
-    vi.stubGlobal("document", {
-      querySelectorAll: (selector: string) =>
-        selector === OPEN_BUTTON || selector === SPARKLE_BUTTON ? [] : doc(selector),
-      querySelector: () => null,
+  it("treats an empty token like the last page", async () => {
+    const posted = stubGemini({ responses: [page([chatId(1)], ""), page([chatId(2)], null)] });
+    await expect(extractGeminiChatIds()).resolves.toEqual(["0000000000000001"]);
+    expect(posted).toHaveLength(1);
+  });
+
+  it("lists an account with no chats as empty", async () => {
+    stubGemini({ responses: [frame(JSON.stringify([null, null, null]))] });
+    await expect(extractGeminiChatIds()).resolves.toEqual([]);
+  });
+
+  it("drops a chat that repeats across pages, keeping its first place", async () => {
+    stubGemini({
+      responses: [
+        page([chatId(1), chatId(2)], "TOKEN-1"),
+        page([chatId(2), chatId(3), chatId(3)], null),
+      ],
     });
-    const { ids, err } = await runExtraction();
-    expect(ids).toBeNull();
-    expect(err?.message).toMatch(/Open sidebar button was not found/);
-    expect(state.openClicks).toBe(0);
-    expect(state.closeClicks).toBe(0);
+    await expect(extractGeminiChatIds()).resolves.toEqual([
+      "0000000000000001",
+      "0000000000000002",
+      "0000000000000003",
+    ]);
+  });
+
+  it("stops at 50 pages with a warning, and returns what it has", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    const posted = stubGemini({
+      responses: (call) => page([chatId(call + 1)], `TOKEN-${call + 1}`),
+    });
+
+    const ids = await extractGeminiChatIds();
+
+    expect(posted).toHaveLength(50);
+    expect(ids).toHaveLength(50);
+    expect(ids[0]).toBe("0000000000000001");
+    expect(warn.mock.calls.some(([message]) => /more than 50 pages/.test(String(message)))).toBe(
+      true,
+    );
+  });
+
+  it("reads the request token from the page's inline scripts", async () => {
+    const posted = stubGemini({
+      scripts: [
+        "console.log('no token here');",
+        `var a=1;window.WIZ_global_data={"nQyAE":{},"SNlM0e":"${AT_TOKEN}","oPEP7c":"x"};`,
+      ],
+      responses: [page([chatId(1)], null)],
+    });
+    await extractGeminiChatIds();
+    expect(posted[0].form.get("at")).toBe(AT_TOKEN);
+  });
+
+  it("throws when the request token is not in the page, before any request", async () => {
+    const posted = stubGemini({
+      scripts: ["console.log('no token here');"],
+      responses: [page([chatId(1)], null)],
+    });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/SNlM0e/);
+    expect(posted).toHaveLength(0);
+  });
+
+  it("throws on a response that is not OK, rather than returning a short list", async () => {
+    stubGemini({ responses: [400] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/list request failed: 400/);
+  });
+
+  it("throws when a later page fails, rather than returning the first page", async () => {
+    stubGemini({ responses: [page([chatId(1)], "TOKEN-1"), 400] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/list request failed: 400/);
+  });
+
+  it("throws when the response has no list envelope", async () => {
+    const other = JSON.stringify([["wrb.fr", "OtherRpc", "[]", null]]);
+    stubGemini({ responses: [`)]}'\n\n${other.length}\n${other}`] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/no list envelope/);
+  });
+
+  it("throws when the envelope's JSON cannot be parsed", async () => {
+    stubGemini({ responses: [frame("[null, null, [[")] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/does not hold JSON/);
+  });
+
+  it("throws when the list is not the shape [null, token, entries]", async () => {
+    stubGemini({ responses: [frame(JSON.stringify([null, null, { a: 1 }]))] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/not \[null, token, entries\]/);
+  });
+
+  it("throws when the entries are there and none carries a chat id", async () => {
+    stubGemini({ responses: [frame(JSON.stringify([null, null, [[null], ["x"]]]))] });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/2 entries but none carries a chat id/);
+  });
+
+  it("throws when the list holds fewer chats than the sidebar shows", async () => {
+    stubGemini({
+      rail: [chatId(1), chatId(2), chatId(3)],
+      responses: [page([chatId(1), chatId(2)], null)],
+    });
+    const err = await failureOf(extractGeminiChatIds());
+    expect(err.message).toMatch(/holds 2 chats but the sidebar shows 3/);
+  });
+
+  it("accepts a list that covers the sidebar", async () => {
+    stubGemini({
+      rail: [chatId(1), chatId(2)],
+      responses: [page([chatId(1), chatId(2), chatId(3)], null)],
+    });
+    await expect(extractGeminiChatIds()).resolves.toHaveLength(3);
   });
 });
