@@ -71,6 +71,23 @@ function normalizeAssetUrl(rawUrl: string): string {
   return trimmed;
 }
 
+/**
+ * The bytes and the declared type of a `data:` URL. Nothing is fetched: it reads the same in the
+ * service worker, in a Web Worker and in a page.
+ */
+function decodeDataUrl(url: string): { buffer: ArrayBuffer; contentType: string | undefined } {
+  const comma = url.indexOf(",");
+  if (!url.startsWith("data:") || comma === -1) {
+    throw new Error("Malformed data URL");
+  }
+  const [mime, ...params] = url.slice(5, comma).split(";");
+  const payload = url.slice(comma + 1);
+  const bytes = params.includes("base64")
+    ? Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))
+    : new TextEncoder().encode(decodeURIComponent(payload));
+  return { buffer: bytes.buffer, contentType: mime || undefined };
+}
+
 function isGoogleusercontentImageUrl(url: string): boolean {
   return /https?:\/\/[^/]*googleusercontent\.com\//i.test(url);
 }
@@ -407,7 +424,12 @@ export async function processExternalAssets(
           let buffer: ArrayBuffer;
           let finalContentType: string;
 
-          if (options.tabId) {
+          if (assetUrl.startsWith("data:")) {
+            // The bytes are in the URL: no tab, no content script, so a Web Worker can do it too
+            const decoded = decodeDataUrl(assetUrl);
+            finalContentType = resolvePreferredMimeType(decoded.contentType, contentType);
+            buffer = decoded.buffer;
+          } else if (options.tabId) {
             let response: ContentScriptResponse;
 
             // Check if we are in a Service Worker (has chrome.tabs) or a Web Worker
