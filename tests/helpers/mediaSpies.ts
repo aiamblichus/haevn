@@ -36,8 +36,13 @@ export const WITH_MEDIA: Record<string, () => unknown> = {
     chatgptRaw(sentinels("m-chatgpt"), {
       image: { pointer: "file-service://file-a", url: IMAGE },
     }),
+  // an upload: Gemini keeps the links of other hosts (thumbnails, icons) as links, and fetches none
   gemini: () =>
-    geminiRaw(sentinels("m-gemini"), { files: [{ url: IMAGE, type: "image/png", name: "a.png" }] }),
+    geminiRaw(sentinels("m-gemini"), {
+      files: [
+        { url: "https://lh3.googleusercontent.com/gg/AbC", type: "image/png", name: "a.png" },
+      ],
+    }),
   aistudio: () =>
     aistudioRaw(sentinels("m-ais"), { files: [{ url: IMAGE, type: "image/png", name: "a.png" }] }),
   qwen: () =>

@@ -63,6 +63,11 @@ function run(urls: string[], extra: Record<string, unknown> = {}, type = "image/
   );
 }
 
+/** The link a failed download leaves, marked with why (HVN-159): the stubbed request threw. */
+function unstored(kind: string, url: string) {
+  return { kind, url, vendor_metadata: { unstored: "fetch_failed" } };
+}
+
 describe("a download that fails on a re-sync", () => {
   it("keeps the local file already stored for that message and index (the request fails)", async () => {
     fs.put(`media/${CHAT}/${MSG}_0.png`, OLD_BYTES);
@@ -127,8 +132,8 @@ describe("a download that fails on a re-sync", () => {
     const [image] = await run([URL_A], {}, "image/png");
     const [video] = await run([URL_B], {}, "video/mp4");
 
-    expect(image).toEqual({ kind: "image-url", url: URL_A });
-    expect(video).toEqual({ kind: "video-url", url: URL_B });
+    expect(image).toEqual(unstored("image-url", URL_A));
+    expect(video).toEqual(unstored("video-url", URL_B));
     expect(fs.files()).toEqual([]);
   });
 
@@ -138,7 +143,7 @@ describe("a download that fails on a re-sync", () => {
 
     const [part] = await run([URL_A]);
 
-    expect(part).toEqual({ kind: "image-url", url: URL_A });
+    expect(part).toEqual(unstored("image-url", URL_A));
   });
 
   it("looks only at this message and this index", async () => {
@@ -152,7 +157,7 @@ describe("a download that fails on a re-sync", () => {
 
     const [part] = await run([URL_A]);
 
-    expect(part).toEqual({ kind: "image-url", url: URL_A });
+    expect(part).toEqual(unstored("image-url", URL_A));
   });
 
   it("does not take the file of index 10 for the file of index 1", async () => {
@@ -161,8 +166,8 @@ describe("a download that fails on a re-sync", () => {
 
     const [first, second] = await run([URL_A, URL_B]);
 
-    expect(first).toEqual({ kind: "image-url", url: URL_A });
-    expect(second).toEqual({ kind: "image-url", url: URL_B });
+    expect(first).toEqual(unstored("image-url", URL_A));
+    expect(second).toEqual(unstored("image-url", URL_B));
   });
 
   it("matches the file of each asset by its position in the message", async () => {
@@ -171,7 +176,7 @@ describe("a download that fails on a re-sync", () => {
 
     const [first, second] = await run([URL_A, URL_B]);
 
-    expect(first).toEqual({ kind: "image-url", url: URL_A });
+    expect(first).toEqual(unstored("image-url", URL_A));
     expect(second).toMatchObject({ kind: "binary", data: `media/${CHAT}/${MSG}_1.png` });
   });
 
@@ -208,7 +213,7 @@ describe("a download that fails on a re-sync", () => {
 
     const [part] = await run([URL_A]);
 
-    expect(part).toEqual({ kind: "image-url", url: URL_A });
+    expect(part).toEqual(unstored("image-url", URL_A));
   });
 });
 

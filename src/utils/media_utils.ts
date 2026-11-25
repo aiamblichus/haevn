@@ -23,7 +23,7 @@ import {
 } from "../services/mediaStorage";
 import type { ContentScriptResponse } from "../types/messaging";
 import { log } from "./logger";
-import { fetchWithTimeout, originAndPath } from "./network_utils";
+import { FetchFailedError, fetchWithTimeout, originAndPath } from "./network_utils";
 
 /**
  * Generic interface for URL-based assets that need to be downloaded and converted.
@@ -38,11 +38,12 @@ export interface UrlAsset {
    * list: a caller that leaves an asset out of the list keeps the others where they were.
    */
   index?: number;
-}
-
-interface BlobFetchResult {
-  base64: string;
-  contentType: string;
+  /**
+   * Keep this asset as a link on purpose (a search thumbnail, an icon on a host the extension has
+   * no permission for). No download is tried, and the link is neither marked nor counted as an
+   * unstored file.
+   */
+  linkOnly?: boolean;
 }
 
 function isGenericBinaryMimeType(mimeType: string | undefined | null): boolean {
@@ -86,105 +87,6 @@ function decodeDataUrl(url: string): { buffer: ArrayBuffer; contentType: string 
     ? Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))
     : new TextEncoder().encode(decodeURIComponent(payload));
   return { buffer: bytes.buffer, contentType: mime || undefined };
-}
-
-function isGoogleusercontentImageUrl(url: string): boolean {
-  return /https?:\/\/[^/]*googleusercontent\.com\//i.test(url);
-}
-
-async function waitForTabComplete(tabId: number, timeoutMs = 15000): Promise<void> {
-  return await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error(`Timed out waiting for helper tab ${tabId} to load`));
-    }, timeoutMs);
-
-    const onUpdated = (updatedTabId: number, info: chrome.tabs.OnUpdatedInfo) => {
-      if (updatedTabId === tabId && info.status === "complete") {
-        clearTimeout(timeout);
-        chrome.tabs.onUpdated.removeListener(onUpdated);
-        resolve();
-      }
-    };
-
-    chrome.tabs.onUpdated.addListener(onUpdated);
-  });
-}
-
-async function fetchBlobViaHelperTab(url: string, logPrefix?: string): Promise<BlobFetchResult> {
-  let helperTabId: number | null = null;
-  try {
-    const tab = await chrome.tabs.create({ url, active: false });
-    if (!tab.id) {
-      throw new Error("Failed to create helper tab");
-    }
-    helperTabId = tab.id;
-
-    await waitForTabComplete(helperTabId);
-
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: helperTabId },
-      world: "MAIN",
-      func: async () => {
-        const toResult = (dataUrl: string) => {
-          const [header, base64] = dataUrl.split(",");
-          const contentType = header.split(":")[1]?.split(";")[0] || "image/png";
-          return { base64, contentType };
-        };
-
-        const renderToDataUrl = (img: HTMLImageElement): string => {
-          const width = img.naturalWidth || img.width;
-          const height = img.naturalHeight || img.height;
-          if (!width || !height) {
-            throw new Error("Image has invalid dimensions");
-          }
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            throw new Error("Failed to get 2D canvas context");
-          }
-          ctx.drawImage(img, 0, 0);
-          return canvas.toDataURL("image/png");
-        };
-
-        const existing = document.querySelector("img") as HTMLImageElement | null;
-        if (existing) {
-          if (!existing.complete) {
-            await existing.decode().catch(() => undefined);
-          }
-          return toResult(renderToDataUrl(existing));
-        }
-
-        const img = new Image();
-        const loadPromise = new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error("Failed to load image in helper tab"));
-        });
-        img.src = window.location.href;
-        await loadPromise;
-        return toResult(renderToDataUrl(img));
-      },
-    });
-
-    if (!result?.result) {
-      throw new Error("No result returned from helper tab script");
-    }
-
-    if (logPrefix) {
-      log.info(`${logPrefix} Helper tab fallback succeeded for: ${originAndPath(url)}`);
-    }
-    return result.result as BlobFetchResult;
-  } finally {
-    if (helperTabId !== null) {
-      try {
-        await chrome.tabs.remove(helperTabId);
-      } catch {
-        // no-op
-      }
-    }
-  }
 }
 
 /**
@@ -231,13 +133,8 @@ export interface ProcessExternalAssetsOptions {
    */
   tabId?: number;
   /**
-   * Force helper-tab navigation based extraction (no clipboard/fetch path).
-   * Useful for providers where image URLs are navigation-allowed but fetch-blocked.
-   */
-  helperTabOnly?: boolean;
-  /**
    * "skip" returns the URL fallback for every asset and touches nothing else: no download, no
-   * lookup, no write to OPFS, no helper tab. Omitted or "store" is a sync's behaviour.
+   * lookup, no write to OPFS. Omitted or "store" is a sync's behaviour.
    */
   media?: "store" | "skip";
 }
@@ -250,20 +147,83 @@ function createFallbackUrl(
   url: string,
   contentType: string,
   supportAllMediaTypes: boolean,
+  unstored?: string,
 ): UserContent {
+  // The mark says why the file is not stored; a link kept on purpose has none
+  const mark = unstored ? { vendor_metadata: { unstored } } : {};
   if (contentType.startsWith("image")) {
-    return { kind: "image-url", url } as ImageUrl;
+    return { kind: "image-url", url, ...mark } as ImageUrl;
   }
   if (supportAllMediaTypes) {
     if (contentType.startsWith("video")) {
-      return { kind: "video-url", url } as VideoUrl;
+      return { kind: "video-url", url, ...mark } as VideoUrl;
     }
     if (contentType.startsWith("audio")) {
-      return { kind: "audio-url", url } as AudioUrl;
+      return { kind: "audio-url", url, ...mark } as AudioUrl;
     }
   }
   // Default to document-url for unknown types or when supportAllMediaTypes is false
-  return { kind: "document-url", url } as DocumentUrl;
+  return { kind: "document-url", url, ...mark } as DocumentUrl;
+}
+
+/**
+ * Why a download did not end in a stored file: `fetch_failed`, `http_<status>`, `timeout` or
+ * `save_failed`. A short code, never a URL, so it is safe in a log line and in an export.
+ */
+class DownloadFailure extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function unstoredCodeOf(error: unknown): string {
+  if (error instanceof DownloadFailure) return error.code;
+  // fetchWithTimeout says what its last attempt did
+  if (
+    error instanceof FetchFailedError &&
+    error.attempts[error.attempts.length - 1]?.outcome === "timed out"
+  ) {
+    return "timeout";
+  }
+  return "fetch_failed";
+}
+
+/**
+ * The codes the parts of a chat carry that were meant to be stored and were not (see
+ * `vendor_metadata.unstored`), one for each part. Read from the transform's output, not kept in
+ * a variable: two chats can be in transform at once.
+ */
+export function unstoredMediaCodes(chat: unknown): string[] {
+  const codes: string[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    const proto = Object.getPrototypeOf(node);
+    if (proto !== Object.prototype && proto !== null) return; // bytes, dates: nothing to read
+    const record = node as Record<string, unknown>;
+    const meta = record.vendor_metadata;
+    if (
+      meta &&
+      typeof meta === "object" &&
+      typeof (meta as { unstored?: unknown }).unstored === "string"
+    ) {
+      codes.push((meta as { unstored: string }).unstored);
+    }
+    for (const value of Object.values(record)) walk(value);
+  };
+  walk(chat);
+  return codes;
+}
+
+/** How many parts of a chat are links because their download failed (not links on purpose). */
+export function countUnstoredMedia(chat: unknown): number {
+  return unstoredMediaCodes(chat).length;
 }
 
 /**
@@ -377,7 +337,6 @@ export async function processExternalAssets(
     chatId,
     messageId,
     credentials,
-    helperTabOnly = false,
   } = options;
 
   // A read-only caller gets the URL fallbacks and nothing else: the storage service is not even
@@ -408,9 +367,15 @@ export async function processExternalAssets(
       const contentType = asset.type || "image/jpeg";
 
       // Helper function to create a fallback URL object based on content type
-      const createFallback = (): UserContent => {
-        return createFallbackUrl(assetUrl, contentType, supportAllMediaTypes);
+      const createFallback = (unstored?: string): UserContent => {
+        return createFallbackUrl(assetUrl, contentType, supportAllMediaTypes, unstored);
       };
+
+      // A link kept on purpose: nothing is fetched, marked or counted
+      if (asset.linkOnly) {
+        results[position] = createFallback();
+        continue;
+      }
 
       try {
         if (logPrefix) {
@@ -436,17 +401,7 @@ export async function processExternalAssets(
             const isServiceWorker =
               typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.sendMessage;
 
-            if (helperTabOnly) {
-              if (!isServiceWorker) {
-                throw new Error("Helper-tab-only mode requires service worker context");
-              }
-              const helperResult = await fetchBlobViaHelperTab(assetUrl, logPrefix);
-              response = {
-                success: true,
-                base64: helperResult.base64,
-                contentType: helperResult.contentType,
-              };
-            } else if (isServiceWorker) {
+            if (isServiceWorker) {
               // Content Script Fetch Mode
               if (logPrefix) {
                 log.info(`${logPrefix} Delegating fetch to content script (tab ${options.tabId})`);
@@ -521,31 +476,6 @@ export async function processExternalAssets(
               })) as ContentScriptResponse;
             }
 
-            if (!helperTabOnly && !isBlobResponse(response)) {
-              if (isServiceWorker && isGoogleusercontentImageUrl(assetUrl)) {
-                if (logPrefix) {
-                  log.warn(
-                    `${logPrefix} Content-script fetch failed for Google image URL, trying helper tab fallback`,
-                  );
-                }
-                try {
-                  const helperResult = await fetchBlobViaHelperTab(assetUrl, logPrefix);
-                  response = {
-                    success: true,
-                    base64: helperResult.base64,
-                    contentType: helperResult.contentType,
-                  };
-                } catch (helperError) {
-                  if (logPrefix) {
-                    log.error(
-                      `${logPrefix} Helper tab fallback failed for ${originAndPath(assetUrl)}:`,
-                      helperError,
-                    );
-                  }
-                }
-              }
-            }
-
             if (!isBlobResponse(response)) {
               const reason = "error" in response ? response.error : undefined;
               throw new Error(reason || "Content script fetch failed");
@@ -561,7 +491,11 @@ export async function processExternalAssets(
             }
             buffer = bytes.buffer;
           } else {
-            // Background Fetch Mode
+            // Background Fetch Mode: the extension's own fetch, the same in the service worker and
+            // in a Web Worker. It reaches http(s) only: a page's blob: URL is not reachable here.
+            if (!/^https?:/i.test(assetUrl)) {
+              throw new DownloadFailure("fetch_failed", "Not an http(s) URL");
+            }
             const response = await fetchWithTimeout(assetUrl, {
               timeoutMs,
               credentials,
@@ -569,7 +503,8 @@ export async function processExternalAssets(
               retryDelayMs,
             });
             if (!response.ok) {
-              throw new Error(
+              throw new DownloadFailure(
+                `http_${response.status}`,
                 `Failed to fetch file: ${response.statusText} for url ${originAndPath(assetUrl)}`,
               );
             }
@@ -589,7 +524,13 @@ export async function processExternalAssets(
             log.info(`${logPrefix} Saving to OPFS for: ${originAndPath(assetUrl)}`);
           }
           const extension = getExtensionFromMimeType(finalContentType);
-          const storedRef = await mediaStorage.save(chatId, messageId, buffer, extension, index);
+          let storedRef: Awaited<ReturnType<MediaStorageService["save"]>>;
+          try {
+            storedRef = await mediaStorage.save(chatId, messageId, buffer, extension, index);
+          } catch (saveError) {
+            const reason = saveError instanceof Error ? saveError.message : String(saveError);
+            throw new DownloadFailure("save_failed", `Could not save the file: ${reason}`);
+          }
 
           if (logPrefix) {
             log.info(
@@ -614,7 +555,8 @@ export async function processExternalAssets(
           setTimeout(
             () =>
               reject(
-                new Error(
+                new DownloadFailure(
+                  "timeout",
                   `File download timeout after ${overallTimeoutMs}ms for ${originAndPath(asset.url)}`,
                 ),
               ),
@@ -639,7 +581,7 @@ export async function processExternalAssets(
             asset,
             contentType,
             logPrefix,
-          )) ?? createFallback();
+          )) ?? createFallback(unstoredCodeOf(error));
       }
     }
   }

@@ -17,9 +17,34 @@ import { stableMessageIds } from "../shared/stableIds";
 import { buildMessageTree, type TreeNode } from "../shared/treeBuilder";
 import type { GeminiConversationData } from "./model";
 
+/**
+ * The page's `src` for an uploaded image is a 512-pixel preview; the same link with `=s0` is the
+ * full image (HVN-159). A link that already says a size, or has a query, is left as it is.
+ */
+function fullSizeUrl(url: string): string {
+  return /^https:\/\/lh3\.googleusercontent\.com\/gg\/[\w-]+$/.test(url) ? `${url}=s0` : url;
+}
+
+/**
+ * Whether a link is one the extension holds no permission for (a search thumbnail on gstatic.com,
+ * an icon): kept as a link on purpose, not downloaded and not counted as a file that failed.
+ */
+function isLinkOnly(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return (
+      (protocol === "https:" || protocol === "http:") &&
+      hostname !== "googleusercontent.com" &&
+      !hostname.endsWith(".googleusercontent.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function transformGeminiToHaevn(
   geminiData: GeminiConversationData,
-  tabId?: number,
+  _tabId?: number,
   options?: TransformOptions,
 ): Promise<HAEVN.Chat> {
   // IDs are already normalized (no 'c_' prefix) when extracted from URL
@@ -48,9 +73,10 @@ export async function transformGeminiToHaevn(
 
     // Map platform-specific file info to generic UrlAsset
     const assets: UrlAsset[] = msg.files.map((file) => ({
-      url: file.url,
+      url: fullSizeUrl(file.url),
       type: file.type,
       name: file.name,
+      linkOnly: isLinkOnly(file.url),
     }));
 
     log.info(
@@ -63,8 +89,9 @@ export async function transformGeminiToHaevn(
       supportAllMediaTypes: false, // Gemini only supports images
       chatId: conversationId,
       messageId,
-      tabId,
-      helperTabOnly: true,
+      // The extension fetches an uploaded image itself, with the Google cookies: the same in the
+      // service worker and in the bulk-sync worker, and no tab (HVN-159)
+      credentials: "include",
       media: options?.media,
     });
 

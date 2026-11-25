@@ -941,8 +941,8 @@ export function stopWaitingForWorker(): void {
  * The worker reported on a chat. If that was the last one outstanding and every chat is handed
  * over, the sync finishes. While a tick is still handing chats over, the tick does it.
  */
-export async function onWorkerReport(chatId: string): Promise<void> {
-  await settlePendingHandoff(chatId);
+export async function onWorkerReport(chatId: string, unstoredMedia = 0): Promise<void> {
+  await settlePendingHandoff(chatId, unstoredMedia);
   if (_tickRunning) return;
   const state = await getBulkSyncState();
   if (state && state.status === "running" && state.currentIndex >= state.total) {
@@ -1014,6 +1014,8 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
     clearTimeout(_recheckTimer);
     _recheckTimer = null;
   }
+  // The run's count of media that were not stored is read before the record goes
+  const unstoredMediaCount = (await getPendingHandoffs()).unstoredMedia ?? 0;
   await clearPendingHandoffs();
 
   // Reset worker
@@ -1075,6 +1077,12 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
     if (state.failedSyncs.length > 0) {
       statusMessage += ` ${state.failedSyncs.length} failed.`;
     }
+    if (unstoredMediaCount > 0) {
+      statusMessage +=
+        unstoredMediaCount === 1
+          ? " 1 media file could not be stored; its link was kept."
+          : ` ${unstoredMediaCount} media files could not be stored; their links were kept.`;
+    }
 
     safeSendMessage({
       action: "bulkSyncComplete",
@@ -1085,6 +1093,7 @@ export async function cleanupBulkSync(state: BulkSyncState | null): Promise<void
       skippedCount: state.skippedCount,
       successCount,
       totalCount: state.total,
+      unstoredMediaCount,
     });
   }
 }
@@ -1180,7 +1189,8 @@ export async function resumeBulkSync(provider: string): Promise<void> {
 
     // The chats the worker had been handed are fetched again (the plan put them back in the list),
     // so nothing is waited for, and the worker's reports from before the restart are another leg's.
-    await clearPendingHandoffs();
+    // The chats it had settled stay settled, and so does their count of media not stored.
+    await clearPendingHandoffs({ keepUnstoredMedia: true });
 
     await setBulkSyncState({
       ...current,

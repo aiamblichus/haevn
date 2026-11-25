@@ -703,6 +703,8 @@ export type BackgroundEvent =
       skippedCount?: number;
       successCount?: number;
       totalCount?: number;
+      /** Media files the run kept as links because they could not be stored (HVN-159). */
+      unstoredMediaCount?: number;
     }
   | {
       action: "bulkSyncFailed";

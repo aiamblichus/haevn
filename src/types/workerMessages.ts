@@ -244,6 +244,8 @@ export type BulkSyncWorkerResponse = (
       processed: number;
       failed: number;
       skipped: number;
+      /** How many of the chat's media files were kept as links because they could not be stored. */
+      unstoredMedia?: number;
     }
   | {
       type: "postProcess";
