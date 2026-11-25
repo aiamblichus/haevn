@@ -29,6 +29,7 @@
     "*://x.ai/*",
     "*://assets.grok.com/*",
     "*://*.googleusercontent.com/*",
+    "*://lh3.google.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
