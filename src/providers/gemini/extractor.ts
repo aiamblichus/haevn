@@ -1,6 +1,7 @@
 // Gemini Chat Extraction - TypeScript Functions
 
 import { log } from "../../utils/logger";
+import { fetchWithTimeout } from "../../utils/network_utils";
 import { detectPlatform } from "../shared/platformDetector";
 import { formatLocalTime, generateFallbackId } from "../shared_utils";
 import type { GeminiConversationData, GeminiFileInfo, GeminiMessage } from "./model";
@@ -14,19 +15,6 @@ declare function require(id: "turndown"): new () => {
 declare function require(id: "@joplin/turndown-plugin-gfm"): { gfm: unknown };
 
 const TurndownService = require("turndown");
-
-// Gemini's sidebar, as the chat-list extraction drives it (HVN-16). Gemini changes these now
-// and then: this block is the one place to edit. Collapsed, the history scroller is
-// overflow-y: hidden with the class below and cannot grow, so the extractor opens the sidebar and,
-// because Gemini remembers the state per account, closes it again if it was the one that opened it.
-const GEMINI_SIDEBAR = {
-  scrollBlockedClass: "disable-scroll",
-  openButton: 'button[aria-label="Open sidebar"]',
-  // No fallback by test id: the sparkle button is labelled "Gemini - new chat" even in the
-  // collapsed rail (read live 2026-11-25), and clicking it would leave the chat mid-sync.
-  closeButton: 'button[aria-label="Close sidebar"]',
-  openTimeoutMs: 3000,
-} as const;
 
 export interface ExportOptions {
   customTitle?: string;
@@ -871,256 +859,162 @@ export function geminiChatIdOf(
 }
 
 /**
- * Every chat id in Gemini's sidebar. Opens a collapsed sidebar to list it and leaves the sidebar
- * as it found it: a sync must not change the user's setting (HVN-16).
+ * Gemini's own chat-list RPC (HVN-16). The sidebar list is gone (the list now lives in a search
+ * modal that loads only in a visible tab), but the batchexecute call that filled it still answers,
+ * in a hidden tab too. Undocumented: this block is the one place to edit when Gemini changes it.
+ * A page holds up to `pageSize` chats (more is ignored), and the response carries the token of the
+ * next page until the last, which has none.
  */
-export async function extractGeminiChatIds(): Promise<string[]> {
-  const sidebar = { openedByUs: false };
-  try {
-    return await scrollSidebarForChatIds(sidebar);
-  } finally {
-    if (sidebar.openedByUs) closeGeminiSidebar();
+const GEMINI_LIST_RPC = {
+  url: "/_/BardChatUi/data/batchexecute?rpcids=MaZiqc&source-path=%2Fapp&hl=en&rt=c",
+  rpcId: "MaZiqc",
+  pageSize: 100,
+  // 50 pages of 100 is 5,000 chats.
+  maxPages: 50,
+  timeoutMs: 30000,
+} as const;
+
+/** The anti-forgery token the RPC needs (`at`), as it sits in an inline script of the page. */
+const GEMINI_AT_TOKEN = /"SNlM0e":"([^"]+)"/;
+
+/**
+ * The `at` token of the page. The content script cannot read the page's WIZ_global_data (isolated
+ * world), but the inline script that sets it is in the DOM.
+ */
+function findGeminiAtToken(): string {
+  for (const script of Array.from(document.scripts)) {
+    const token = script.textContent?.match(GEMINI_AT_TOKEN)?.[1];
+    if (token) return token;
   }
+  throw new Error("Gemini's chat list: the request token (SNlM0e) was not found in the page");
 }
 
-/** Click the sidebar's Close button. Never throws: it runs in a finally. */
-function closeGeminiSidebar(): void {
-  try {
-    const closeButton = querySelectorAllDeep(GEMINI_SIDEBAR.closeButton)[0] as
-      | HTMLElement
-      | undefined;
-    if (!closeButton) {
-      log.warn("[Extractor] The sidebar was opened for the sync, but no Close button was found.");
-      return;
-    }
-    closeButton.click();
-    log.info("[Extractor] Closed the sidebar again.");
-  } catch (err: unknown) {
-    log.warn("[Extractor] Failed to close the sidebar:", err);
-  }
+/** One page of the list: the chat ids in order, and the token of the next page, if any. */
+interface GeminiChatListPage {
+  ids: string[];
+  nextToken: string | null;
 }
 
-/** The scroller cannot scroll: Gemini's collapsed rail marks it overflow hidden and disable-scroll. */
-function isSidebarScrollBlocked(scroller: HTMLElement): boolean {
-  return (
-    getComputedStyle(scroller).overflowY === "hidden" ||
-    scroller.classList.contains(GEMINI_SIDEBAR.scrollBlockedClass)
-  );
-}
-
-async function scrollSidebarForChatIds(sidebar: { openedByUs: boolean }): Promise<string[]> {
-  log.info("[Extractor] Starting chat ID extraction process...");
-
-  const findSidebarHistoryScroller = (): HTMLElement | null => {
-    // Prefer the scroller that actually wraps the Chats list.
-    const conversationsRoot = querySelectorAllDeep('[data-test-id="all-conversations"]')[0];
-    if (conversationsRoot) {
-      const scopedScroller = conversationsRoot.closest("infinite-scroller") as HTMLElement | null;
-      if (scopedScroller) return scopedScroller;
-    }
-
-    // Fallback: choose the infinite-scroller that contains conversation entries.
-    const candidates = Array.from(document.querySelectorAll("infinite-scroller")) as HTMLElement[];
-    const byContent = candidates.find((el) =>
-      Boolean(
-        el.querySelector('[data-test-id="all-conversations"], [data-test-id="conversation"]'),
-      ),
-    );
-    if (byContent) return byContent;
-
-    return candidates[0] || null;
-  };
-
-  // The scrollable container in Gemini's sidebar is <infinite-scroller>,
-  // but there can be multiple scrollers in the page. We must pick the one
-  // containing the conversation history list.
-  let scrollContainer = findSidebarHistoryScroller();
-
-  // A collapsed sidebar cannot scroll, so scrolling it returns the first page only (HVN-16). Open
-  // it, and wait for the scroller to unblock. A scroller with no room to scroll while entries
-  // show is the same sign, but only a reason to click when the Open button is there to click.
-  const blocked = scrollContainer ? isSidebarScrollBlocked(scrollContainer) : true;
-  const noRoomToScroll =
-    !!scrollContainer &&
-    scrollContainer.scrollHeight <= scrollContainer.clientHeight &&
-    querySelectorAllDeep('[data-test-id="conversation"]').length > 0;
-  const openButton = (
-    blocked || noRoomToScroll ? querySelectorAllDeep(GEMINI_SIDEBAR.openButton)[0] : undefined
-  ) as HTMLElement | undefined;
-  if (openButton) {
-    log.info("[Extractor] The sidebar is collapsed. Clicking Open sidebar.");
-    openButton.click();
-    sidebar.openedByUs = true;
-    const deadline = Date.now() + GEMINI_SIDEBAR.openTimeoutMs;
-    while (Date.now() < deadline) {
-      scrollContainer = findSidebarHistoryScroller();
-      if (scrollContainer && !isSidebarScrollBlocked(scrollContainer)) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    scrollContainer = findSidebarHistoryScroller();
-  }
-
-  if (!scrollContainer) {
-    log.error("[Extractor] Could not find the scrollable container.");
-    // Not an empty list: a missing sidebar must not look like an account with no chats (HVN-116).
-    throw new Error(
-      "Gemini's chat list: the sidebar scroll container (infinite-scroller) was not found",
-    );
-  }
-  if (isSidebarScrollBlocked(scrollContainer)) {
-    // Scrolling it would return the first page as if it were the list (HVN-16, as HVN-116).
-    throw new Error(
-      sidebar.openedByUs
-        ? "Gemini's chat list: the sidebar did not become scrollable after Open sidebar was clicked"
-        : "Gemini's chat list: the sidebar is collapsed and its Open sidebar button was not found",
-    );
-  }
-  log.info(
-    "[Extractor] Using scroll container:",
-    scrollContainer.tagName,
-    scrollContainer.className || scrollContainer.id || "",
-  );
-
-  const waitForSidebarGrowth = async (
-    previousScrollHeight: number,
-    previousVisibleEntryCount: number,
-    timeoutMs: number = 2500,
-  ): Promise<void> => {
-    const startTime = Date.now();
-    const pollInterval = 100;
-
-    // Give Gemini a brief moment to schedule lazy-loading work.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    while (Date.now() - startTime < timeoutMs) {
-      const currentScrollHeight = scrollContainer.scrollHeight;
-      const currentVisibleEntryCount = querySelectorAllDeep('[data-test-id="conversation"]').length;
-
-      if (
-        currentScrollHeight > previousScrollHeight ||
-        currentVisibleEntryCount > previousVisibleEntryCount
-      ) {
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
-  };
-
-  const chatIds = new Set<string>();
-  // The most sidebar entries any pass saw: entries with no readable id are an error, not a list.
-  let entriesSeen = 0;
-  let lastIdCount = 0;
-  let attempts = 0;
-  let noNewIdsAttempts = 0;
-  let stableScrollHeightAttempts = 0;
-  const maxAttempts = 100; // Generous attempt limit for large histories
-  const scrollDelay = 300; // Reduced from 500ms for faster scrolling
-
-  log.info("[Extractor] Starting patient scroll loop...");
-
-  while (attempts < maxAttempts) {
-    // Read the chat id of each visible sidebar entry (HVN-116)
-    // Use deep selector to find elements in shadow DOMs
-    const entries = querySelectorAllDeep('[data-test-id="conversation"]');
-    entriesSeen = Math.max(entriesSeen, entries.length);
-    log.debug(`[Extractor] Attempt ${attempts + 1}: Found ${entries.length} conversation entries`);
-
-    let newIdsThisIteration = 0;
-    entries.forEach((entry, index) => {
-      const id = geminiChatIdOf(entry);
-      if (!id) {
-        log.debug(`[Extractor] ✗ No chat ID on sidebar entry ${index + 1}`);
-        return;
-      }
-      if (!chatIds.has(id)) {
-        chatIds.add(id);
-        newIdsThisIteration++;
-        log.debug(`[Extractor] ✓ Extracted new ID: ${id}`);
-      }
-    });
-
-    const currentIdCount = chatIds.size;
-    log.info(
-      `[Extractor] Attempt ${
-        attempts + 1
-      }/${maxAttempts}: Total IDs=${currentIdCount}, New this iteration=${newIdsThisIteration}, NoNewIdsTries=${noNewIdsAttempts}`,
-    );
-
-    // Check if we're making progress (finding new IDs)
-    if (currentIdCount === lastIdCount) {
-      noNewIdsAttempts++;
-      log.info("[Extractor] No new IDs found. Incrementing noNewIdsAttempts.");
-    } else {
-      noNewIdsAttempts = 0; // Reset counter if we found new IDs
-      lastIdCount = currentIdCount;
-    }
-
-    // Scroll to bottom to trigger more content loading
-    const previousScrollHeight = scrollContainer.scrollHeight;
-    const previousScrollTop = scrollContainer.scrollTop;
-    const previousVisibleEntryCount = entries.length;
+/**
+ * Read a batchexecute response. It is chunk-framed: a )]}' line, then length lines each followed by
+ * a JSON array of envelopes. The one for the list RPC is ["wrb.fr", "MaZiqc", "<json string>", ...]
+ * and its string is [null, <next token | null>, [entry, ...]], an entry's slot 0 being "c_<id>".
+ * Anything else throws: a short list must never look whole (HVN-116).
+ */
+function parseGeminiChatListPage(text: string): GeminiChatListPage {
+  let payload: unknown;
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("[")) continue;
+    let chunk: unknown;
     try {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
-    } catch (err: unknown) {
-      log.warn("[Gemini] Failed to scroll chat list container:", err);
+      chunk = JSON.parse(line);
+    } catch {
+      continue;
     }
-    attempts++;
-
-    // Gemini's loading spinner element may remain mounted continuously.
-    // Wait for concrete signals instead: sidebar growth or additional entries.
-    await waitForSidebarGrowth(previousScrollHeight, previousVisibleEntryCount, 2500);
-
-    // Additional delay to ensure DOM is updated
-    await new Promise((resolve) => setTimeout(resolve, scrollDelay));
-
-    const currentScrollHeight = scrollContainer.scrollHeight;
-    const currentScrollTop = scrollContainer.scrollTop;
-    const scrollHeightChanged = currentScrollHeight > previousScrollHeight;
-    const scrollMoved = currentScrollTop > previousScrollTop;
-
-    if (scrollHeightChanged) {
-      stableScrollHeightAttempts = 0;
-      noNewIdsAttempts = 0;
-    } else {
-      stableScrollHeightAttempts++;
-    }
-
-    // Stop only after both signals stall: no new IDs and no growth in scrollable content.
-    if (noNewIdsAttempts >= 6 && stableScrollHeightAttempts >= 4 && !scrollMoved) {
-      log.info(
-        "[Extractor] No new IDs and no scroll growth for multiple attempts. Ending scroll loop.",
-      );
+    if (!Array.isArray(chunk)) continue;
+    const envelope = chunk.find(
+      (item) => Array.isArray(item) && item[0] === "wrb.fr" && item[1] === GEMINI_LIST_RPC.rpcId,
+    );
+    if (envelope) {
+      payload = envelope[2];
       break;
     }
   }
-
-  log.info(`[Extractor] Finished scrolling after ${attempts} attempts.`);
-  log.info(`[Extractor] Extracted a total of ${chatIds.size} unique chat IDs.`);
-
-  const finalIds = Array.from(chatIds);
-  if (finalIds.length > 0) {
-    log.info(`[Extractor] Found chat IDs:`, finalIds);
-  } else {
-    log.warn("[Extractor] Warning: No chat IDs were extracted.");
-    // Final attempt to find entries without scrolling
-    log.info("[Extractor] Performing final scan of all conversation entries...");
-    const finalEntries = querySelectorAllDeep('[data-test-id="conversation"]');
-    log.debug(`[Extractor] Final scan found ${finalEntries.length} conversation entries`);
-    for (const entry of finalEntries) {
-      const id = geminiChatIdOf(entry);
-      if (id) chatIds.add(id);
-    }
-    const finalFinalIds = Array.from(chatIds);
-    log.info(`[Extractor] After final scan: ${finalFinalIds.length} total IDs`);
-    const sidebarEntries = Math.max(entriesSeen, finalEntries.length);
-    if (finalFinalIds.length === 0 && sidebarEntries > 0) {
-      // Entries are there and none gave an id: the attribute or the link has moved (HVN-116).
-      throw new Error(
-        `Gemini's chat list: the sidebar has ${sidebarEntries} chat entries but none carries a chat id`,
-      );
-    }
-    return finalFinalIds;
+  if (typeof payload !== "string") {
+    throw new Error("Gemini's chat list: the response has no list envelope (wrb.fr MaZiqc)");
   }
 
-  return finalIds;
+  let inner: unknown;
+  try {
+    inner = JSON.parse(payload);
+  } catch {
+    throw new Error("Gemini's chat list: the list envelope does not hold JSON");
+  }
+  if (!Array.isArray(inner) || (inner[2] != null && !Array.isArray(inner[2]))) {
+    throw new Error("Gemini's chat list: the list envelope is not [null, token, entries]");
+  }
+
+  const entries: unknown[] = inner[2] ?? [];
+  const ids: string[] = [];
+  for (const entry of entries) {
+    const id = bareConversationId(Array.isArray(entry) ? entry[0] : null);
+    if (id) ids.push(id);
+  }
+  if (entries.length > 0 && ids.length === 0) {
+    // Entries are there and none gave an id: the shape has moved (HVN-116).
+    throw new Error(
+      `Gemini's chat list: the response has ${entries.length} entries but none carries a chat id`,
+    );
+  }
+  return { ids, nextToken: typeof inner[1] === "string" ? inner[1] : null };
+}
+
+async function fetchGeminiChatListPage(
+  atToken: string,
+  pageToken: string | null,
+): Promise<GeminiChatListPage> {
+  const rpcPayload = JSON.stringify([GEMINI_LIST_RPC.pageSize, pageToken, [0, null, 1]]);
+  const body = new URLSearchParams({
+    "f.req": JSON.stringify([[[GEMINI_LIST_RPC.rpcId, rpcPayload, null, "generic"]]]),
+    at: atToken,
+  });
+  const response = await fetchWithTimeout(GEMINI_LIST_RPC.url, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: body.toString(),
+    timeoutMs: GEMINI_LIST_RPC.timeoutMs,
+  });
+  if (!response.ok) {
+    throw new Error(`Gemini's chat list: the list request failed: ${response.status}`);
+  }
+  return parseGeminiChatListPage(await response.text());
+}
+
+/**
+ * The chat ids that Gemini's rail shows. The rail holds only the latest chats, so it is a floor for
+ * the list, not the list (HVN-16).
+ */
+function railChatIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const entry of querySelectorAllDeep('[data-test-id="conversation"][data-conversation-id]')) {
+    const id = geminiChatIdOf(entry);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * Every chat id of the account, from Gemini's list RPC, without its "c_" prefix. Throws when it
+ * cannot read a whole list: no token, a failed request, an envelope that is not the list's, or fewer
+ * chats than the rail shows.
+ */
+export async function extractGeminiChatIds(): Promise<string[]> {
+  log.info("[Extractor] Listing Gemini chats through the list RPC...");
+  const atToken = findGeminiAtToken();
+
+  const chatIds = new Set<string>();
+  let pageToken: string | null = null;
+  let pages = 0;
+  do {
+    const page = await fetchGeminiChatListPage(atToken, pageToken);
+    pages++;
+    for (const id of page.ids) chatIds.add(id);
+    log.info(`[Extractor] Page ${pages}: ${page.ids.length} chats, ${chatIds.size} in total`);
+    pageToken = page.nextToken;
+  } while (pageToken && pages < GEMINI_LIST_RPC.maxPages);
+
+  if (pageToken) {
+    log.warn(
+      `[Extractor] Gemini's chat list has more than ${pages} pages: stopped at ${chatIds.size} chats.`,
+    );
+  }
+
+  const rail = railChatIds();
+  if (chatIds.size < rail.size) {
+    throw new Error(
+      `Gemini's chat list: the list holds ${chatIds.size} chats but the sidebar shows ${rail.size}`,
+    );
+  }
+  return Array.from(chatIds);
 }
