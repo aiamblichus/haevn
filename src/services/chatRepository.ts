@@ -14,6 +14,7 @@
 import Dexie from "dexie";
 import type { Chat, ChatMessage } from "../model/haevn_model";
 import { log } from "../utils/logger";
+import { charsOf } from "../utils/logShape";
 import * as ChatPersistence from "./chatPersistence";
 import { getDB } from "./db";
 import { SearchIndexManager } from "./searchIndexManager";
@@ -142,7 +143,7 @@ export namespace ChatRepository {
           : null,
       });
 
-      log.info(`Chat '${result.title}' (ID: ${result.chatId}) saved/updated`);
+      log.info(`Chat ${result.chatId} saved/updated (title: ${charsOf(result.title)})`);
 
       // Debug: sanity-check thinking parts presence for providers that support it (e.g., Claude)
       try {

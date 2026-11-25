@@ -3,6 +3,7 @@ import objectHash from "object-hash";
 import { createPromptWithSchema, parseResponse } from "structalign";
 import { safeSendMessage } from "../background/utils/messageUtils";
 import { log } from "../utils/logger";
+import { errorShape } from "../utils/logShape";
 import { isHeldForMove } from "./chatPersistence";
 import type {
   ChatEmbeddingRecord,
@@ -59,6 +60,17 @@ function hasMeaningfulMetadata(
   metadata: ChatMetadataRecord | null | undefined,
 ): metadata is ChatMetadataRecord {
   return !!metadata && metadata.source !== "unset";
+}
+
+/**
+ * A failed call to the LLM or embedding endpoint as the log may tell it (HVN-157): the status the
+ * endpoint answered with, not the body it sent back (that can echo the prompt, an excerpt of the
+ * chat). Any other error loses the quoted runs of its message.
+ */
+export function apiErrorForLog(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const status = /^(?:LLM|Embedding) API error \d+/.exec(message);
+  return status ? status[0] : errorShape(err);
 }
 
 async function scheduleProcessTick(): Promise<void> {
@@ -309,7 +321,10 @@ export async function processQueueTick(): Promise<void> {
     const retries = item.retries + 1;
     const errMsg = err instanceof Error ? err.message : String(err);
     const terminal = retries >= METADATA_MAX_RETRIES;
-    log.warn(`[MetadataService] Generation failed for ${item.chatId} (attempt ${retries})`, err);
+    log.warn(
+      `[MetadataService] Generation failed for ${item.chatId} (attempt ${retries})`,
+      apiErrorForLog(err),
+    );
 
     await getDB().metadataQueue.update(item.chatId, {
       status: terminal ? "failed" : "pending",
@@ -660,7 +675,7 @@ export async function processEmbeddingQueueTick(): Promise<void> {
 
       log.warn(
         `[MetadataService] Embedding generation failed for ${entry.item.chatId} (attempt ${retries})`,
-        err,
+        apiErrorForLog(err),
       );
     }
   }
@@ -915,14 +930,14 @@ export async function generateForChat(chatId: string): Promise<ChatMetadataRecor
   const result = parseResponse(stripReasoningBlocks(rawResponse), schema);
 
   if (!result.success) {
+    // The reply describes the chat (title, synopsis): its length and first character, not its words
     log.warn("[MetadataService] Parse diagnostics", {
       chatId,
       promptChars: prompt.length,
       estimatedPromptTokens: Math.round(prompt.length / METADATA_EST_CHARS_PER_TOKEN),
       responseChars: rawResponse.length,
       responseStartsWithBrace: rawResponse.trimStart().startsWith("{"),
-      responsePreviewStart: rawResponse.slice(0, 240),
-      responsePreviewEnd: rawResponse.slice(-240),
+      responseEndsWithBrace: rawResponse.trimEnd().endsWith("}"),
     });
     throw new Error(
       `Failed to parse LLM response: ${result.errors.map((e) => e.message).join(", ")}`,
@@ -1497,12 +1512,6 @@ async function callLLM(
 ): Promise<string> {
   const endpoint = `${url.replace(/\/$/, "")}/chat/completions`;
   const requestBody = buildChatCompletionBody(model, prompt, extraRequestParams);
-  // The extra parameters can hold anything the person typed, so the log names them and hides them.
-  const extraParamKeys = Object.keys(effectiveExtraParams(extraRequestParams));
-  const loggedBody = {
-    ...requestBody,
-    ...Object.fromEntries(extraParamKeys.map((key) => [key, "[REDACTED]"])),
-  };
   const requestHeaders = {
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -1514,7 +1523,9 @@ async function callLLM(
       ...requestHeaders,
       ...(apiKey ? { Authorization: "Bearer [REDACTED]" } : {}),
     },
-    body: loggedBody,
+    // The body holds the prompt (an excerpt of the chat) and the extra parameters the person
+    // typed: the log names its fields, never their values.
+    bodyFields: Object.keys(requestBody),
     promptChars: prompt.length,
     estimatedPromptTokens: Math.round(prompt.length / METADATA_EST_CHARS_PER_TOKEN),
   });

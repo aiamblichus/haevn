@@ -67,6 +67,7 @@ import type {
 } from "../types/workerMessages";
 import { sha256Hex, validateAndNormalizeChat } from "../utils/jsonImporter";
 import { log } from "../utils/logger";
+import { errorKind, errorShape } from "../utils/logShape";
 import { parseMarkdownContent } from "../utils/markdownImporter";
 import {
   beginRestore,
@@ -624,6 +625,15 @@ function handleIncoming(msg: WsIncoming, _apiKey: string): void {
 
 // ─── Request handling (mirrors nativeMessaging.ts logic) ─────────────────────
 
+/**
+ * A failed request as the log may tell it (HVN-157). The caller gets the error itself in the
+ * response; the log must not repeat what the request carried: a search error can quote the query,
+ * and a parse error of an import quotes the file's text.
+ */
+function wsErrorShape(action: string, err: unknown): string {
+  return action === "search" ? errorKind(err) : errorShape(err);
+}
+
 function handleRequest(req: WsRequest): void {
   const { id, action } = req;
   log.debug(`[WsBridge] Request: ${action} (id=${id})`);
@@ -633,7 +643,7 @@ function handleRequest(req: WsRequest): void {
       sendJson(response);
     })
     .catch((err) => {
-      log.error(`[WsBridge] Unhandled error for ${action}:`, err);
+      log.error(`[WsBridge] Unhandled error for ${action}:`, wsErrorShape(action, err));
       sendJson({
         id,
         success: false,
@@ -691,7 +701,7 @@ async function processRequest(req: WsRequest): Promise<WsResponse> {
       }
     }
   } catch (err) {
-    log.error(`[WsBridge] Error handling ${req.action}:`, err);
+    log.error(`[WsBridge] Error handling ${req.action}:`, wsErrorShape(req.action, err));
     return {
       id,
       success: false,

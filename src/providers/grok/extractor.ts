@@ -1,4 +1,5 @@
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import { RateLimiter } from "../../utils/rateLimit";
 import { ExportOptions } from "../interfaces";
@@ -99,7 +100,7 @@ async function fetchConversationMetadata(conversationId: string): Promise<GrokCo
 
   log.debug("[Grok Extractor] Fetched conversation metadata:", {
     conversationId: data.conversationId,
-    title: data.title,
+    title: charsOf(data.title),
   });
 
   return data;
@@ -169,7 +170,7 @@ async function fetchFullConversation(conversationId: string): Promise<GrokRawExt
 
   log.debug("[Grok Extractor] Full extraction complete:", {
     conversationId: result.conversation.conversationId,
-    title: result.conversation.title,
+    title: charsOf(result.conversation.title),
     nodeCount: result.responseNodes.length,
     responseCount: result.responses.length,
   });

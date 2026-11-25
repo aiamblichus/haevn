@@ -2,6 +2,7 @@
  * Codex session JSONL importer.
  */
 
+import { errorShape } from "../../utils/logShape";
 import type { CodexLine, CodexRawExtraction, CodexSessionMetaPayload } from "./model";
 
 function toTimestampMs(value: string | undefined): number | null {
@@ -55,7 +56,7 @@ export async function parseCodexJsonl(content: string): Promise<CodexRawExtracti
         models.add(parsed.payload.model);
       }
     } catch (error) {
-      console.warn("Failed to parse Codex JSONL line:", error);
+      console.warn("Failed to parse Codex JSONL line:", errorShape(error));
     }
   }
 

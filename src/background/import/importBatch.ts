@@ -15,6 +15,7 @@ import { queueGenerationForImportedChats } from "../../services/metadataService"
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { errorShape, fileNameShape } from "../../utils/logShape";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
 
 /**
@@ -106,8 +107,8 @@ export async function importChatBatch(
       } catch (err) {
         result.errors++;
         log.warn("[ImportBatch] Import skipped due to parsing/transformation error", {
-          file: item.name,
-          error: errorMessage(err),
+          file: fileNameShape(item.name),
+          error: errorShape(err),
         });
       }
     }

@@ -12,6 +12,7 @@ import { Progress } from "../../../components/ui/progress";
 import type { BackgroundEvent } from "../../../types/messaging";
 import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
+import { fileNameShape } from "../../../utils/logShape";
 import { buildImportStagingPath, deleteFileFromOpfs, writeFileToOpfs } from "../../../utils/opfs";
 import { useStatus } from "../../context/StatusContext";
 import { handleImport } from "../../import/importHandlers";
@@ -113,7 +114,10 @@ export const ImportModal = ({
     try {
       await deleteFileFromOpfs(stagedFilePathRef.current);
     } catch (_err: unknown) {
-      log.warn("[ImportModal] Failed to delete staged file", stagedFilePathRef.current);
+      log.warn(
+        "[ImportModal] Failed to delete staged file",
+        fileNameShape(stagedFilePathRef.current),
+      );
     } finally {
       stagedFilePathRef.current = null;
     }

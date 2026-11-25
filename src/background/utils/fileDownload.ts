@@ -2,6 +2,7 @@
 
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { fileNameShape } from "../../utils/logShape";
 
 export function handleFileDownload(
   message: Extract<BackgroundRequest, { action: "downloadFile" }>,
@@ -17,7 +18,8 @@ export function handleFileDownload(
       return;
     }
 
-    log.info("Creating data URL for file:", filename);
+    // An export's file name is made from the chat's title: the log names its shape, not it.
+    log.info("Creating data URL for file:", fileNameShape(filename));
 
     // Properly encode UTF-8 to base64 (handles Unicode correctly)
     // Convert string to UTF-8 bytes, then to base64
@@ -49,7 +51,12 @@ export function handleFileDownload(
             error: chrome.runtime.lastError.message || "Download failed",
           });
         } else {
-          log.info("File downloaded successfully:", filename, "Download ID:", downloadId);
+          log.info(
+            "File downloaded successfully:",
+            fileNameShape(filename),
+            "Download ID:",
+            downloadId,
+          );
 
           // Increment export count
           chrome.storage.sync.get(["exportCount"], (result) => {

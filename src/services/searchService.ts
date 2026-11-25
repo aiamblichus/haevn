@@ -22,6 +22,7 @@ import type {
 } from "../types/workerMessages";
 import { fireAndForget } from "../utils/error_utils";
 import { log } from "../utils/logger";
+import { charsOf, errorKind } from "../utils/logShape";
 import { sendWorkerRequest } from "../utils/workerApi";
 import { getDB } from "./db";
 import { inCategory, inDateRange, needsCategory } from "./searchFilters";
@@ -167,7 +168,8 @@ export namespace SearchService {
       }
       return [];
     } catch (error) {
-      log.error("Search failed", error);
+      // A search error can quote the query: its kind and length, not its words (HVN-157)
+      log.error("Search failed", errorKind(error));
       return [];
     }
   }
@@ -224,7 +226,7 @@ export namespace SearchService {
       });
       return results;
     } catch (error) {
-      log.error(`Failed to get all matches for chat ${chatId}`, error);
+      log.error(`Failed to get all matches for chat ${chatId}`, errorKind(error));
       return [];
     }
   }
@@ -280,16 +282,16 @@ export namespace SearchService {
     const scoped = parseScopedSearchQuery(query);
 
     log.info(`[SearchService] searchChatsStreaming called:`, {
-      query,
-      textQuery: scoped.textQuery,
-      idFilter: scoped.idFilter,
+      query: charsOf(query),
+      textQuery: charsOf(scoped.textQuery),
+      hasIdFilter: !!scoped.idFilter,
       maxChatsToScan,
       filterProvider,
     });
 
     let cancelled = false;
     const cancel = () => {
-      log.debug(`[SearchService] Search cancelled for query: "${query}"`);
+      log.debug(`[SearchService] Search cancelled for query: ${charsOf(query)}`);
       cancelled = true;
     };
 
@@ -307,7 +309,7 @@ export namespace SearchService {
         if (cancelled) return;
         const durationMs = performance.now() - startTime;
         log.info(`[SearchService] Search finished:`, {
-          query,
+          query: charsOf(query),
           totalResults,
           durationMs: durationMs.toFixed(2),
         });
@@ -348,8 +350,8 @@ export namespace SearchService {
               finish(found.length > maxChatsToScan);
             } catch (err) {
               log.error(`[SearchService] Error during ID-only search:`, {
-                query,
-                error: err instanceof Error ? err.message : String(err),
+                query: charsOf(query),
+                error: errorKind(err),
               });
               if (onError) onError(err instanceof Error ? err : new Error(String(err)));
             }
@@ -411,8 +413,8 @@ export namespace SearchService {
           },
         ).catch((err) => {
           log.error(`[SearchService] Error during search:`, {
-            query,
-            error: err instanceof Error ? err.message : String(err),
+            query: charsOf(query),
+            error: errorKind(err),
           });
           if (onError) onError(err instanceof Error ? err : new Error(String(err)));
         }),

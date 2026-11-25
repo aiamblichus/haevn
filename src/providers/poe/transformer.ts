@@ -18,6 +18,7 @@ import type {
   VideoResponsePart,
 } from "../../model/haevn_model";
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { processExternalAssets, type UrlAsset } from "../../utils/media_utils";
 import type { TransformOptions } from "../interfaces";
 import { stableMessageIds } from "../shared/stableIds";
@@ -134,16 +135,14 @@ async function createChat(poeData: PoeConversationData, options?: TransformOptio
 
     // Debug: log attachment URLs vs what's in the message text
     if (isAssistant && assets.length > 0) {
+      // Counts only: the text, and the URLs (which can name a file), stay out of the log.
       log.debug(`[Poe Transformer] Attachment debug for message ${i}:`, {
-        textPreview: msg.text.substring(0, 300),
-        attachments: msg.attachments.map((att) => ({
-          isInline: att.isInline,
-          url: att.url,
-          fileUrl: att.file?.url,
-        })),
-        markdownImageUrls,
-        resolvedAssetUrls: assets.map((asset) => asset.url),
-        collectedInlineUrls: dedupedInlineUrls,
+        text: charsOf(msg.text),
+        attachments: msg.attachments.length,
+        inlineAttachments: msg.attachments.filter((att) => att.isInline).length,
+        markdownImageUrls: markdownImageUrls.length,
+        resolvedAssetUrls: assets.length,
+        collectedInlineUrls: dedupedInlineUrls.length,
       });
     }
 

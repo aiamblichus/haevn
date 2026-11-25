@@ -1,6 +1,7 @@
 // Gemini Chat Extraction - TypeScript Functions
 
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import { detectPlatform } from "../shared/platformDetector";
 import { formatLocalTime, generateFallbackId } from "../shared_utils";
@@ -388,7 +389,7 @@ export async function extractGeminiMessages(): Promise<GeminiMessage[]> {
       }
 
       if (contentText) {
-        log.info(`[Gemini] contentText: ${contentText.substring(0, 100)}...`);
+        log.info(`[Gemini] contentText: ${charsOf(contentText)}`);
       }
 
       // Skip only if ALL content types are empty (no text, no files, no thinking)
@@ -516,7 +517,11 @@ export async function extractGeminiConversationData(
     extractedAt: new Date().toISOString(),
   };
 
-  log.info("Extracted Gemini conversation data:", data);
+  log.info("Extracted Gemini conversation data:", {
+    conversationId: data.conversationId,
+    title: charsOf(data.title),
+    messageCount: data.messageCount,
+  });
   return data;
 }
 

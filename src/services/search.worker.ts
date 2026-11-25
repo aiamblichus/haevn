@@ -7,6 +7,7 @@ import type {
   SearchWorkerMessage,
 } from "../types/workerMessages";
 import { log } from "../utils/logger";
+import { errorKind } from "../utils/logShape";
 import { HaevnDatabase } from "./db";
 import {
   type BulkWindow,
@@ -824,7 +825,8 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
       self.postMessage({ type: "removeComplete", success: true });
     }
   } catch (e) {
-    log.error("[SearchWorker] Message error:", e);
+    // A search error can quote the query (a SQLite syntax error does): the log names its kind
+    log.error("[SearchWorker] Message error:", msg.type === "search" ? errorKind(e) : e);
     const requestId = "requestId" in msg ? msg.requestId : undefined;
     self.postMessage({ type: "error", error: String(e), requestId });
   }

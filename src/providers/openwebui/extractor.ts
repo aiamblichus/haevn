@@ -1,4 +1,5 @@
 import { log } from "../../utils/logger";
+import { charsOf, shapeOf } from "../../utils/logShape";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import { detectPlatform } from "../shared/platformDetector";
 import type {
@@ -73,11 +74,11 @@ async function apiGet<T>(path: string): Promise<T> {
   });
   if (!resp.ok) {
     const errorText = await resp.text();
-    log.error(`[OpenWebUI] API error ${resp.status}:`, errorText.substring(0, 200));
+    log.error(`[OpenWebUI] API error ${resp.status}:`, { body: charsOf(errorText) });
     throw new Error(`Open WebUI API error ${resp.status}: ${resp.statusText}`);
   }
   const json = (await resp.json()) as T;
-  log.debug(`[OpenWebUI] API GET ${path} response:`, json);
+  log.debug(`[OpenWebUI] API GET ${path} response:`, { response: shapeOf(json) });
   return json;
 }
 
@@ -106,7 +107,7 @@ export async function fetchOpenWebUIConversation(chatId: string): Promise<OpenWe
     hasSystemRoot: !!chat.system,
     hasSystemNested: !!chat.chat?.system,
     hasSystemParams: !!chat.chat?.params?.system,
-    systemSnippet: systemPrompt?.substring(0, 50),
+    systemPrompt: charsOf(systemPrompt),
     folderId: chat.folder_id,
   });
 
@@ -121,8 +122,7 @@ export async function fetchOpenWebUIConversation(chatId: string): Promise<OpenWe
         .reverse()
         .map((f) => {
           const p = f.data?.system_prompt;
-          if (p)
-            log.debug(`[OpenWebUI] Found system prompt in folder "${f.name}":`, p.substring(0, 50));
+          if (p) log.debug("[OpenWebUI] Found a system prompt in a folder:", charsOf(p));
           return p;
         })
         .filter((s): s is string => !!s);

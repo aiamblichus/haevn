@@ -13,6 +13,7 @@ import { getStorageAdapter } from "../../storage";
 import type { ImportSourceType, ImportWorkerResponse } from "../../types/workerMessages";
 import { fireAndForget } from "../../utils/error_utils";
 import { log } from "../../utils/logger";
+import { fileNameShape, messageShape, scrubMessage } from "../../utils/logShape";
 import { sendWorkerRequest } from "../../utils/workerApi";
 import { handleGenerateThumbnails } from "../handlers/galleryHandlers";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
@@ -114,7 +115,7 @@ async function requestDeleteStagedFile(path?: string): Promise<void> {
       },
     );
   }).catch((err) => {
-    log.warn(`[ImportOrchestrator] Failed to delete staged file ${path}:`, err);
+    log.warn(`[ImportOrchestrator] Failed to delete staged file ${fileNameShape(path)}:`, err);
   });
 }
 
@@ -275,7 +276,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
         // Log the skip reason for debugging
         log.warn(
           `[ImportOrchestrator] Chat skipped: ${response.chatId || "unknown"}`,
-          `Reason: ${response.reason || "Unknown"}`,
+          `Reason: ${scrubMessage(response.reason || "Unknown")}`,
         );
         break;
       }
@@ -287,7 +288,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
         // A chat that failed to parse or save; kept apart from skipped duplicates
         log.warn(
           `[ImportOrchestrator] Chat failed: ${response.chatId || "unknown"}`,
-          `Reason: ${response.reason || "Unknown"}`,
+          `Reason: ${scrubMessage(response.reason || "Unknown")}`,
         );
         break;
       }
@@ -446,7 +447,7 @@ export async function handleWorkerResponse(response: ImportWorkerResponse): Prom
 
       default: {
         const exhaustiveCheck: never = response;
-        log.warn("[ImportOrchestrator] Unknown response type:", exhaustiveCheck);
+        log.warn("[ImportOrchestrator] Unknown response type:", messageShape(exhaustiveCheck));
       }
     }
   } catch (error) {

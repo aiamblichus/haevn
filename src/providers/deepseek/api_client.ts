@@ -1,4 +1,5 @@
 import { log } from "../../utils/logger";
+import { charsOf } from "../../utils/logShape";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import type { DeepseekApiChatListResponse, DeepseekApiResponse } from "./model";
 
@@ -56,7 +57,7 @@ export class DeepseekApiClient {
       log.error("[DeepSeek] API request failed", {
         status: response.status,
         endpoint,
-        errorText,
+        body: charsOf(errorText),
       });
       throw new Error(`DeepSeek API error: ${response.status} ${response.statusText}`);
     }
@@ -76,7 +77,7 @@ export class DeepseekApiClient {
     if (data.code !== 0) {
       log.error("[DeepSeek] API returned error code", {
         code: data.code,
-        msg: data.msg,
+        msg: charsOf(data.msg),
         endpoint,
       });
       throw new Error(`DeepSeek API error: ${data.msg || "Unknown error"} (code: ${data.code})`);
@@ -86,7 +87,7 @@ export class DeepseekApiClient {
     if (data.data?.biz_code !== undefined && data.data.biz_code !== 0) {
       log.error("[DeepSeek] Business logic error", {
         biz_code: data.data.biz_code,
-        biz_msg: data.data.biz_msg,
+        biz_msg: charsOf(data.data.biz_msg),
         endpoint,
       });
       throw new Error(

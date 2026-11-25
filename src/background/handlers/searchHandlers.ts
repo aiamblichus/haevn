@@ -6,6 +6,7 @@ import { SearchQueryError } from "../../services/searchQuery";
 import { SyncService } from "../../services/syncService";
 import type { BackgroundEvent, BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { charsOf, errorKind } from "../../utils/logShape";
 import { safeSendMessage } from "../utils/messageUtils";
 
 // Track active streaming searches for cancellation
@@ -23,7 +24,8 @@ export async function handleSearchChats(
   try {
     const query: string = (message.query || "").trim();
     const filterProvider = message.filterProvider;
-    log.info(`[SearchHandler] handleSearchChats called with query: "${query}"`);
+    // A search query is the person's words: the log names its length, not it (HVN-157).
+    log.info(`[SearchHandler] handleSearchChats called with query: ${charsOf(query)}`);
     if (!query) {
       log.debug("[SearchHandler] Empty query, returning empty results");
       sendResponse({ success: true, results: [] });
@@ -34,7 +36,7 @@ export async function handleSearchChats(
     const allResults: SearchResult[] = [];
 
     log.debug("[SearchHandler] Starting streaming search (non-streaming mode)", {
-      query,
+      query: charsOf(query),
       filterProvider,
       streamBatchSize: 50,
       maxChatsToScan: 1000,
@@ -55,7 +57,7 @@ export async function handleSearchChats(
       },
       onComplete: (stats) => {
         log.info(`[SearchHandler] Search complete (handleSearchChats):`, {
-          query,
+          query: charsOf(query),
           totalResults: allResults.length,
           indexRebuilding: stats.indexRebuilding,
           indexIncomplete: stats.indexIncomplete,
@@ -70,8 +72,8 @@ export async function handleSearchChats(
       },
       onError: (error) => {
         log.error(`[SearchHandler] Search error (handleSearchChats):`, {
-          query,
-          error: error.message,
+          query: charsOf(query),
+          error: errorKind(error),
         });
         sendResponse({
           success: false,
@@ -101,7 +103,7 @@ export async function handleSearchChatsStreaming(
     const query: string = (message.query || "").trim();
     const filterProvider = message.filterProvider;
     log.info(`[SearchHandler] handleSearchChatsStreaming called:`, {
-      query,
+      query: charsOf(query),
       filterProvider,
       streamBatchSize: message.streamBatchSize,
       maxChatsToScan: message.maxChatsToScan,
@@ -119,7 +121,7 @@ export async function handleSearchChatsStreaming(
     if (cancelledCount > 0) {
       log.info(`[SearchHandler] Cancelling ${cancelledCount} existing search(es)`);
       for (const [existingQuery, controller] of activeStreamingSearches.entries()) {
-        log.debug(`[SearchHandler] Cancelling search for query: "${existingQuery}"`);
+        log.debug(`[SearchHandler] Cancelling search for query: ${charsOf(existingQuery)}`);
         controller.cancel();
         activeStreamingSearches.delete(existingQuery);
       }
@@ -142,7 +144,7 @@ export async function handleSearchChatsStreaming(
       filterProvider,
       onResults: (batch) => {
         log.debug(`[SearchHandler] onResults callback called:`, {
-          query,
+          query: charsOf(query),
           batchSize: batch.length,
           results: batch.map((r) => ({
             chatId: r.chatId,
@@ -176,7 +178,7 @@ export async function handleSearchChatsStreaming(
       },
       onComplete: (stats) => {
         log.info(`[SearchHandler] onComplete callback called:`, {
-          query,
+          query: charsOf(query),
           ...stats,
         });
         // Broadcast completion
@@ -192,9 +194,8 @@ export async function handleSearchChatsStreaming(
       },
       onError: (error) => {
         log.error(`[SearchHandler] onError callback called:`, {
-          query,
-          error: error.message,
-          errorStack: error.stack,
+          query: charsOf(query),
+          error: errorKind(error),
         });
         // Broadcast error
         broadcastEvent({
@@ -222,9 +223,9 @@ export async function handleSearchChatsStreaming(
     log.debug(`[SearchHandler] Sending immediate response to caller`);
     sendResponse({ success: true, message: "Streaming search started" });
   } catch (err: unknown) {
+    // Not the message and not the stack (it opens with the message): a search error can quote the query.
     log.error("[SearchHandler] Exception in handleSearchChatsStreaming:", {
-      error: err instanceof Error ? err.message : String(err),
-      errorStack: err instanceof Error ? err.stack : undefined,
+      error: errorKind(err),
     });
     sendResponse({
       success: false,
