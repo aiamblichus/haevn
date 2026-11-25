@@ -177,8 +177,9 @@ interface WsListOptions {
 type WsLogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
 /**
- * What `haevn logs` may ask for: the service's filter (the level and the context are exact, the
- * match is a case-insensitive substring) and how many of the newest entries to answer.
+ * What `haevn logs` may ask for: the service's filter (the level is that level and above, the
+ * context is exact, the match is a case-insensitive substring) and how many of the newest entries
+ * to answer.
  */
 interface WsLogsOptions {
   limit?: number;
@@ -1090,8 +1091,8 @@ const LOG_LEVELS: readonly WsLogLevel[] = ["DEBUG", "INFO", "WARN", "ERROR"];
 
 /**
  * `haevn logs` (HVN-156): the same read as the extension's `getLogs` message (haevnDebug.getLogs),
- * through the same service, then the newest `limit` entries, oldest first. Some entries carry text
- * (a chat title, a search query, part of a reply), so the answer is as private as the log.
+ * through the same service, then the newest `limit` entries, oldest first. Until HVN-157 some entries
+ * carry text (a chat title, a search query, part of a reply), so the answer is as private as the log.
  */
 async function handleLogs(
   id: string,

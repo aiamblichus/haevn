@@ -162,10 +162,11 @@ export interface HealthOptions {
   totalMs?: number;
 }
 
-/** What `haevn logs` asks the extension for: the level and context are exact, the match a substring. */
+/** What `haevn logs` asks the extension for: the level is that level and above, the context exact. */
 export interface LogsOptions {
   /** The newest entries to answer, 1 to 1000 (default 200). */
   limit?: number;
+  /** Entries at this level and above: `WARN` keeps WARN and ERROR. */
   level?: "DEBUG" | "INFO" | "WARN" | "ERROR";
   context?: string;
   match?: string;

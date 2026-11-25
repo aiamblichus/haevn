@@ -250,7 +250,7 @@ Notes:
 ### `logs` - Read the extension's log
 
 ```bash
-haevn logs -n 200 --level warn                 # the newest WARN entries
+haevn logs -n 200 --level warn                 # the newest WARN and ERROR entries
 haevn logs --context background --match sync   # the service worker's entries that mention sync
 haevn logs -f json                             # the entries as the extension holds them
 ```
@@ -259,13 +259,13 @@ Reads the extension's log buffer, the service worker's recent entries, through t
 
 Options:
 - `-n, --limit <n>` - The newest entries to show, 1 to 1000 (default 200)
-- `--level <level>` - Only entries at exactly this level: `debug`, `info`, `warn` or `error`. It does not include the levels above it, so `--level warn` leaves out the errors
+- `--level <level>` - Only entries at this level and above: `debug` (every entry), `info`, `warn` or `error`. `--level warn` gives WARN and ERROR, and leaves out INFO and DEBUG
 - `--context <name>` - Only entries logged in this context, by exact name (`background`, `popup`, `offscreen`, `content-tab-<id>`)
 - `--match <text>` - Only entries whose message, context or data contains the text (any case)
 - `-f, --format <fmt>` - Output format (text, json); json gives each entry whole, with its data and stack
 
 Notes:
-- **Private.** An entry names a chat by its id and a provider by its name, but some entries carry text too: a chat title, a search query, a part of a reply or of a system prompt. Read the output before it goes into a ticket.
+- **Private, until HVN-157 lands.** A line can carry a chat title or some chat text (a search query, a part of a reply or of a system prompt) as well as the chat's id and the provider's name. Read the output before it goes into a ticket. HVN-157 takes the text out of the log lines.
 - The buffer keeps the last 1000 entries by default, so an older sync may have scrolled out of it.
 - Exit code 1 when the daemon or the extension fails; 0 otherwise, also when nothing matches.
 

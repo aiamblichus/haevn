@@ -3,16 +3,16 @@
  *
  * Usage:
  *   haevn logs                            # the newest 200 entries, oldest first
- *   haevn logs -n 50 --level warn         # the newest 50 entries at exactly WARN
+ *   haevn logs -n 50 --level warn         # the newest 50 entries at WARN and ERROR
  *   haevn logs --context background       # entries logged in the service worker
  *   haevn logs --match sync               # entries whose message, context or data has "sync"
  *   haevn logs -f json                    # the entries as the extension holds them, with data and stacks
  *
  * The buffer lives in the extension's service worker and keeps the recent entries of every context.
- * The filter is the one the extension's own log reader uses: --level keeps exactly that level, not
- * that level and above; --context is an exact name; --match is a case-insensitive substring. A log
- * line names a chat by its id and a provider by its name, but some lines carry text as well (a chat
- * title, a search query, a part of a reply or of a system prompt), so the output is private.
+ * The filter is the one the extension's own log reader uses: --level keeps that level and the ones
+ * above it (warn gives WARN and ERROR); --context is an exact name; --match is a case-insensitive
+ * substring. Until HVN-157 lands, a log line can carry a chat title or some chat text as well as the
+ * chat's id and the provider's name, so read the output as private before you share it.
  * Exit code: 0 for an answer, also when nothing matches; 1 when the daemon or the extension fails.
  */
 
@@ -31,7 +31,7 @@ export default defineCommand({
   meta: {
     name: "logs",
     description:
-      "Read the extension's log, the newest entries last (some carry chat text: keep them private)",
+      "Read the extension's log, the newest entries last (until HVN-157, lines can carry chat titles or text: keep them private)",
   },
   args: {
     limit: {
@@ -41,7 +41,8 @@ export default defineCommand({
     },
     level: {
       type: "string",
-      description: "Only entries at this level, exactly: debug, info, warn or error",
+      description:
+        "Only entries at this level and above: debug, info, warn or error (warn gives WARN and ERROR)",
     },
     context: {
       type: "string",
