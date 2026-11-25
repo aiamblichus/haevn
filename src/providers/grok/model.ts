@@ -24,6 +24,8 @@ export interface GrokConversation {
 export interface GrokConversationsResponse {
   conversations: GrokConversation[];
   textSearchMatches: unknown[];
+  /** Present while more chats remain: send it back as `pageToken` for the next page. */
+  nextPageToken?: string;
 }
 
 /**
