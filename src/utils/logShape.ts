@@ -27,8 +27,10 @@ export function scrubMessage(message: string, knownIds: readonly string[] = []):
     }
   }
   text = text.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
-  text = text.replace(/(['"`])((?:(?!\1).){0,400}?)\1/g, (whole, quote: string, inner: string) =>
-    KEEPABLE_QUOTED.test(inner) ? whole : `${quote}…${quote}`,
+  text = text.replace(
+    /(['"`])((?:(?!\1)[\s\S]){0,400}?)\1/g,
+    (whole, quote: string, inner: string) =>
+      KEEPABLE_QUOTED.test(inner) ? whole : `${quote}…${quote}`,
   );
   text = text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "<id>");
   text = text.replace(/[A-Za-z0-9_-]{20,}/g, "<id>");

@@ -265,7 +265,7 @@ Options:
 - `-f, --format <fmt>` - Output format (text, json); json gives each entry whole, with its data and stack
 
 Notes:
-- **No chat content.** A line names a chat by its id and a provider by its name, and gives sizes and counts instead of chat text, titles, search queries, file names or prompts (HVN-157). A provider's own short error message can still appear, so glance at the output before it goes into a ticket.
+- **No chat content.** A line names a chat by its id and a provider by its name, and gives sizes and counts instead of chat text, titles, search queries, file names or prompts. A provider's own short error message can still appear, so glance at the output before it goes into a ticket.
 - The buffer keeps the last 1000 entries by default, so an older sync may have scrolled out of it.
 - Exit code 1 when the daemon or the extension fails; 0 otherwise, also when nothing matches.
 

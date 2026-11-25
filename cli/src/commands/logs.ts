@@ -80,7 +80,12 @@ export default defineCommand({
     try {
       entries = await daemonRequest<LogEntry[]>({ action: "logs", options });
     } catch (err) {
-      consola.error(err instanceof Error ? err.message : String(err));
+      const text = err instanceof Error ? err.message : String(err);
+      consola.error(
+        /unknown action/i.test(text)
+          ? "the extension does not know logs: it predates haevn logs, update the extension"
+          : text,
+      );
       process.exit(1);
     }
 

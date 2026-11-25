@@ -126,5 +126,7 @@ describe("the one-time purge of persisted log entries (HVN-157)", () => {
     await service.init();
 
     expect(service.getConfig().minLevel).toBe(2);
+    expect(removed).not.toContain("logger:config");
+    expect(stored.get("logger:config")).toEqual({ minLevel: 2, maxEntries: 1000, persistCount: 500 });
   });
 });

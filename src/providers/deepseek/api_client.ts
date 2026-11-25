@@ -1,5 +1,5 @@
 import { log } from "../../utils/logger";
-import { charsOf } from "../../utils/logShape";
+import { charsOf, errorKind } from "../../utils/logShape";
 import { fetchWithTimeout } from "../../utils/network_utils";
 import type { DeepseekApiChatListResponse, DeepseekApiResponse } from "./model";
 
@@ -29,7 +29,8 @@ export class DeepseekApiClient {
     } catch (error) {
       // Never the token itself: the log can end up in a bug report (HVN-105)
       log.error("[DeepSeek] Failed to parse token from localStorage", {
-        error,
+        // A JSON.parse error quotes the start of the text it read: here, the token.
+        error: errorKind(error),
         tokenLength: tokenStr.length,
       });
       throw new Error("Failed to parse DeepSeek auth token");

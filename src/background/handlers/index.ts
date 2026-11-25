@@ -4,6 +4,7 @@ import { diagnosticsService } from "../../services/diagnosticsService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import { isBackgroundRequest } from "../../types/messaging";
 import { log } from "../../utils/logger";
+import { originAndPath } from "../../utils/network_utils";
 import * as chatHandlers from "./chatHandlers";
 import * as exportHandlers from "./exportHandlers";
 import * as galleryHandlers from "./galleryHandlers";
@@ -122,7 +123,8 @@ export function handleMessage(
   }
 
   const opId = diagnosticsService.trackOperation(message.action, {
-    sender: _sender.url,
+    // Without query or fragment: a content script's tab URL can hold typed words (HVN-157).
+    sender: _sender.url ? originAndPath(_sender.url) : undefined,
   });
 
   let result: boolean | Promise<unknown>;

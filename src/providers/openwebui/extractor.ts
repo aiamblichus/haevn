@@ -1,6 +1,6 @@
 import { log } from "../../utils/logger";
 import { charsOf, shapeOf } from "../../utils/logShape";
-import { fetchWithTimeout } from "../../utils/network_utils";
+import { fetchWithTimeout, originAndPath } from "../../utils/network_utils";
 import { detectPlatform } from "../shared/platformDetector";
 import type {
   OpenWebUIChatResponse,
@@ -34,7 +34,7 @@ export function isOpenWebUIPlatform(): boolean {
   });
 
   log.debug("[OpenWebUI] Platform detection result:", detected, {
-    url: window.location.href,
+    url: originAndPath(window.location.href),
     metaApple: !!document.querySelector('meta[name="apple-mobile-web-app-title"]'),
     metaDesc: !!document.querySelector('meta[name="description"]'),
   });

@@ -87,7 +87,7 @@ export async function handleSearchChats(
     // We return true to keep the channel open for async response.
     return;
   } catch (err: unknown) {
-    log.error("[SearchHandler] Exception in handleSearchChats:", err);
+    log.error("[SearchHandler] Exception in handleSearchChats:", errorKind(err));
     sendResponse({
       success: false,
       error: err instanceof Error ? err.message : "Search failed",
