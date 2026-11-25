@@ -22,9 +22,8 @@ const TurndownService = require("turndown");
 const GEMINI_SIDEBAR = {
   scrollBlockedClass: "disable-scroll",
   openButton: 'button[aria-label="Open sidebar"]',
-  // The same button in the collapsed rail. Expanded, that test id is "New chat": click it only
-  // when the scroller is already known to be blocked.
-  openButtonByTestId: '[data-test-id="side-nav-sparkle-button"]',
+  // No fallback by test id: the sparkle button is labelled "Gemini - new chat" even in the
+  // collapsed rail (read live 2026-11-25), and clicking it would leave the chat mid-sync.
   closeButton: 'button[aria-label="Close sidebar"]',
   openTimeoutMs: 3000,
 } as const;
@@ -946,10 +945,7 @@ async function scrollSidebarForChatIds(sidebar: { openedByUs: boolean }): Promis
     scrollContainer.scrollHeight <= scrollContainer.clientHeight &&
     querySelectorAllDeep('[data-test-id="conversation"]').length > 0;
   const openButton = (
-    blocked || noRoomToScroll
-      ? (querySelectorAllDeep(GEMINI_SIDEBAR.openButton)[0] ??
-        (blocked ? querySelectorAllDeep(GEMINI_SIDEBAR.openButtonByTestId)[0] : undefined))
-      : undefined
+    blocked || noRoomToScroll ? querySelectorAllDeep(GEMINI_SIDEBAR.openButton)[0] : undefined
   ) as HTMLElement | undefined;
   if (openButton) {
     log.info("[Extractor] The sidebar is collapsed. Clicking Open sidebar.");

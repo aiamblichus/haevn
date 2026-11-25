@@ -128,8 +128,9 @@ const CLOSE_BUTTON = 'button[aria-label="Close sidebar"]';
 /**
  * A fake Gemini sidebar that behaves as ohm measured it live (HVN-16): collapsed, the scroller is
  * overflow hidden with class disable-scroll and scrolling it loads nothing; expanded, each scroll to
- * the bottom loads another page. The sparkle button is "Open sidebar" collapsed and "New chat"
- * expanded; the toggle reads "Close sidebar" expanded. Ids are synthetic.
+ * the bottom loads another page. The sparkle button reads "Gemini - new chat" in both states (read
+ * live 2026-11-25), so it is never an opener; the toggle reads "Close sidebar" expanded. Ids are
+ * synthetic.
  */
 function stubGeminiSidebar(options: {
   expanded: boolean;
@@ -193,7 +194,7 @@ function stubGeminiSidebar(options: {
       if (selector === "infinite-scroller") return [scroller];
       if (selector === '[data-test-id="conversation"]') return all.slice(0, state.loaded);
       if (selector === OPEN_BUTTON) return !state.expanded || options.neverExpands ? [open] : [];
-      if (selector === SPARKLE_BUTTON) return [state.expanded ? newChat : open];
+      if (selector === SPARKLE_BUTTON) return [newChat];
       if (selector === CLOSE_BUTTON) return state.expanded || options.neverExpands ? [close] : [];
       return [];
     },
