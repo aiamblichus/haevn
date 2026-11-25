@@ -1,6 +1,6 @@
 ---
 name: browser-check
-description: "How to drive HAEVN in a real Chrome: the dev and prod profiles and their two MCP servers, setting up the dev profile, the check loop, fixtures, the traps we have hit, and CLI checks."
+description: "How to drive HAEVN in a real Chrome: the dev profile with its DevTools MCP server, αιamblichus's Chrome with surf and its house rules, setting up, the check loop, fixtures, the traps we have hit, and CLI checks."
 ---
 
 <!-- generated from /project/haevn/skills/browser-check by pnpm run skills:sync; edit the KB note, not this file -->
@@ -8,16 +8,30 @@ description: "How to drive HAEVN in a real Chrome: the dev and prod profiles and
 
 How to drive HAEVN in a real Chrome, check a change there, and record the verdict. `dev-guide` covers what to do inside the extension (`haevnDebug`, logs, state). This note covers which browser, how to reach it, how to seed it, and the traps. Add to it whenever a check teaches you something.
 
-## Two profiles, two MCP servers
+## Two browsers, two tools
 
-| | Dev (test) profile | Prod profile |
+| | Dev (test) profile | Prod: αιamblichus's Chrome |
 | --- | --- | --- |
-| What | A throwaway Chrome profile with HAEVN loaded unpacked from this repo's `dist/` | αιamblichus's own Chrome: his tabs, logins and real archive |
-| MCP server | `chrome-devtools-haevn` | `chrome-devtools` |
-| How it connects | `--browserUrl=http://127.0.0.1:9223 --categoryExtensions` | `--autoConnect` (Chrome's `chrome://inspect` remote debugging) |
-| Use it for | Every check: seed fixtures, delete, pause, cancel, break things | Only with his say-so, for something that needs his real data; read-only; never seed, delete or change settings there |
+| What | A throwaway Chrome profile with HAEVN loaded unpacked from this repo's `dist/` | His own Chrome: his tabs, logins and real archive |
+| Tool | the `chrome-devtools-haevn` MCP server | `surf` (a shell command, so every seat has it) |
+| How it connects | `--browserUrl=http://127.0.0.1:9223 --categoryExtensions` | the surf extension in his Chrome |
+| Use it for | Every check of the extension itself: its pages (`chrome-extension://…`), seed fixtures, delete, pause, cancel, break things | Provider pages and live diagnosis, read-only, with his say-so: the next section |
 
-If a brief does not name the profile, it is the dev profile. A subagent that may drive a browser is told the hard rule in its brief: only `mcp__chrome-devtools-haevn__*`, never `mcp__chrome-devtools__*`.
+If a brief does not name the browser, it is the dev profile. A subagent that may drive the dev profile is told: only `mcp__chrome-devtools-haevn__*`. There is no DevTools server for his Chrome any more (removed 2026-11-25, after the surf trial): surf replaced it there, and DevTools stays only because surf cannot control `chrome-extension://` pages ("Cannot control this page").
+
+## His Chrome, with surf
+
+Read surf's own skill before the first command: `/opt/homebrew/lib/node_modules/surf-cli/skills/surf/SKILL.md` (surf 2.26; `surf --help`, `surf --help-topic <t>`). Its manual wins over anything here. The house rules on top of it, which every brief repeats:
+
+- **Your own session**, named for you and the ticket: `export SURF_SESSION=haevn-<you>-<ticket>`, then `surf session.ensure "$SURF_SESSION" about:blank`. It is a background window; never act in his tabs. Close it at the end (`surf session.close`) and check `surf session.list`.
+- **`--no-diff` from the first command** on any page of his: the diff prints page text into your transcript.
+- **Read-only.** No sync, import, restore, delete or settings change, in HAEVN or on a provider. Scrolling and reading are fine; a `click` has no write gate in surf, so the rule lives in the brief: only clicks that change nothing (open a menu, expand a section).
+- **No `semantic.*`** (it sends page text to a model service) and **no AI-site commands** (`ask`/`use` on ChatGPT, Gemini and the rest): his chats are the subject, not a tool.
+- **Raw network output is secret**: `network.*` prints auth headers and tokens. Read it, describe its shape, never paste it.
+- **Screenshots auto-save to `/tmp`** (`/tmp/pi-auto-*.png`): use `--no-save` or delete them, and never keep a picture of a chat.
+- **Private data stays private**: shapes, counts, hosts and URL kinds go into tickets; chat text, titles and full signed URLs do not. Raw dumps go in `$TMPDIR/<you>-<ticket>/` and are deleted.
+
+What we learned in the trial: `wait.element … visible` times out in a background window, so probe with `js` instead; `js` runs in the page's own world, under the page's CSP (Gemini blocks `fetch` of `blob:` URLs there, which is itself evidence); and to read the extension's log, use `haevn logs`, not the archive page surf cannot reach.
 
 ## Setting up the dev profile (once per machine)
 
@@ -31,7 +45,6 @@ If a brief does not name the profile, it is the dev profile. A subagent that may
    ```json
    {
      "mcpServers": {
-       "chrome-devtools": { "command": "npx", "args": ["chrome-devtools-mcp@latest", "--autoConnect"] },
        "chrome-devtools-haevn": { "command": "npx", "args": ["chrome-devtools-mcp@latest", "--browserUrl=http://127.0.0.1:9223", "--categoryExtensions"] }
      }
    }
@@ -60,8 +73,7 @@ Delete `transcripts/browser-check/` when the check is done. The dev profile can 
 
 ## Traps we have hit
 
-- **`chrome://` pages cannot be opened through the MCP**, in either server. Extension pages need `--categoryExtensions`.
-- **`Could not read DevToolsActivePort … EPERM`** on the prod server: macOS app-data protection on Chrome's profile folder, not a sandbox. The session's terminal process (herdr-core, launched by launchd) is the app asking. It went away once remote debugging was on in `chrome://inspect` and the server was started with `--autoConnect`. The `chrome://inspect` style serves no `/json` over HTTP, so `curl` on its port shows nothing; that is normal.
+- **`chrome://` pages cannot be opened through the MCP.** Extension pages need `--categoryExtensions`. surf refuses extension pages ("Cannot control this page"); `chrome://` with surf is untried.
 - **Uploads come only from inside the working tree.** Stage fixtures under the gitignored `transcripts/`, not the scratchpad.
 - **Downloads land in `~/Downloads`, which a sandboxed seat cannot read.** To inspect an export ZIP, either set the dev profile's download folder to `transcripts/browser-check/downloads/` (Chrome settings → Downloads, once), or capture the bytes in the service worker by wrapping `chrome.downloads.download` and reload the extension afterwards to remove the wrapper. Test ZIPs left in `~/Downloads` are αιamblichus's to delete; say so.
 - **The popup opened as a tab answers every runtime message with `null`** while it is open (HVN-67), so checks of the archive go wrong with `popup.html` open. Close it before checking anything else.
@@ -72,9 +84,9 @@ Delete `transcripts/browser-check/` when the check is done. The dev profile can 
 - **Native confirms:** `press_key` accepts a `window.confirm` silently. To test the dismiss branch, trigger it inside `evaluate_script` with `dialogAction: "dismiss"`.
 - **The Import dialog swaps its file input** when the provider changes. Choose the provider, take a fresh snapshot, then `upload_file` to the new "Choose File" uid.
 - **The search worker's logs do not reach the page's `haevnDebug.getLogs()`, nor the MCP; its heap is not reachable either.** The index is a SQLite FTS5 file in an OPFS pool at `.haevn-search/` (opaque names inside; `media/` sits beside it and must survive anything search does). A rebuild writes the other of two slots and swaps, so search keeps answering during it and a rebuild is not visible as a pause. To see one, listen in the page for `indexRebuildProgress`/`indexRebuildComplete` on `chrome.runtime.onMessage` (they arrive as `workerMessage` broadcasts). For memory, compare the extension renderer in Chrome's task manager between builds; there is no worker-heap reading here. The old `lunrIndex` table is gone (Dexie version 21, HVN-89); a bulk sync's catch-up window is the `search:bulk-window` row of the `cache` table (HVN-88), readable from the page with `indexedDB`.
-- **Not every seat has the browser tools.** The read-only seats (Mechanic, Reviewer, Cartographer) have files and a shell but no `mcp__chrome-devtools-haevn__*` tools. Give browser reproduction to a seat with all tools (Limner, Builder, Journeyman), or do it yourself, and tell the read-only seat to diagnose from code and say what a browser run should show.
+- **Not every seat has the dev profile's tools.** The read-only seats (Mechanic, Reviewer, Cartographer) have files and a shell but no `mcp__chrome-devtools-haevn__*` tools. Give a dev-profile reproduction to a seat with all tools (Limner, Builder, Journeyman), or do it yourself. surf is a shell command, so any seat can read his Chrome under the rules above.
 - **The CLI daemon reaches whatever archive is connected.** While `haevn daemon` runs against αιamblichus's real Chrome, any seat with a shell can read his real archive through `haevn search/list/get`. Do not run `haevn` against it, and do not copy chat text out of it, without his say-so; a brief that only means the dev profile says so. Text pulled from it for a spike is private data: delete it when the spike ends.
-- **A rebuilt `dist/` reaches pages and the popup at once, but the service worker keeps its old code until the extension reloads.** After a merge that changes `background.js`, `reload_extension` (dev profile), or ask αιamblichus to reload HAEVN in his Chrome, before judging behaviour there.
+- **A rebuilt `dist/` reaches pages and the popup at once, but the service worker keeps its old code until the extension reloads.** After a merge that changes `background.js`, `reload_extension` (dev profile), or ask αιamblichus to reload HAEVN in his Chrome, before judging behaviour there. `haevn logs` answering "update the extension" means he has not reloaded since the verb landed.
 
 ## CLI checks
 

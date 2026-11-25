@@ -16,7 +16,7 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | Architecture | `gnomon read /project/haevn/architecture/index` |
 | Product: who it is for, what is in and out | `gnomon read /project/haevn/product/index` |
 | Run, drive and debug the extension | `skills/dev-guide/SKILL.md` (Chrome MCP + `haevnDebug`) |
-| See a change run in a real browser: the dev and prod Chrome profiles, their MCP servers, fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
+| See a change run in a real browser: the dev profile (DevTools MCP) and αιamblichus's Chrome (`surf`, with the house rules), fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
 | Check every provider still works before a release (the runbook: import formats in the dev profile, web providers in αιamblichus's Chrome) | `skills/provider-runbook/SKILL.md` (KB: `/project/haevn/skills/provider-runbook`) |
 | The CLI | `skills/haevn-cli/SKILL.md`, `cli/README.md` |
 | Current work | `gnomon ticket view working --namespace HVN`, `gnomon ticket view active --namespace HVN` |
@@ -68,7 +68,7 @@ Every commit references its ticket: `type(scope): summary`, then a `Refs: HVN-12
 
 - Do not edit `dist/`, `cli/dist/`, `docs/dist/` or `node_modules/`.
 - `skills/` is generated from `/project/haevn/skills/*` (manifest `skills/sync.json`): edit the KB note, then `pnpm run skills:sync` and commit; `pnpm run skills:check` exits 1 when a file is stale. Never edit the files. `.claude/skills/dev-guide` and `.claude/skills/browser-check` are symlinks to their `skills/` folders, so Claude Code loads them.
-- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`, `.mcp.json` (the browser MCP servers; its contents are in the `browser-check` skill). Nothing there is shared or backed up.
+- Gitignored and local-only: `transcripts/`, `openai_export/`, `gemini-md/`, `*.zip`, `.mcp.json` (the dev profile's DevTools MCP server; its contents are in the `browser-check` skill). Nothing there is shared or backed up.
 - Secrets (API keys, the CLI daemon's key) never go in a commit, a note or a ticket.
 
 ---

@@ -53,7 +53,7 @@ The viewer shows text, thinking and attachments only. **It does not draw tool ca
 6. Compare with the site, using the six points above. Thirty seconds of looking: first turn, last turn, roles, dates, the extras.
 7. Write the row in the results table. On a fail, note what you saw in five words and move on; do not debug during the pass.
 
-If a sync fails and you want the reason for the ticket: open the archive page, DevTools console, `await haevnDebug.getLogs(50, { match: "syncCurrentChat" })`. Copy the error line only, after checking it holds no token and no chat text.
+If a sync fails and you want the reason for the ticket: `haevn logs -n 50 --level warn` in a terminal (or `--match syncCurrentChat`). Since HVN-157 a log line holds ids, sizes and counts, not chat text; still glance at it before it goes into a ticket. A peer can read it too, so you need not copy it.
 
 ### The nine
 
@@ -88,7 +88,7 @@ Total: seven at 3 minutes and two at 5, **31 minutes**, plus the 5 before and ab
 
 ## Import-only half (a peer, the dev profile)
 
-Read `skills/browser-check/SKILL.md` first (KB: `/project/haevn/skills/browser-check`): the dev profile, the loop, and the hard rule (only `mcp__chrome-devtools-haevn__*`, never `mcp__chrome-devtools__*`). Build the commit to be tagged in the primary checkout, `reload_extension`, open `options.html`.
+Read `skills/browser-check/SKILL.md` first (KB: `/project/haevn/skills/browser-check`): the dev profile, the loop, and the hard rule (only `mcp__chrome-devtools-haevn__*` for the dev profile; his Chrome is reached only with surf, under the rules in `browser-check`). Build the commit to be tagged in the primary checkout, `reload_extension`, open `options.html`.
 
 ### Where a sample comes from
 
