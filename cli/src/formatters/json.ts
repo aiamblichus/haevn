@@ -93,7 +93,7 @@ export function formatChatAsJson(chat: Chat, options: ChatJsonOptions = {}): obj
     platform: chat.source,
     timestamp: chat.timestamp,
     system: !skipSystem ? chat.system : undefined,
-    currentRef: chat.currentId ? ref(chat.currentId) : null,
+    currentRef: chat.messages[chat.currentId] ? ref(chat.currentId) : null,
     branchCount: Object.values(chat.messages).filter((msg) => msg.childrenIds.length === 0).length,
     messageCount: messages.length,
     messages: messages.map((msg) => ({

@@ -81,35 +81,42 @@ export function formatChatAsMarkdown(chat: Chat, options: MarkdownOptions = {}):
 
   const lines = [...headerLines(chat, includeMetadata), ...systemLines(chat, skipSystem)];
 
-  function section(node: TreeSection, number: string): void {
-    let shown = 0;
-    for (const id of node.messageIds) {
-      const block = messageLines(chat.messages[id], options);
-      shown += block.length;
-      lines.push(...block);
-    }
-    // A section of tool calls and results only would otherwise be a heading over nothing
-    if (shown === 0 && node.branches.length === 0 && number !== "") {
-      lines.push("_This branch holds no text, only tool calls or results._", "");
-    }
-    forks(node.branches, number);
+  /** A section to write, with its number and the heading that opens it (none for the trunk). */
+  interface Pending {
+    node: TreeSection;
+    number: string;
+    heading?: string;
   }
 
-  function forks(branches: TreeSection[], parent: string): void {
-    if (branches.length < 2) {
-      for (const branch of branches) section(branch, parent);
-      return;
-    }
-    branches.forEach((branch, index) => {
+  /** The sections that follow a section's own messages: a fork's branches, headed and numbered. */
+  function after(branches: TreeSection[], parent: string): Pending[] {
+    if (branches.length < 2) return branches.map((node) => ({ node, number: parent }));
+    return branches.map((node, index) => {
       const number = parent === "" ? `${index + 1}` : `${parent}.${index + 1}`;
-      const current = branch.holdsCurrent ? " (current)" : "";
-      lines.push(`### Branch ${number} of ${branches.length}${current}`, "");
-      section(branch, number);
+      const current = node.holdsCurrent ? " (current)" : "";
+      return { node, number, heading: `### Branch ${number} of ${branches.length}${current}` };
     });
   }
 
-  if (tree.roots.length === 1) section(tree.roots[0], "");
-  else forks(tree.roots, "");
+  // The trunk, then each branch whole before the next: a stack, so a chat can fork as deep as it likes
+  const stack: Pending[] =
+    tree.roots.length === 1 ? [{ node: tree.roots[0], number: "" }] : after(tree.roots, "");
+  stack.reverse();
+  for (let item = stack.pop(); item; item = stack.pop()) {
+    if (item.heading) lines.push(item.heading, "");
+    let shown = 0;
+    for (const id of item.node.messageIds) {
+      const block = messageLines(chat.messages[id], options);
+      shown += block.length;
+      for (const line of block) lines.push(line);
+    }
+    // A section of tool calls and results only would otherwise be a heading over nothing
+    if (shown === 0 && item.node.branches.length === 0 && item.number !== "") {
+      lines.push("_This branch holds no text, only tool calls or results._", "");
+    }
+    const next = after(item.node.branches, item.number);
+    for (let i = next.length - 1; i >= 0; i--) stack.push(next[i]);
+  }
 
   if (tree.unlinked.length > 0) {
     lines.push(

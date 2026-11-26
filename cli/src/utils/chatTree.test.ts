@@ -3,6 +3,7 @@ import {
   buildChat,
   buildNestedForkChat,
   buildThreeBranchChat,
+  type FixtureTurn,
   makeToolCall,
   makeToolReturn,
 } from "../testing/fixtures";
@@ -111,6 +112,114 @@ describe("treeMessageIds", () => {
       "u4",
       "a5",
     ]);
+  });
+});
+
+describe("the order of roots and of unlinked messages", () => {
+  /** Four messages that are roots, stored in id order, with times that say otherwise. */
+  function manyRoots(): ReturnType<typeof buildChat> {
+    const chat = buildChat([
+      { id: "r-a", parentId: null, role: "user", text: "stored first, third oldest" },
+      { id: "r-b", parentId: null, role: "user", text: "stored second, oldest" },
+      { id: "r-c", parentId: null, role: "user", text: "stored third, tied with r-d" },
+      { id: "r-d", parentId: null, role: "user", text: "stored fourth, tied with r-c" },
+    ]);
+    chat.messages["r-a"].timestamp = 3000;
+    chat.messages["r-b"].timestamp = 1000;
+    chat.messages["r-c"].timestamp = 2000;
+    chat.messages["r-d"].timestamp = 2000;
+    return chat;
+  }
+
+  it("puts several roots oldest first, the id breaking a tie", () => {
+    expect(buildChatTree(manyRoots()).roots.map((r) => r.messageIds[0])).toEqual([
+      "r-b",
+      "r-c",
+      "r-d",
+      "r-a",
+    ]);
+  });
+
+  it("gives the same roots whatever order the messages are stored in", () => {
+    const chat = manyRoots();
+    const reversed = {
+      ...chat,
+      messages: Object.fromEntries(Object.entries(chat.messages).reverse()),
+    };
+
+    expect(buildChatTree(reversed).roots.map((r) => r.messageIds[0])).toEqual([
+      "r-b",
+      "r-c",
+      "r-d",
+      "r-a",
+    ]);
+  });
+
+  it("puts unlinked messages oldest first, not in stored order", () => {
+    const chat = buildThreeBranchChat();
+    // three messages whose parents are in the chat but do not list them, stored newest first
+    for (const [id, timestamp] of [
+      ["x-new", 9000],
+      ["x-mid", 5000],
+      ["x-old", 1000],
+    ] as const) {
+      chat.messages[id] = { ...chat.messages.u6, id, parentId: "a3", childrenIds: [], timestamp };
+    }
+
+    expect(buildChatTree(chat).unlinked).toEqual(["x-old", "x-mid", "x-new"]);
+    expect(treeMessageIds(buildChatTree(chat)).slice(-3)).toEqual(["x-old", "x-mid", "x-new"]);
+  });
+});
+
+describe("a chat as deep as it is long", () => {
+  /** A fork at every message: each spine message has the next spine message and a leaf as children. */
+  function forkEveryMessage(depth: number): ReturnType<typeof buildChat> {
+    const turns: FixtureTurn[] = [];
+    for (let i = 0; i < depth; i++) {
+      const parentId = i === 0 ? null : `s${i - 1}`;
+      turns.push({ id: `s${i}`, parentId, role: i % 2 ? "assistant" : "user", text: `spine ${i}` });
+      if (i > 0)
+        turns.push({
+          id: `l${i}`,
+          parentId,
+          role: i % 2 ? "user" : "assistant",
+          text: `leaf ${i}`,
+        });
+    }
+    return buildChat(turns);
+  }
+
+  it("walks 5,000 nested forks, each message once, spine before leaf at every fork", () => {
+    const chat = forkEveryMessage(5000);
+
+    const ids = treeMessageIds(buildChatTree(chat));
+
+    expect(ids).toHaveLength(Object.keys(chat.messages).length);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.slice(0, 4)).toEqual(["s0", "s1", "s2", "s3"]);
+    expect(ids.slice(-2)).toEqual(["l2", "l1"]);
+  });
+
+  it("keeps one unbroken run of 200,000 messages in order", () => {
+    const turns = Array.from(
+      { length: 200_000 },
+      (_, i): FixtureTurn => ({
+        id: `m${i}`,
+        parentId: i === 0 ? null : `m${i - 1}`,
+        role: i % 2 ? "assistant" : "user",
+        text: "x",
+      }),
+    );
+    const chat = buildChat(turns);
+
+    const tree = buildChatTree(chat);
+    const ids = treeMessageIds(tree);
+
+    expect(tree.roots).toHaveLength(1);
+    expect(tree.roots[0].branches).toEqual([]);
+    expect(ids).toHaveLength(200_000);
+    expect(ids[0]).toBe("m0");
+    expect(ids[199_999]).toBe("m199999");
   });
 });
 

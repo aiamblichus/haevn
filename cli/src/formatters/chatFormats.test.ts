@@ -3,6 +3,7 @@ import {
   buildChat,
   buildNestedForkChat,
   buildThreeBranchChat,
+  type FixtureTurn,
   makeToolCall,
   makeToolReturn,
 } from "../testing/fixtures";
@@ -158,6 +159,47 @@ describe("formatChatAsMarkdown", () => {
     ]);
   });
 
+  it("puts the older of several beginnings first, whatever the order they are stored in", () => {
+    const chat = buildChat([
+      { id: "u1", parentId: null, role: "user", text: "the newer beginning" },
+      { id: "u2", parentId: null, role: "user", text: "the older beginning" },
+    ]);
+    chat.messages.u1.timestamp = 2000;
+    chat.messages.u2.timestamp = 1000;
+
+    const out = formatChatAsMarkdown(chat, { includeMetadata: false });
+
+    expect(out.indexOf("the older beginning")).toBeLessThan(out.indexOf("the newer beginning"));
+    expect(out).toContain("### Branch 1 of 2 (current)\n\n## User\n\nthe older beginning");
+  });
+
+  it("writes a chat with a fork at each of 5,000 messages, headings numbered all the way down", () => {
+    const turns: FixtureTurn[] = [];
+    for (let i = 0; i < 5000; i++) {
+      const parentId = i === 0 ? null : `s${i - 1}`;
+      turns.push({ id: `s${i}`, parentId, role: i % 2 ? "assistant" : "user", text: `spine ${i}` });
+      if (i > 0)
+        turns.push({
+          id: `l${i}`,
+          parentId,
+          role: i % 2 ? "user" : "assistant",
+          text: `leaf ${i}`,
+        });
+    }
+
+    const out = formatChatAsMarkdown(buildChat(turns), { includeMetadata: false });
+
+    const branchHeadings = out.match(/^### Branch .+$/gm) ?? [];
+    expect(branchHeadings).toHaveLength(2 * 4999);
+    expect(branchHeadings[0]).toBe("### Branch 1 of 2 (current)");
+    expect(branchHeadings[1]).toBe("### Branch 1.1 of 2 (current)");
+    const ones = (n: number): string => Array(n).fill(1).join(".");
+    // the spine runs down to the last fork, where the current message is the leaf
+    expect(branchHeadings[4998]).toBe(`### Branch ${ones(4999)} of 2`);
+    expect(branchHeadings[4999]).toBe(`### Branch ${ones(4998)}.2 of 2 (current)`);
+    expect(out.match(/^## (User|Assistant)$/gm)).toHaveLength(5000 + 4999);
+  });
+
   it("keeps a message no link reaches, under its own heading", () => {
     const chat = buildThreeBranchChat();
     chat.messages.u9 = {
@@ -299,6 +341,16 @@ describe("formatChatAsJson", () => {
 
     expect(out.messageCount).toBe(8);
     expect(out.messages[2]).toMatchObject({ role: "user", content: "" });
+  });
+
+  it("says currentRef is null when the chat's current message is not in it", () => {
+    const chat = buildThreeBranchChat();
+    chat.currentId = "ghost";
+
+    const out = parsed(chat);
+
+    expect(out.currentRef).toBeNull();
+    expect(out.messageCount).toBe(8);
   });
 
   it("carries each message's media, and leaves out system messages with skipSystem", () => {

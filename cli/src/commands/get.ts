@@ -256,9 +256,14 @@ function branchOf(chat: Chat, messageId?: string): string[] {
   return branchPath;
 }
 
+/** A chat with no messages has nothing to write, as for a single branch. */
+function requireMessages(chat: Chat): void {
+  if (Object.keys(chat.messages).length === 0) throw new Error("Chat has no messages");
+}
+
 /** The messages of a whole chat, in the order `--all-branches` shows them. */
 function treeMessages(chat: Chat): ChatMessage[] {
-  if (Object.keys(chat.messages).length === 0) throw new Error("Chat has no messages");
+  requireMessages(chat);
   return treeMessageIds(buildChatTree(chat)).map((id) => chat.messages[id]);
 }
 
@@ -276,7 +281,7 @@ export function outputChat(
     media?: ReadonlyMap<string, readonly object[]>;
   } = {},
 ): string {
-  treeMessages(chat); // refuses a chat with no messages, as a single branch does
+  requireMessages(chat);
 
   if (format === "json") {
     return toJsonString(

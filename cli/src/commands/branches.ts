@@ -196,6 +196,7 @@ export function formatBranchesJson(chat: Chat): string {
       preview: node.preview,
       content: getMessageText(chat.messages[node.messageId] as ChatMessage),
       isLeaf: node.isLeaf,
+      isTool: node.isTool,
       isOnPrimaryPath: node.isOnPrimaryPath,
       children: node.children.map(toNodeJson),
     });

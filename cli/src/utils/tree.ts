@@ -160,46 +160,76 @@ export interface ChatTree {
   unlinked: string[];
 }
 
+/** Oldest first, the id as tiebreak: the order of several roots, and of unlinked messages. */
+function byAge(a: ChatMessage, b: ChatMessage): number {
+  const age = (a.timestamp ?? 0) - (b.timestamp ?? 0);
+  if (age !== 0) return age;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 /**
  * Cut a chat into its trunk and branches. A message is walked once, by the links its parent keeps
- * in `childrenIds`; a link to a message that is not in the chat is ignored.
+ * in `childrenIds`; a link to a message that is not in the chat is ignored. Several roots come
+ * oldest first. The walk keeps its own stack, so a chat can be as deep as it likes.
  */
 export function buildChatTree(chat: Chat): ChatTree {
   const visited = new Set<string>();
 
-  function walk(startId: string): TreeSection | undefined {
+  /** A section's run, taken by following single children, and the children its last message has. */
+  function open(startId: string): { section: TreeSection; children: string[] } | undefined {
     if (visited.has(startId) || !chat.messages[startId]) return undefined;
     const messageIds: string[] = [];
-    let branches: TreeSection[] = [];
-    let cursor: ChatMessage | undefined = chat.messages[startId];
-    while (cursor) {
+    let cursor: ChatMessage = chat.messages[startId];
+    for (;;) {
       visited.add(cursor.id);
       messageIds.push(cursor.id);
       const children: string[] = [...new Set(cursor.childrenIds)].filter(
         (id) => chat.messages[id] && !visited.has(id),
       );
-      if (children.length === 1) {
-        cursor = chat.messages[children[0]];
-        continue;
+      if (children.length !== 1) {
+        return { section: { messageIds, branches: [], holdsCurrent: false }, children };
       }
-      branches = children.flatMap((id) => walk(id) ?? []);
-      cursor = undefined;
+      cursor = chat.messages[children[0]];
     }
-    return {
-      messageIds,
-      branches,
-      holdsCurrent:
-        messageIds.includes(chat.currentId) || branches.some((branch) => branch.holdsCurrent),
-    };
+  }
+
+  interface Frame {
+    section: TreeSection;
+    children: string[];
+    next: number;
   }
 
   const all = Object.values(chat.messages);
-  const roots = all
+  const roots: TreeSection[] = [];
+  const stack: Frame[] = [];
+  for (const root of all
     .filter((msg) => !msg.parentId || !chat.messages[msg.parentId])
-    .flatMap((msg) => walk(msg.id) ?? []);
+    .sort(byAge)) {
+    const opened = open(root.id);
+    if (!opened) continue;
+    roots.push(opened.section);
+    stack.push({ ...opened, next: 0 });
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.next < frame.children.length) {
+        const child = open(frame.children[frame.next++]);
+        if (child) {
+          frame.section.branches.push(child.section);
+          stack.push({ ...child, next: 0 });
+        }
+        continue;
+      }
+      stack.pop();
+      const { section } = frame;
+      section.holdsCurrent =
+        section.messageIds.includes(chat.currentId) ||
+        section.branches.some((branch) => branch.holdsCurrent);
+    }
+  }
+
   const unlinked = all
     .filter((msg) => !visited.has(msg.id))
-    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+    .sort(byAge)
     .map((msg) => msg.id);
 
   return { roots, unlinked };
@@ -208,12 +238,12 @@ export function buildChatTree(chat: Chat): ChatTree {
 /** Every message of a tree once, in the order `get --all-branches` shows them: trunk, then each branch. */
 export function treeMessageIds(tree: ChatTree): string[] {
   const ids: string[] = [];
-  const add = (section: TreeSection): void => {
-    ids.push(...section.messageIds);
-    for (const branch of section.branches) add(branch);
-  };
-  for (const root of tree.roots) add(root);
-  ids.push(...tree.unlinked);
+  const stack = [...tree.roots].reverse();
+  for (let section = stack.pop(); section; section = stack.pop()) {
+    for (const id of section.messageIds) ids.push(id);
+    for (let i = section.branches.length - 1; i >= 0; i--) stack.push(section.branches[i]);
+  }
+  for (const id of tree.unlinked) ids.push(id);
   return ids;
 }
 

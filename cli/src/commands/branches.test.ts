@@ -43,6 +43,13 @@ describe("haevn branches with tool messages (ChatGPT's tool returns)", () => {
     };
 
     const row = parsed.tree.children[0].children[0];
-    expect(row).toMatchObject({ role: "user", preview: "[tool result]", content: "" });
+    expect(row).toMatchObject({
+      role: "user",
+      preview: "[tool result]",
+      content: "",
+      isTool: true,
+    });
+    // a real prompt is not a tool row
+    expect(parsed.tree.children[0].children[1]).toMatchObject({ isTool: false });
   });
 });
