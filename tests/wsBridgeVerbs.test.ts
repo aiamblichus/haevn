@@ -649,6 +649,154 @@ describe("get and branches carry a rough date's label (HVN-171)", () => {
   });
 });
 
+describe("branches answers what the daemon can take (HVN-176)", () => {
+  const MIB = 1024 * 1024;
+
+  /** A chat of one exchange: a user prompt with an image, and a reply that is an image. */
+  function chatWithImages(data: string): Record<string, unknown> {
+    const when = "2026-01-01T00:00:00.000Z";
+    const binary = (name: string) => ({
+      kind: "binary",
+      data,
+      media_type: "image/png",
+      identifier: name,
+    });
+    return {
+      id: "c-media",
+      source: "chatgpt",
+      sourceId: "s-media",
+      title: "Pictures",
+      models: [],
+      params: {},
+      currentId: "m2",
+      tags: [],
+      timestamp: 0,
+      lastSyncedTimestamp: 0,
+      checksum: "",
+      syncStatus: "synced",
+      deleted: 0,
+      messages: {
+        m1: {
+          id: "m1",
+          childrenIds: ["m2"],
+          chatId: "c-media",
+          model: "",
+          done: true,
+          message: [
+            {
+              kind: "request",
+              parts: [
+                {
+                  part_kind: "user-prompt",
+                  timestamp: when,
+                  content: ["look", binary("in.png")],
+                },
+              ],
+            },
+          ],
+        },
+        m2: {
+          id: "m2",
+          parentId: "m1",
+          childrenIds: [],
+          chatId: "c-media",
+          model: "",
+          done: true,
+          message: [
+            {
+              kind: "response",
+              timestamp: when,
+              parts: [{ part_kind: "image-response", content: binary("out.png") }],
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  /** Every binary item of a reply's chat, in the order of its messages. */
+  function binariesOf(reply: Record<string, unknown>): Array<Record<string, unknown>> {
+    const chat = reply.data as {
+      messages: Record<string, { message: Array<{ parts: unknown[] }> }>;
+    };
+    return Object.values(chat.messages).flatMap((m) =>
+      m.message.flatMap((turn) =>
+        turn.parts.flatMap((part) => {
+          const content = (part as { content: unknown }).content;
+          const items = Array.isArray(content) ? content : [content];
+          return items.filter(
+            (item): item is Record<string, unknown> =>
+              typeof item === "object" &&
+              item !== null &&
+              (item as { kind?: string }).kind === "binary",
+          );
+        }),
+      ),
+    );
+  }
+
+  it("leaves the bytes of media behind, as get does", async () => {
+    getChatWithMessages.mockResolvedValue(chatWithImages("A".repeat(1024)));
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({ action: "branches", chatId: "c-media" });
+
+    expect(reply.success).toBe(true);
+    expect(binariesOf(reply)).toEqual([
+      { kind: "binary", data: "[binary omitted]", media_type: "image/png", identifier: "in.png" },
+      { kind: "binary", data: "[binary omitted]", media_type: "image/png", identifier: "out.png" },
+    ]);
+  });
+
+  it("keeps the data of media when asked to, for get --include-media", async () => {
+    getChatWithMessages.mockResolvedValue(chatWithImages("media/c-media/m1_0.png"));
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({
+      action: "branches",
+      chatId: "c-media",
+      options: { includeMedia: true },
+    });
+
+    expect(binariesOf(reply).map((b) => b.data)).toEqual([
+      "media/c-media/m1_0.png",
+      "media/c-media/m1_0.png",
+    ]);
+  });
+
+  it("answers a reply over the daemon's limit with an error, and keeps the socket", async () => {
+    // Two images that together are over 100 MiB: the daemon would close the socket on the frame
+    const huge = "A".repeat(51 * MIB);
+    getChatWithMessages.mockResolvedValue(chatWithImages(huge));
+    const { ask } = await connectedBridge();
+    const socket = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+
+    const reply = await ask({
+      action: "branches",
+      chatId: "c-media",
+      options: { includeMedia: true },
+    });
+
+    expect(reply).toMatchObject({ success: false, code: "TOO_LARGE" });
+    expect(reply.error).toMatch(/\b10[2-9] MB\b.*\b100 MB\b/);
+    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+  });
+
+  it("counts the limit in bytes, not characters", async () => {
+    // 35 million euro signs are 35 million characters but 105 million bytes in UTF-8
+    getChatWithMessages.mockResolvedValue(chatWithImages("€".repeat(17_500_000)));
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({
+      action: "branches",
+      chatId: "c-media",
+      options: { includeMedia: true },
+    });
+
+    expect(reply).toMatchObject({ success: false, code: "TOO_LARGE" });
+  });
+});
+
 describe("list pages over the bridge (HVN-14)", () => {
   const DAY = Date.parse("2026-06-01T00:00:00Z");
 

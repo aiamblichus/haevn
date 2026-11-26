@@ -135,7 +135,7 @@ export default defineCommand({
     try {
       if (allBranches) {
         // The whole tree is what `branches` asks for; `get` answers one branch
-        chat = await daemonRequest<Chat>({ action: "branches", chatId });
+        chat = await daemonRequest<Chat>({ action: "branches", chatId, options: { includeMedia } });
       } else {
         if (messageId) {
           const branchChat = await daemonRequest<Chat>({ action: "branches", chatId });

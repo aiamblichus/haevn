@@ -37,7 +37,7 @@ export type CliRequest =
   | { id: string; action: "search"; query: string; options?: SearchOptions }
   | { id: string; action: "get"; chatId: string; options?: GetOptions }
   | { id: string; action: "list"; options?: ListOptions }
-  | { id: string; action: "branches"; chatId: string }
+  | { id: string; action: "branches"; chatId: string; options?: BranchesOptions }
   | { id: string; action: "export"; chatId: string; options?: ExportOptions }
   | {
       id: string;
@@ -237,6 +237,11 @@ export interface SearchOptions {
   limit?: number;
   contextChars?: number;
   includeMetadata?: boolean;
+}
+
+export interface BranchesOptions {
+  /** As for `get`: keep each binary item's `data`, where otherwise it is "[binary omitted]". */
+  includeMedia?: boolean;
 }
 
 export interface GetOptions {
