@@ -55,7 +55,7 @@ export interface GatheredFragments {
 const isMarkdown = (name: string) => name.toLowerCase().endsWith(".md");
 
 /** "a.md" is taken: "a (2).md", then "a (3).md", until the name is free */
-function freeName(name: string, taken: Set<string>): string {
+export function freeName(name: string, taken: Set<string>): string {
   if (!taken.has(name)) return name;
   const dot = name.lastIndexOf(".");
   const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
@@ -126,6 +126,72 @@ export function gatherFragmentSources(sources: FragmentSource[]): GatheredFragme
     subfolders,
     totalBytes: candidates.reduce((sum, c) => sum + c.file.size, 0),
   };
+}
+
+/**
+ * What the person has given so far, with one more drop or pick added (HVN-179). A file of the same
+ * name as one already there replaces it, newer wins: a loose file by its name, a file of a folder
+ * by the folder's name and its own, so that dropping a folder again with one file edited replaces
+ * that file and keeps the others. Two folders of one name in the same drop are two folders (the
+ * second is called `notes (2)`); across drops the name is all there is to tell them by, so the
+ * same name is the same folder. Nothing is opened.
+ *
+ * `replaced` names the `.md` files that were replaced, folder-qualified (`notes/1.md`).
+ */
+export function addSources(
+  current: FragmentSource[],
+  added: FragmentSource[],
+): { sources: FragmentSource[]; replaced: string[] } {
+  const sources: FragmentSource[] = current.map((source) =>
+    source.kind === "folder" ? { ...source, entries: [...source.entries] } : source,
+  );
+  const replaced: string[] = [];
+  const foldersInThisDrop = new Set<string>();
+  const looseInThisDrop = new Set<string>();
+
+  for (const source of added) {
+    if (source.kind === "file") {
+      const name = source.file.name;
+      const at = looseInThisDrop.has(name)
+        ? -1
+        : sources.findIndex((s) => s.kind === "file" && s.file.name === name);
+      looseInThisDrop.add(name);
+      if (at === -1) {
+        sources.push(source);
+      } else {
+        sources[at] = source;
+        if (isMarkdown(name) && !replaced.includes(name)) replaced.push(name);
+      }
+      continue;
+    }
+
+    const second = foldersInThisDrop.has(source.name);
+    foldersInThisDrop.add(source.name);
+    const at = second
+      ? -1
+      : sources.findIndex((s) => s.kind === "folder" && s.name === source.name);
+    if (at === -1) {
+      const taken = new Set(sources.flatMap((s) => (s.kind === "folder" ? [s.name] : [])));
+      sources.push({ ...source, name: second ? freeName(source.name, taken) : source.name });
+      continue;
+    }
+    const target = sources[at];
+    if (target.kind !== "folder") continue;
+    for (const entry of source.entries) {
+      const same = target.entries.findIndex((existing) => existing.name === entry.name);
+      if (same === -1) {
+        target.entries.push(entry);
+        continue;
+      }
+      const qualified = `${target.name}/${entry.name}`;
+      const wasFile = target.entries[same].file !== undefined;
+      if (wasFile && entry.file && isMarkdown(entry.name) && !entry.name.startsWith(".")) {
+        if (!replaced.includes(qualified)) replaced.push(qualified);
+      }
+      target.entries[same] = entry;
+    }
+  }
+  return { sources, replaced };
 }
 
 /** True when the `.md` files together are more than one import takes */
@@ -223,24 +289,40 @@ export interface ReadFragments {
   refused: FragmentPlanEntry[];
 }
 
+/** What was read of a file: its text, or null when it is not UTF-8. Kept per `File`, so that a set
+ *  that grows is not read again from the start (HVN-179). */
+export type ReadCache = WeakMap<File, string | null>;
+
 /**
  * Reads the text of each file, as the CLI does: strict UTF-8, byte-order mark kept (`file.text()`
  * would replace bad bytes, and hash differently). `onProgress` is told how many are read.
- * `isCancelled` is asked between files: a cancelled read returns nothing.
+ * `isCancelled` is asked between files: a cancelled read returns nothing. A file already in
+ * `cache` is not opened again.
  */
 export async function readFragmentFiles(
   gathered: GatheredFragments,
   hooks: { onProgress?: (read: number) => void; isCancelled?: () => boolean } = {},
+  cache?: ReadCache,
 ): Promise<ReadFragments | undefined> {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const result: ReadFragments = { files: [], refused: [] };
   let read = 0;
   for (const candidate of gathered.candidates) {
-    const bytes = await candidate.file.arrayBuffer();
     if (hooks.isCancelled?.()) return undefined;
-    try {
-      result.files.push({ name: candidate.name, content: decoder.decode(bytes) });
-    } catch {
+    let text = cache?.get(candidate.file);
+    if (text === undefined) {
+      const bytes = await candidate.file.arrayBuffer();
+      if (hooks.isCancelled?.()) return undefined;
+      try {
+        text = decoder.decode(bytes);
+      } catch {
+        text = null;
+      }
+      cache?.set(candidate.file, text);
+    }
+    if (text !== null) {
+      result.files.push({ name: candidate.name, content: text });
+    } else {
       result.refused.push({
         name: candidate.name,
         state: "unreadable",

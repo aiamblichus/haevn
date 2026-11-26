@@ -247,8 +247,11 @@ export interface Notice {
   body: string;
 }
 
-/** What the zone says when nothing was found to read */
-export function noMarkdownNotice(gathered: GatheredFragments): Notice {
+/**
+ * What the zone says when nothing was found to read. `kept`: files were already there and this
+ * drop added none of its own, so the plan stands (HVN-179).
+ */
+export function noMarkdownNotice(gathered: GatheredFragments, kept = false): Notice {
   const { notMarkdown, subfolders } = gathered;
   const parts: string[] = [];
   if (notMarkdown > 0) {
@@ -262,6 +265,7 @@ export function noMarkdownNotice(gathered: GatheredFragments): Notice {
     );
   }
   if (parts.length === 0 && gathered.folders.length > 0) parts.push("The folder is empty.");
+  if (kept) parts.push("The files already here are as they were.");
   return { title: "No .md files here.", body: parts.join(" ") };
 }
 
@@ -279,11 +283,28 @@ export function readFailedNotice(): Notice {
 
 export const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export function overLimitNotice(gathered: GatheredFragments): Notice {
+export function overLimitNotice(gathered: GatheredFragments, kept = false): Notice {
+  const limit = FRAGMENT_IMPORT_MAX_BYTES / 1024 / 1024;
+  const size = `${gathered.candidates.length} .md files hold ${megabytes(gathered.totalBytes)} of text, and one import takes at most ${limit} MB`;
   return {
     title: "Too much for one import.",
-    body: `These ${gathered.candidates.length} .md files hold ${megabytes(gathered.totalBytes)} of text, and one import takes at most ${FRAGMENT_IMPORT_MAX_BYTES / 1024 / 1024} MB. Choose fewer files at a time. Nothing was read.`,
+    // `kept`: the files already here, with these, are the set; these were not added
+    body: kept
+      ? `With these, the ${size}. They were not added; the files already here are kept. Choose fewer, or clear them and start again.`
+      : `These ${size}. Choose fewer files at a time. Nothing was read.`,
   };
+}
+
+/** One line for the files that a drop or a pick replaced: the newer copy wins */
+export function replacedLine(names: string[]): string {
+  if (names.length === 0) return "";
+  const shown = names.slice(0, 5).join(", ");
+  const more = names.length > 5 ? ` and ${names.length - 5} more` : "";
+  const what =
+    names.length === 1
+      ? "1 file replaced an earlier one"
+      : `${names.length} files replaced earlier ones`;
+  return `${what} of the same name: ${shown}${more}.`;
 }
 
 /** The operation that held the lock, as a person says it */
