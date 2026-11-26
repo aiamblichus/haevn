@@ -5,18 +5,24 @@
 import type { Chat, ChatMessage } from "../types/chat";
 import { formatTimestamp } from "../utils/output";
 import {
+  type GetMessageTextOptions,
   getMediaStandIns,
   getMessageRole,
   getMessagesOnBranch,
   getMessageText,
+  standIn,
   windowMessages,
 } from "../utils/tree";
 
 export interface MarkdownOptions {
   includeMetadata?: boolean;
-  includeMedia?: boolean;
   includeThinking?: boolean;
   skipSystem?: boolean;
+  /**
+   * What stands for each media item of a message (its link, with `--include-media`), by message id
+   * and item index. An item with no entry shows as its stand-in, `[image]` and the like.
+   */
+  mediaText?: ReadonlyMap<string, readonly string[]>;
   /** Only render the last N messages of the branch (0 = all). */
   tail?: number;
   /** Only render the first N messages of the branch (0 = all). Takes precedence over tail. */
@@ -35,6 +41,7 @@ export function formatBranchAsMarkdown(
     includeMetadata = true,
     includeThinking = false,
     skipSystem = false,
+    mediaText,
     tail = 0,
     head = 0,
   } = options;
@@ -81,7 +88,11 @@ export function formatBranchAsMarkdown(
   // Messages
   for (const message of rendered) {
     const role = getMessageRole(message);
-    const text = formatMessageForMarkdown(message, includeThinking, skipSystem);
+    const text = formatMessageForMarkdown(message, {
+      includeThinking,
+      skipSystem,
+      mediaText: (item, index) => mediaText?.get(message.id)?.[index] ?? standIn(item),
+    });
     const roleLabel = role === "system" ? "SYSTEM" : role === "user" ? "User" : "Assistant";
 
     lines.push(`## ${roleLabel}`);
@@ -108,13 +119,9 @@ export function formatBranchAsMarkdown(
   return lines.join("\n");
 }
 
-function formatMessageForMarkdown(
-  message: ChatMessage,
-  includeThinking: boolean,
-  skipSystem: boolean,
-): string {
-  if (!includeThinking || getMessageRole(message) !== "assistant") {
-    return getMessageText(message, { includeThinking, skipSystem });
+function formatMessageForMarkdown(message: ChatMessage, options: GetMessageTextOptions): string {
+  if (!options.includeThinking || getMessageRole(message) !== "assistant") {
+    return getMessageText(message, options);
   }
 
   const thinkingParts: string[] = [];
@@ -135,7 +142,7 @@ function formatMessageForMarkdown(
   }
 
   // The media stand-ins come after the text, as getMessageText puts them.
-  otherParts.push(...getMediaStandIns(message));
+  otherParts.push(...getMediaStandIns(message, options));
 
   const blocks: string[] = [];
   if (thinkingParts.length > 0) {
