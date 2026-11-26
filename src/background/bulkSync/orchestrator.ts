@@ -18,10 +18,11 @@ import {
   clearPendingHandoffs,
   getPendingHandoffs,
   settlePendingHandoff,
+  takeOverRun,
   workerIdleMs,
 } from "./pendingHandoffs";
 import { syncRunId } from "./runId";
-import { planResume } from "./stateManager";
+import { planResume, type ResumePlan } from "./stateManager";
 import type { BulkSyncOptions, BulkSyncState } from "./types";
 
 export const BULK_SYNC_ALARM_NAME = "bulkSyncAlarm";
@@ -938,11 +939,11 @@ export function stopWaitingForWorker(): void {
 }
 
 /**
- * The worker reported on a chat. If that was the last one outstanding and every chat is handed
- * over, the sync finishes. While a tick is still handing chats over, the tick does it.
+ * A worker report has been settled (`settleWorkerReport`). If it was the last one outstanding and
+ * every chat is handed over, the sync finishes. While a tick is still handing chats over, the tick
+ * does it.
  */
-export async function onWorkerReport(chatId: string, unstoredMedia = 0): Promise<void> {
-  await settlePendingHandoff(chatId, unstoredMedia);
+export async function onWorkerReport(): Promise<void> {
   if (_tickRunning) return;
   const state = await getBulkSyncState();
   if (state && state.status === "running" && state.currentIndex >= state.total) {
@@ -1155,16 +1156,15 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       active: useForegroundextractionTab,
     });
 
-    // The state and the hand-offs are read now, after the slow part (the tab), and written back at
-    // once: a report that landed meanwhile (the worker outlives the service worker) is in what is read.
     // A run that was stopped or replaced meanwhile is not revived: whoever ended it freed the lock
-    // and sent the message, so the resume closes its tab and leaves (HVN-126).
-    const current = await getBulkSyncState();
-    // A Stop that has marked it cancelled but not yet wiped it keeps its startedAt: not resumable
+    // and sent the message, so the resume closes its tab and leaves (HVN-126). A Stop that has marked
+    // it cancelled but not yet wiped it keeps its startedAt: not resumable. The take-over below checks
+    // again, in the queue.
+    const started = await getBulkSyncState();
     if (
-      !current ||
-      current.startedAt !== state.startedAt ||
-      (current.status !== "running" && current.status !== "paused")
+      !started ||
+      started.startedAt !== state.startedAt ||
+      (started.status !== "running" && started.status !== "paused")
     ) {
       log.info("[BulkSync] The run was stopped while it resumed; closing the new tab and leaving");
       await removeextractionTabBestEffort(extractionTabId, "resume of a run that was stopped");
@@ -1176,8 +1176,42 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       await removeextractionTabBestEffort(state.extractionTabId, "resume cleanup");
     }
 
-    const pending = await getPendingHandoffs();
-    const plan = planResume(current, pending.chatIds);
+    // The run is taken over in one step of the hand-off queue (HVN-160): the stored run and the
+    // pending set are read there together, the redo is planned from both and written with the next
+    // resume count. A report of the old run is settled before that step or refused after it, so a
+    // chat is not counted twice, and a report that landed while the tab opened is in what is read.
+    // The chats the worker had been handed are fetched again (the plan put them back in the list),
+    // so nothing is waited for. The chats it had settled stay settled, and so does their count of
+    // media not stored.
+    const taken = await takeOverRun(
+      state.startedAt,
+      (run, pendingChatIds): { plan: ResumePlan; next: BulkSyncState } => {
+        const plan = planResume(run, pendingChatIds);
+        return {
+          plan,
+          next: {
+            ...run,
+            chatIds: plan.chatIds,
+            total: plan.total,
+            currentIndex: plan.currentIndex,
+            processedChatIds: plan.processedChatIds,
+            failedSyncs: plan.failedSyncs,
+            resumeCount: (run.resumeCount ?? 0) + 1,
+            status: "running",
+            extractionTabId,
+            lastProgressAt: Date.now(),
+            isProcessing: false,
+            isCancelled: false,
+          },
+        };
+      },
+    );
+    if (!taken) {
+      log.info("[BulkSync] The run was stopped while it resumed; closing the new tab and leaving");
+      await removeextractionTabBestEffort(extractionTabId, "resume of a run that was stopped");
+      return;
+    }
+    const { plan } = taken;
 
     log.info("[BulkSync] Resuming sync", {
       provider,
@@ -1185,26 +1219,6 @@ export async function resumeBulkSync(provider: string): Promise<void> {
       settled: plan.currentIndex,
       refetching: plan.refetched.length,
       remaining: plan.total - plan.currentIndex,
-    });
-
-    // The chats the worker had been handed are fetched again (the plan put them back in the list),
-    // so nothing is waited for, and the worker's reports from before the restart are another leg's.
-    // The chats it had settled stay settled, and so does their count of media not stored.
-    await clearPendingHandoffs({ keepUnstoredMedia: true });
-
-    await setBulkSyncState({
-      ...current,
-      chatIds: plan.chatIds,
-      total: plan.total,
-      currentIndex: plan.currentIndex,
-      processedChatIds: plan.processedChatIds,
-      failedSyncs: plan.failedSyncs,
-      resumeCount: (current.resumeCount ?? 0) + 1,
-      status: "running",
-      extractionTabId,
-      lastProgressAt: Date.now(),
-      isProcessing: false,
-      isCancelled: false,
     });
 
     // Enable bulk sync indexing mode

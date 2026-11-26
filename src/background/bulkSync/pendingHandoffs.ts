@@ -8,6 +8,9 @@
  */
 
 import { getStorageAdapter } from "../../storage";
+import { getBulkSyncState, setBulkSyncState } from "../state";
+import { syncRunId } from "./runId";
+import type { BulkSyncState } from "./types";
 
 const PENDING_KEY = "bulkSyncPendingHandoffs";
 
@@ -89,13 +92,76 @@ export function addPendingHandoff(chatId: string): Promise<void> {
  * both count.
  */
 export function settlePendingHandoff(chatId: string, unstoredMedia = 0): Promise<void> {
-  return exclusive(async () => {
-    const current = await getPendingHandoffs();
+  return exclusive(() => settleNow(chatId, unstoredMedia));
+}
+
+// The steps below run inside the queue and call no queued function: the queue is not re-entrant.
+
+async function settleNow(chatId: string, unstoredMedia: number): Promise<void> {
+  const current = await getPendingHandoffs();
+  await getStorageAdapter().set(PENDING_KEY, {
+    chatIds: current.chatIds.filter((id) => id !== chatId),
+    lastActivityAt: Date.now(),
+    unstoredMedia: (current.unstoredMedia ?? 0) + unstoredMedia,
+  });
+}
+
+async function clearNow(keepUnstoredMedia: boolean): Promise<void> {
+  const kept = keepUnstoredMedia ? ((await getPendingHandoffs()).unstoredMedia ?? 0) : 0;
+  if (kept > 0) {
     await getStorageAdapter().set(PENDING_KEY, {
-      chatIds: current.chatIds.filter((id) => id !== chatId),
-      lastActivityAt: Date.now(),
-      unstoredMedia: (current.unstoredMedia ?? 0) + unstoredMedia,
-    });
+      chatIds: [],
+      lastActivityAt: 0,
+      unstoredMedia: kept,
+    } satisfies PendingHandoffs);
+    return;
+  }
+  await getStorageAdapter().remove(PENDING_KEY);
+}
+
+/**
+ * A worker report for chat `chatId`, made under run `runId`, settles the chat only while that is
+ * the stored run (HVN-127). The check and the settle are one step of the queue (HVN-160), and so is
+ * the resume's take-over (`takeOverRun`): a report is settled before the resume reads the pending
+ * set, or refused after the resume has written its new count, never in between. Returns false for a
+ * report of another run, which settles nothing.
+ */
+export function settleWorkerReport(report: {
+  chatId: string;
+  runId: string;
+  unstoredMedia?: number;
+}): Promise<boolean> {
+  return exclusive(async () => {
+    const state = await getBulkSyncState();
+    if (!state || report.runId !== syncRunId(state)) return false;
+    await settleNow(report.chatId, report.unstoredMedia ?? 0);
+    return true;
+  });
+}
+
+/**
+ * A resume takes the run over in one step of the queue (HVN-160). It reads the stored run, which
+ * must still be `startedAt`'s and running or paused, and the pending set; `build` plans the resumed
+ * run from both; the hand-offs are forgotten, keeping the count of media not stored, and the planned
+ * run is written. Returns null, and writes nothing, when the stored run can no longer be resumed.
+ */
+export function takeOverRun<T extends { next: BulkSyncState }>(
+  startedAt: number,
+  build: (current: BulkSyncState, pendingChatIds: string[]) => T,
+): Promise<T | null> {
+  return exclusive(async () => {
+    const current = await getBulkSyncState();
+    if (
+      !current ||
+      current.startedAt !== startedAt ||
+      (current.status !== "running" && current.status !== "paused")
+    ) {
+      return null;
+    }
+    const built = build(current, (await getPendingHandoffs()).chatIds);
+    await clearNow(true);
+    await setBulkSyncState(built.next);
+    return built;
   });
 }
 
@@ -105,16 +171,5 @@ export function settlePendingHandoff(chatId: string, unstoredMedia = 0): Promise
  * and then clears it all.
  */
 export function clearPendingHandoffs(options?: { keepUnstoredMedia?: boolean }): Promise<void> {
-  return exclusive(async () => {
-    const kept = options?.keepUnstoredMedia ? ((await getPendingHandoffs()).unstoredMedia ?? 0) : 0;
-    if (kept > 0) {
-      await getStorageAdapter().set(PENDING_KEY, {
-        chatIds: [],
-        lastActivityAt: 0,
-        unstoredMedia: kept,
-      } satisfies PendingHandoffs);
-      return;
-    }
-    await getStorageAdapter().remove(PENDING_KEY);
-  });
+  return exclusive(() => clearNow(options?.keepUnstoredMedia === true));
 }

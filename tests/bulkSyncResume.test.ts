@@ -979,3 +979,49 @@ describe("the run counts the media its chats could not store (HVN-159)", () => {
     expect((await getPendingHandoffs()).unstoredMedia).toBeUndefined();
   });
 });
+
+describe("a resume takes the run over in one step (HVN-160)", () => {
+  it("refuses an earlier leg's report that lands after the resume has read the pending set", async () => {
+    // c1 was settled before the restart with one file not stored; c2 was still out with the worker
+    await interruptedRun({ n: 2, handedOver: 2, pending: ["c2"] });
+    await settlePendingHandoff("c1", 1);
+
+    // the worker's report for c2 under the old run; it lands while the resume is reading
+    const late = {
+      type: "progress",
+      chatId: "c2",
+      runId: `${STARTED}:0`,
+      success: true,
+      unstoredMedia: 5,
+      processed: 1,
+      failed: 0,
+      skipped: 0,
+    } as const;
+    const adapter = getStorageAdapter();
+    const read = adapter.get.bind(adapter);
+    let landed = false;
+    adapter.get = (async (key: string) => {
+      const value = await read(key);
+      if (key === "bulkSyncPendingHandoffs" && !landed) {
+        landed = true;
+        // not awaited: a resume that holds the hand-off queue would wait for this report
+        void handleWorkerMessage(late);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      return value;
+    }) as typeof adapter.get;
+
+    try {
+      await clearStaleOperationLocks();
+      await resumeBulkSync("chatgpt");
+      await driveToEnd();
+    } finally {
+      adapter.get = read;
+    }
+
+    expect(landed).toBe(true);
+    // c2 is fetched again under the resumed count, and the late report's 5 files are not counted
+    expect(fetched).toEqual(["c2"]);
+    expect(sent("bulkSyncComplete")[0]).toMatchObject({ unstoredMediaCount: 1, successCount: 2 });
+  });
+});

@@ -7,8 +7,7 @@ import { getBulkSyncState, setBulkSyncState } from "../state";
 import { type BrowserApiRequest, handleBrowserApiRequest } from "../utils/browserApiBridge";
 import { broadcastChatSynced } from "../utils/chatSyncUtils";
 import { onWorkerReport } from "./orchestrator";
-import { noteWorkerActivity } from "./pendingHandoffs";
-import { syncRunId } from "./runId";
+import { noteWorkerActivity, settleWorkerReport } from "./pendingHandoffs";
 
 /**
  * Handle messages from the sync worker (forwarded from offscreen document)
@@ -17,12 +16,15 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
   noteWorkerActivity();
   switch (message.type) {
     case "progress": {
-      // Worker reports progress for a single chat
-      const state = await getBulkSyncState();
-      if (!state) return;
-      // A report is for the run that asked: one from a run that has ended, or from before a restart
-      // that the resume redid, must neither settle this run's hand-off nor fail its chat (HVN-127)
-      if (message.runId !== syncRunId(state)) {
+      // Worker reports progress for a single chat. A report is for the run that asked: one from a
+      // run that has ended, or from before a restart that the resume redid, must neither settle this
+      // run's hand-off nor fail its chat (HVN-127). The check and the settle are one step (HVN-160).
+      const settled = await settleWorkerReport({
+        chatId: message.chatId,
+        runId: message.runId,
+        unstoredMedia: message.unstoredMedia,
+      });
+      if (!settled) {
         log.info(
           `[BulkSync] Ignoring a report for chat ${message.chatId} from another run (${message.runId})`,
         );
@@ -35,20 +37,23 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       } else {
         // Chat failed
         log.warn(`[BulkSync] Worker failed to process chat ${message.chatId}:`, message.error);
-        await setBulkSyncState({
-          ...state,
-          failedSyncs: [
-            ...state.failedSyncs,
-            { chatId: message.chatId, error: message.error || "Unknown error" },
-          ],
-        });
+        const state = await getBulkSyncState();
+        if (state) {
+          await setBulkSyncState({
+            ...state,
+            failedSyncs: [
+              ...state.failedSyncs,
+              { chatId: message.chatId, error: message.error || "Unknown error" },
+            ],
+          });
+        }
       }
 
       // Note: Progress updates are sent by the fetch loop in handleBulkSyncTick()
       // to avoid conflicting progress values from stale currentIndex during batch processing
 
       // The chat is no longer the worker's: when it was the last, the sync can finish (HVN-123)
-      await onWorkerReport(message.chatId, message.unstoredMedia);
+      await onWorkerReport();
       break;
     }
 
