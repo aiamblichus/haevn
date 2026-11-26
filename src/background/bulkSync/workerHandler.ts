@@ -3,7 +3,6 @@ import { SyncService } from "../../services/syncService";
 import type { BulkSyncWorkerResponse } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
 import { handleGenerateThumbnails } from "../handlers/galleryHandlers";
-import { getBulkSyncState, setBulkSyncState } from "../state";
 import { type BrowserApiRequest, handleBrowserApiRequest } from "../utils/browserApiBridge";
 import { broadcastChatSynced } from "../utils/chatSyncUtils";
 import { onWorkerReport } from "./orchestrator";
@@ -19,10 +18,12 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       // Worker reports progress for a single chat. A report is for the run that asked: one from a
       // run that has ended, or from before a restart that the resume redid, must neither settle this
       // run's hand-off nor fail its chat (HVN-127). The check and the settle are one step (HVN-160).
+      // A failure is recorded in the same step, so two reports at once are both kept (HVN-160)
       const settled = await settleWorkerReport({
         chatId: message.chatId,
         runId: message.runId,
         unstoredMedia: message.unstoredMedia,
+        failure: message.success ? undefined : { error: message.error || "Unknown error" },
       });
       if (!settled) {
         log.info(
@@ -37,16 +38,6 @@ export async function handleWorkerMessage(message: BulkSyncWorkerResponse): Prom
       } else {
         // Chat failed
         log.warn(`[BulkSync] Worker failed to process chat ${message.chatId}:`, message.error);
-        const state = await getBulkSyncState();
-        if (state) {
-          await setBulkSyncState({
-            ...state,
-            failedSyncs: [
-              ...state.failedSyncs,
-              { chatId: message.chatId, error: message.error || "Unknown error" },
-            ],
-          });
-        }
       }
 
       // Note: Progress updates are sent by the fetch loop in handleBulkSyncTick()

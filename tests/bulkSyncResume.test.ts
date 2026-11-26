@@ -1025,3 +1025,46 @@ describe("a resume takes the run over in one step (HVN-160)", () => {
     expect(sent("bulkSyncComplete")[0]).toMatchObject({ unstoredMediaCount: 1, successCount: 2 });
   });
 });
+
+describe("two failure reports at once are both kept (HVN-160)", () => {
+  it("keeps each failed chat when both reports read the run's state at the same time", async () => {
+    const all = ids(3);
+    await setBulkSyncState(
+      runState({ chatIds: all, total: 3, currentIndex: 3, processedChatIds: all }),
+    );
+    await setActiveOperation("bulkSync");
+    for (const id of all) await addPendingHandoff(id);
+    const failure = (chatId: string) =>
+      ({
+        type: "progress",
+        chatId,
+        runId: `${STARTED}:0`,
+        success: false,
+        error: `download of ${chatId} failed`,
+        processed: 0,
+        failed: 1,
+        skipped: 0,
+      }) as const;
+
+    // a slow store: a write of the run's state lands a few milliseconds after it was made, so the
+    // other report reads the state before it has landed
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    adapter.set = (async (key: string, value: unknown) => {
+      if (key === "bulkSyncState") await new Promise((resolve) => setTimeout(resolve, 10));
+      return write(key, value);
+    }) as typeof adapter.set;
+
+    try {
+      await Promise.all([handleWorkerMessage(failure("c1")), handleWorkerMessage(failure("c2"))]);
+    } finally {
+      adapter.set = write;
+    }
+
+    expect((await getBulkSyncState())?.failedSyncs.map((f) => f.chatId).sort()).toEqual([
+      "c1",
+      "c2",
+    ]);
+    expect((await getPendingHandoffs()).chatIds).toEqual(["c3"]);
+  });
+});
