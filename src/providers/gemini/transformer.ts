@@ -26,20 +26,22 @@ function fullSizeUrl(url: string): string {
 }
 
 /**
- * Whether a link is one the extension holds no permission for (a search thumbnail on gstatic.com,
- * an icon): kept as a link on purpose, not downloaded and not counted as a file that failed.
+ * Whether a link is kept as a link on purpose: not downloaded, not marked and not counted as a file
+ * that failed. The extension sends the Google cookies to one host only, over https: an uploaded
+ * image at lh3.googleusercontent.com (HVN-160). Every other link is a link: a search thumbnail on
+ * gstatic.com, another googleusercontent host, http:, a redirect hop named as a file, a value with
+ * no host. A blob: or data: link is not fetched either, but processExternalAssets handles it (a
+ * data: URL is decoded, a blob: URL is marked), so it is not kept here.
  */
 function isLinkOnly(url: string): boolean {
+  let parsed: URL;
   try {
-    const { protocol, hostname } = new URL(url);
-    return (
-      (protocol === "https:" || protocol === "http:") &&
-      hostname !== "googleusercontent.com" &&
-      !hostname.endsWith(".googleusercontent.com")
-    );
+    parsed = new URL(url);
   } catch {
-    return false;
+    return true;
   }
+  if (parsed.protocol === "blob:" || parsed.protocol === "data:") return false;
+  return !(parsed.protocol === "https:" && parsed.hostname === "lh3.googleusercontent.com");
 }
 
 export async function transformGeminiToHaevn(
