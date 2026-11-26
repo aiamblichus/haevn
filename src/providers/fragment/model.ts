@@ -12,11 +12,16 @@ export interface FragmentFile {
 }
 
 /**
- * The version of the parser's forms, kept in `params.fragment.v`. A file that has not changed is
- * still `changed` when the stored version is lower than this one, so that a new form reaches the
- * fragments imported before it existed.
+ * The versions of the parser's forms. `params.fragment.v` keeps the lowest version that reads a
+ * file as it was stored (`ParsedFragment.minVersion`), and a file that has not changed is still
+ * `changed` when its stored `v` is lower than the version it needs now. So a new form reaches the
+ * files that use it, and a file that does not use it is not touched (an edit made in the archive
+ * to a field the file also gives would be written over by a re-save).
+ *
+ * 1: slice 1. 2: `speakers.break` and `speakers.lead` (HVN-163, slice 2).
  */
-export const FRAGMENT_PARSER_VERSION = 1;
+export const FRAGMENT_BASE_VERSION = 1;
+export const FRAGMENT_PARSER_VERSION = 2;
 
 export type FragmentRole = "user" | "assistant" | "system";
 
@@ -104,6 +109,8 @@ export interface ParsedFragment {
   /** `body == seams[0] + turns[0].text + seams[1] + ... + tail` */
   seams: string[];
   tail: string;
+  /** The lowest parser version that reads this file as it is stored: 2 for `break` or `lead`, else 1 */
+  minVersion: number;
   warnings: FragmentWarning[];
 }
 

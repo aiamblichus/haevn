@@ -7,7 +7,6 @@
 import { formatRoughDate } from "../../model/roughDate";
 import { sha256Hex } from "../../utils/jsonImporter";
 import {
-  FRAGMENT_PARSER_VERSION,
   type FragmentFile,
   type FragmentLookup,
   type FragmentPlanEntry,
@@ -101,7 +100,7 @@ export async function planFragmentImport(
     const stored = await lookup.stored(fragment.id);
     if (!stored) {
       entry.state = "new";
-    } else if (stored.fileSha256 === fragment.fileSha256 && stored.v >= FRAGMENT_PARSER_VERSION) {
+    } else if (stored.fileSha256 === fragment.fileSha256 && stored.v >= fragment.minVersion) {
       entry.state = "unchanged";
     } else {
       entry.state = "changed";

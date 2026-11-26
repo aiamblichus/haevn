@@ -475,12 +475,12 @@ describe("what the plan says", () => {
       entry({
         name: "a.md",
         title: "",
-        warnings: [{ code: "speakers-unknown-key", message: "speakers.break is not read" }],
+        warnings: [{ code: "speakers-unknown-key", message: "speakers.asistant is not read" }],
       }),
       entry({
         name: "b.md",
         title: "",
-        warnings: [{ code: "speakers-unknown-key", message: "speakers.lead is not read" }],
+        warnings: [{ code: "speakers-unknown-key", message: "speakers.leed is not read" }],
       }),
       entry({ name: "c.md" }),
     ];
@@ -493,7 +493,7 @@ describe("what the plan says", () => {
     const text = summary.lines.join("\n");
     expect(summary.lines).toContain("3 files: 3 new · 0 refused · 2 warnings");
     expect(summary.lines).toContain("  warnings: speakers-unknown-key ×2");
-    expect(text).toContain("speakers.break is not read");
+    expect(text).toContain("speakers.asistant is not read");
     expect(text).toContain("2 files have no title");
     // a real import lists only the files that need a word
     expect(text).not.toContain("c.md");

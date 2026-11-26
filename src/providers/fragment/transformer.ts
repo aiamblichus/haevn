@@ -14,7 +14,7 @@ import type {
   ModelResponse,
 } from "../../model/haevn_model";
 import { sha256Hex } from "../../utils/jsonImporter";
-import { FRAGMENT_PARSER_VERSION, type FragmentParams, type HashedFragment } from "./model";
+import type { FragmentParams, HashedFragment } from "./model";
 
 export const FRAGMENT_SOURCE = "fragment";
 
@@ -120,7 +120,7 @@ export function transformFragmentToHaevnChat(
 
   const platform = fields.platform;
   const fragmentParams: FragmentParams = {
-    v: FRAGMENT_PARSER_VERSION,
+    v: fragment.minVersion,
     fileName: fragment.name.split(/[\\/]/).pop() ?? fragment.name,
     fileSha256: fragment.fileSha256,
     bodySha256: fragment.bodySha256,
