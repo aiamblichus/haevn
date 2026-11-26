@@ -2778,32 +2778,153 @@ describe("search worker: a worker that no init has come to (HVN-98)", () => {
 
   describe("when a write cannot be applied", () => {
     const REASON = "Access Handles cannot be created: another worker holds the file";
+    const BEFORE_LABELS = 3;
 
-    it("says so in the log when the index cannot be opened, for an add and for a remove", async () => {
+    /** A chat the rebuild cannot read: the pass fails and the old-format file stays unfinished. */
+    function unreadable(id: string): Chat {
+      const bad = buildChat(id, "an unreadable pineapple");
+      (bad.messages[`${id}-m1`] as { message: unknown }).message = 42;
+      return bad;
+    }
+
+    const dropLines = async () => {
+      const { log } = await import("../src/utils/logger");
+      return vi
+        .mocked(log.warn)
+        .mock.calls.map((call) => String(call[0]))
+        .filter((line) => line.includes("was not applied to the search index"));
+    };
+
+    it("says so in the log once while the index cannot be opened, for adds and removes", async () => {
       const { log } = await import("../src/utils/logger");
       vi.mocked(log.warn).mockClear();
-      await seedChats([buildChat("fresh", "a quokka")]);
+      await seedChats([buildChat("fresh", "a quokka"), buildChat("other", "a quokka")]);
       faults.open = new Error(REASON);
       faults.openFailures = 5;
 
       await send({ type: "add", chatId: "fresh" });
+      await send({ type: "add", chatId: "other" });
       await send({ type: "remove", chatId: "fresh" });
 
-      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
-      expect(
-        said.filter((line) => line.includes("Adding chat fresh was not applied")),
-      ).toHaveLength(1);
-      expect(
-        said.filter((line) => line.includes("Removing 1 chat(s) was not applied")),
-      ).toHaveLength(1);
-      expect(
-        said.every((line) => !line.includes(REASON) || line.includes("could not be opened")),
-      ).toBe(true);
+      const said = await dropLines();
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain("Adding chat fresh was not applied");
+      expect(said[0]).toContain(`could not be opened (${REASON})`);
       // And the worker still answers, so the caller is not left waiting.
       expect(
         posted.filter((m) => m.type === "addComplete" || m.type === "removeComplete"),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
       expect(lastChunk(await search("quokka", false)).indexIncomplete).toEqual({ error: REASON });
+    });
+
+    describe("after a rebuild that failed with no finished file", () => {
+      async function failedRebuildWorker(): Promise<void> {
+        await seedChats([buildChat("old", "an old pineapple"), unreadable("zzz-bad")]);
+        await kit.seedFormat(BEFORE_LABELS);
+        await loadWorker();
+        const before = passEnds();
+        await send({ type: "init" });
+        await waitForPassEnd(before);
+        const { log } = await import("../src/utils/logger");
+        vi.mocked(log.warn).mockClear();
+      }
+
+      it("logs the first add that is left to the next rebuild, once, and does not start a rebuild", async () => {
+        await failedRebuildWorker();
+        await seedChats([buildChat("one", "a quokka"), buildChat("two", "a quokka")]);
+        const endsBefore = passEnds();
+
+        await send({ type: "add", chatId: "one" });
+        await send({ type: "add", chatId: "two" });
+
+        const said = await dropLines();
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain("no finished file and no rebuild is running");
+        expect(passEnds()).toBe(endsBefore); // no pass was started by either add
+        expect(posted.filter((m) => m.type === "addComplete" && m.success === true)).toHaveLength(
+          2,
+        );
+      });
+
+      it("writes again once a rebuild has finished, and says nothing more", async () => {
+        await failedRebuildWorker();
+        await seedChats([buildChat("one", "a quokka")]);
+        await send({ type: "add", chatId: "one" });
+        expect(await dropLines()).toHaveLength(1);
+
+        await getDB().chats.delete("zzz-bad");
+        await getDB().chatMessages.where("chatId").equals("zzz-bad").delete();
+        await send({ type: "rebuild" });
+        await seedChats([buildChat("two", "a quokka")]);
+        await send({ type: "add", chatId: "two" });
+
+        expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["one", "two"]));
+        expect(await dropLines()).toHaveLength(1); // nothing new was lost
+      });
+    });
+
+    it("logs again for a later outage: the index opens, then has no finished file", async () => {
+      const { log } = await import("../src/utils/logger");
+      await seedChats([buildChat("old", "an old pineapple"), unreadable("zzz-bad")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+      vi.mocked(log.warn).mockClear();
+      faults.open = new Error(REASON);
+      faults.openFailures = 1;
+
+      await send({ type: "add", chatId: "old" }); // the file cannot be opened
+      const before = passEnds();
+      await send({ type: "init" }); // it opens, has no finished file, and the rebuild fails
+      await waitForPassEnd(before);
+      await send({ type: "add", chatId: "old" });
+
+      const said = await dropLines();
+      expect(said).toHaveLength(2);
+      expect(said[0]).toContain("could not be opened");
+      expect(said[1]).toContain("no finished file and no rebuild is running");
+    });
+
+    it("does not join a rebuild that was requested while the check counted the chats", async () => {
+      const { log } = await import("../src/utils/logger");
+      await seedChats([buildChat("old", "an old pineapple")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+      vi.mocked(log.warn).mockClear();
+
+      // Hold the first count of the chats: the one the consistency check makes.
+      const table = workerDbs[workerDbs.length - 1].chats as unknown as {
+        count: () => Promise<number>;
+      };
+      const realCount = table.count.bind(table);
+      let reached!: () => void;
+      const atCount = new Promise<void>((r) => {
+        reached = r;
+      });
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let held = false;
+      vi.spyOn(table, "count").mockImplementation(async () => {
+        if (!held) {
+          held = true;
+          reached();
+          await released;
+        }
+        return realCount();
+      });
+
+      const init = send({ type: "init" });
+      await atCount;
+      const rebuild = send({ type: "rebuild" });
+      release();
+      await Promise.all([init, rebuild]);
+      await waitUntilIndexReady();
+
+      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
+      expect(said.filter((line) => line.includes("Rebuild already in progress"))).toEqual([]);
+      expect(rebuilds()).toBe(1);
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
     });
   });
 });

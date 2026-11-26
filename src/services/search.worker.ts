@@ -102,6 +102,13 @@ let openFailure: string | null = null;
  * and an unfinished rebuild have none, and a search says the index is being rebuilt.
  */
 let hasLiveIndex = false;
+/**
+ * Whether a write that could not be applied has been logged since the index was last opened. One
+ * line says it for the outage: a bulk sync that adds thousands of chats during one would otherwise
+ * push the error that explains it out of the log. An open is the only way back from "no index" or
+ * "no finished file" (once `hasLiveIndex` is true it stays true), so it is the only reset.
+ */
+let droppedWriteLogged = false;
 /** The start of a bulk operation whose window could not be written; this worker's memory only. */
 let unrecordedSince: number | null = null;
 let rebuildState: IndexRebuildState | null = null;
@@ -139,6 +146,7 @@ async function openIndex(): Promise<void> {
     try {
       hasLiveIndex = await next.open();
       index = next;
+      droppedWriteLogged = false;
       openFailure = null;
       log.info(
         `[SearchWorker] ${next.describe()} opened: ${
@@ -192,6 +200,9 @@ async function runConsistencyCheck(): Promise<void> {
   }
   try {
     const actualChatCount = await countLiveChats();
+    // A rebuild requested while the chats were counted is the cure; joining it would only make
+    // it run once more.
+    if (rebuildRun) return;
     const indexedDocCount = index.chats();
 
     log.info(
@@ -233,54 +244,45 @@ async function runConsistencyCheck(): Promise<void> {
   }
 }
 
-/** The preparation in flight, so that messages that arrive together wait for one. */
-let preparing: Promise<void> | undefined;
-
 /**
  * Make the index usable by a message that may be the first this worker gets. `init` runs only when
  * the service worker starts, and the offscreen document makes a new worker (empty, with no index
  * open) whenever the old one dies, so a search, an add or a remove can be that first message
  * (HVN-98). It opens the index, and when the file it opens is not a finished one, starts the
  * rebuild that `init` would have started: the chats it is given are read by that pass from the
- * database. A failed open stays failed until the next `init`, as for search; a failed rebuild is
- * not started again here either.
+ * database. The open and the check are each shared by the messages that arrive together. A failed
+ * open stays failed until the next `init`, as for search; a failed rebuild is not started again
+ * here either.
  */
-function prepareIndex(): Promise<void> {
-  preparing ??= (async () => {
-    if (!index && !openFailure) await openIndex();
-    if (index && !hasLiveIndex && !rebuildRun && rebuildFailure === null) {
-      await checkIndexConsistency();
-    }
-  })().finally(() => {
-    preparing = undefined;
-  });
-  return preparing;
+async function prepareIndex(): Promise<void> {
+  if (!index && !openFailure) await openIndex();
+  if (index && !hasLiveIndex && !rebuildRun && rebuildFailure === null) {
+    await checkIndexConsistency();
+  }
 }
 
 // --- Writing to the index ---
 
 /**
- * Whether a write to the index cannot be made now. It says so in the log when the write is lost
- * for now: without an open index it waits for the next open and rebuild; with no finished file
- * and no rebuild running (the last one failed) the next rebuild reads the chats from the
- * database. While a rebuild runs the chats are noted for it, and there is nothing to say.
+ * Whether a write to the index cannot be made now. It says so in the log, once until the index is
+ * back, when the write is lost for now: without an open index it waits for the next open and
+ * rebuild; with no finished file and no rebuild running (the last one failed) the next rebuild
+ * reads the chats from the database. While a rebuild runs the chats are noted for it, and there
+ * is nothing to say.
  */
 function cannotWrite(what: string): boolean {
-  if (!index) {
-    log.warn(
-      `[SearchWorker] ${what} was not applied to the search index: it could not be opened (${openFailure ?? "not open"}). The index stays behind the archive until it is opened again and rebuilt.`,
-    );
-    return true;
-  }
-  if (!hasLiveIndex) {
-    if (!rebuildRun) {
+  if (index && hasLiveIndex) return false;
+  if (!index || !rebuildRun) {
+    if (!droppedWriteLogged) {
+      droppedWriteLogged = true;
       log.warn(
-        `[SearchWorker] ${what} was not applied to the search index: it has no finished file and no rebuild is running. The next rebuild reads it from the database.`,
+        index
+          ? `[SearchWorker] ${what} was not applied to the search index: it has no finished file and no rebuild is running. The next rebuild reads it from the database. Writes that follow are not logged until the index is back.`
+          : `[SearchWorker] ${what} was not applied to the search index: it could not be opened (${openFailure ?? "not open"}). The index stays behind the archive until it is opened again and rebuilt. Writes that follow are not logged until it is.`,
       );
     }
-    return true;
   }
-  return false;
+  return true;
 }
 
 /**
