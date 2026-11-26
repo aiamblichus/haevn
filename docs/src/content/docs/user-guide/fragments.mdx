@@ -120,11 +120,30 @@ A line is a label when, trimmed, it is the label, or the label and a colon, or i
 | Key | A matching line |
 | --- | --- |
 | `user`, `assistant`, `system` | starts a turn of that speaker (a label, or a list of labels) |
+| `break` | starts a block: a new exchange, with nobody named (a label, or a list of labels) |
 | `prompt` | a prefix (`">"`, `"$"`, or a list of them): the line **is** the person's turn, and what follows it, up to the next mark, is the reply |
+| `lead` | `user`, `assistant` or `system`: who speaks the text before the first mark (no line matches it) |
 
-A `system` turn becomes the chat's system prompt. Text before the first mark is a block of its own, with nobody named. An unknown key under `speakers` is kept and never refuses the file; the plan names it (`speakers.asistant is not read`), so a misspelling does not pass in silence. So does a label that sits under two keys, a key of the wrong type, and a declaration that matches no line (the file is then one block).
+A `system` turn becomes the chat's system prompt.
 
-If the labels you declare cover only one side, every turn is that side's, and the plan says so ("24 turns, all the user's").
+**A label that only marks where an exchange starts.** A copied page often labels one speaker, or repeats a piece of chrome ("Copy", a bot's name), once an exchange, and nothing marks where the other side starts. Declared under `user` or `assistant`, such a label would give the other side's words to the wrong speaker. Declare it under `break` instead: the line is kept, and the text up to the next mark is one **block**, with nobody named. Forty exchanges become forty passages for search and the viewer, in place of one, and nobody's words are put in the wrong mouth. A block is stored as the whole body is when nothing is marked: a message with one piece of text. If you want true roles, put a marker at each boundary by hand (forms 1 and 2), or give a prompt prefix.
+
+```yaml
+speakers:
+  break: [Copy, Thought for a few seconds]
+```
+
+**The text before the first mark** is a block of its own when it has anything but white space: it is never dropped and never folded into the line that follows. When you know who wrote it, `lead` says so. `lead: user` makes it the person's turn, and `lead: system` makes it the chat's system prompt. `lead` names the speaker of that one stretch only, and does nothing when no line matched.
+
+```yaml
+speakers:
+  lead: system
+  break: [Copy]
+```
+
+An unknown key under `speakers` is kept and never refuses the file; the plan names it (`speakers.asistant is not read`), so a misspelling does not pass in silence. So does a label that sits under two keys (the first of `user`, `assistant`, `system` and `break` has it), a key of the wrong type, and a declaration that matches no line (the file is then one block).
+
+If the labels you declare cover only one side, every turn is that side's, and the plan says so: "24 turns, all the user's: if this label only marks where an exchange starts, declare it under `break`". The warning is left out when the file declares a `break`.
 
 ## Import
 
@@ -147,7 +166,7 @@ Every file gets one state in the plan:
 | State | Meaning |
 | --- | --- |
 | `new` | a valid id that is not in the archive: it is saved |
-| `changed` | the id is in the archive and the file is not the one that was imported: it is saved over the old chat |
+| `changed` | the id is in the archive and the file is not the one that was imported, or it was imported by an older reader of the format: it is saved over the old chat |
 | `unchanged` | the id is in the archive and the file is the same: nothing is written |
 | `no-id` | no frontmatter, or none with an `id`: refused, unless `--assign-ids` |
 | `bad-id` | `id` is not a UUID: refused |
@@ -157,6 +176,8 @@ Every file gets one state in the plan:
 | `same-file` | two files share an id and are the same: the first is imported |
 
 **A refused file does not stop the others.** The exit status is 1 when any file was refused, and running the import again after you fix them leaves the ones that are in as `unchanged`. A file that is `unchanged` is not touched, so a title you edited in the archive is still there. `--no-overwrite` leaves a `changed` file as it is. `--skip-index` saves without indexing for search.
+
+**A changed file replaces its chat, whole.** The messages are the new file's and none of the old ones is kept: a file that was one block and now declares a `break` becomes a chain of many messages, and one that loses its declaration becomes one again. The chat keeps its id. The title, description, categories and keywords that generation made from the old text stay as they are, and the chat is not queued for generation again; they are not made again from the new text. A field the file itself gives is written over the record. A new form of the format reaches a file you have not edited: a fragment imported by an older reader is `changed` on the next import, though its bytes are equal, so importing the folder again is all it takes.
 
 The last lines of the plan count the files by state and the warnings by kind, and say how many files have no title.
 
