@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupBulkSync,
   handleBulkSyncTick,
+  onWorkerReport,
   resumeBulkSync,
   stopWaitingForWorker,
+  WORKER_IDLE_GIVE_UP_MS,
 } from "../src/background/bulkSync/orchestrator";
 import {
   addPendingHandoff,
@@ -1183,5 +1185,49 @@ describe("a failed chat is recorded before it leaves the pending set (HVN-160)",
       { chatId: "c7", error: "download failed" },
     ]);
     expect((await getPendingHandoffs()).chatIds).toEqual(["c7"]);
+  });
+});
+
+describe("the worker-silence give-up does not count a failed chat twice (HVN-169)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a failure already on the run is not appended again when the give-up fires", async () => {
+    await setBulkSyncState(
+      runState({ chatIds: ["c7"], total: 1, currentIndex: 1, processedChatIds: ["c7"] }),
+    );
+    await setActiveOperation("bulkSync");
+    await addPendingHandoff("c7");
+
+    // the failure is recorded, then the write that settles it fails: c7 stays pending
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    let failed = false;
+    adapter.set = (async (key: string, value: unknown) => {
+      if (key === "bulkSyncPendingHandoffs" && !failed) {
+        failed = true;
+        throw new Error("quota exceeded");
+      }
+      return write(key, value);
+    }) as typeof adapter.set;
+    try {
+      await expect(
+        settleWorkerReport({
+          chatId: "c7",
+          runId: `${STARTED}:0`,
+          failure: { error: "download failed" },
+        }),
+      ).rejects.toThrow("quota exceeded");
+    } finally {
+      adapter.set = write;
+    }
+
+    // the worker stays silent past the give-up; only the clock moves
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + WORKER_IDLE_GIVE_UP_MS + 60_000);
+    await onWorkerReport();
+
+    expect(sent("bulkSyncComplete").at(-1)).toMatchObject({ totalCount: 1, failedCount: 1 });
   });
 });
