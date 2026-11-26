@@ -61,3 +61,57 @@ describe("claude_transformer", () => {
     expect(haevnChat.providerLastModifiedTimestamp).toBe(new Date(transcript.updated_at).getTime());
   });
 });
+
+// HVN-168: the conversation's `model` is the only model the API names; the messages name none.
+describe("the model a Claude chat names (HVN-168)", () => {
+  function transcriptWith(model: unknown): ChatTranscript {
+    return {
+      uuid: "c-1",
+      name: "A chat",
+      updated_at: "2024-01-01T12:00:00Z",
+      created_at: "2024-01-01T11:00:00Z",
+      current_leaf_message_uuid: "m2",
+      model,
+      chat_messages: [
+        {
+          uuid: "m1",
+          text: "Hello",
+          sender: "human",
+          created_at: "2024-01-01T11:59:00Z",
+          updated_at: "2024-01-01T11:59:00Z",
+          attachments: [],
+        },
+        {
+          uuid: "m2",
+          text: "Hi!",
+          sender: "assistant",
+          created_at: "2024-01-01T12:00:00Z",
+          updated_at: "2024-01-01T12:00:00Z",
+          attachments: [],
+        },
+      ],
+    } as unknown as ChatTranscript;
+  }
+
+  it("writes the conversation's model into the chat, its messages and the answer's model_name", async () => {
+    const chat = await convertClaudeTranscriptToHaevn(transcriptWith(" claude-sonnet-4-5 "));
+
+    expect(chat.models).toEqual(["claude-sonnet-4-5"]);
+    expect(chat.messages.m2.model).toBe("claude-sonnet-4-5");
+    const response = chat.messages.m2.message.find((m) => m.kind === "response");
+    expect(response).toMatchObject({ model_name: "claude-sonnet-4-5" });
+  });
+
+  it.each([
+    null,
+    undefined,
+    "",
+    "   ",
+    42,
+  ])("names the provider when the model is %j", async (model) => {
+    const chat = await convertClaudeTranscriptToHaevn(transcriptWith(model));
+
+    expect(chat.models).toEqual(["Claude"]);
+    expect(chat.messages.m2.model).toBe("Claude");
+  });
+});
