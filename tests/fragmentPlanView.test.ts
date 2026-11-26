@@ -16,6 +16,7 @@ import {
   overLimitNotice,
   planHeading,
   readFailedNotice,
+  replacedLine,
   shellWord,
 } from "../src/options/import/fragmentPlanView";
 import type { FragmentPlanEntry } from "../src/providers/fragment";
@@ -377,6 +378,41 @@ describe("an error message in a sentence, and a read that failed (HVN-163, slice
     expect(notice.body).toMatch(/^Chrome could not open a file or folder you chose/);
     expect(notice.body).toMatch(/Nothing was written\.$/);
     expect(notice.body).not.toMatch(/write to a file/);
+  });
+});
+
+describe("what a growing set says (HVN-179)", () => {
+  it("says the files that replaced an earlier one, five of them at most", () => {
+    expect(replacedLine([])).toBe("");
+    expect(replacedLine(["a.md"])).toBe("1 file was added twice; the later copy is used: a.md.");
+    expect(replacedLine(["a.md", "notes/1.md"])).toBe(
+      "2 files were added twice; the later copies are used: a.md, notes/1.md.",
+    );
+    expect(replacedLine(["1", "2", "3", "4", "5", "6", "7"].map((n) => `${n}.md`))).toBe(
+      "7 files were added twice; the later copies are used: 1.md, 2.md, 3.md, 4.md, 5.md and 2 more.",
+    );
+  });
+
+  it("says a drop was not added, and that the files already there are kept", () => {
+    const over = gatherFragmentSources([{ kind: "file", file: file("a.md", 17 * 1024 * 1024) }]);
+
+    expect(overLimitNotice(over, 3)).toEqual({
+      title: "Not added: too much for one import.",
+      body: "With them, the set would be 1 .md files and 17.0 MB, and one import takes at most 16 MB. The 3 files already here are kept: import them first, or Clear and choose fewer.",
+    });
+    expect(overLimitNotice(over, 1).body).toContain(
+      "The 1 file already here is kept: import it first",
+    );
+    expect(overLimitNotice(over).body).toContain("Nothing was read.");
+  });
+
+  it("says a drop with no .md file left the plan as it was", () => {
+    const texts = gatherFragmentSources([{ kind: "file", file: file("a.txt") }]);
+
+    expect(noMarkdownNotice(texts, true).body).toBe(
+      "1 file was left out: a fragment is a .md file. If one of them is a fragment, rename it to .md. The files already here are as they were.",
+    );
+    expect(noMarkdownNotice(texts).body).not.toContain("already here");
   });
 });
 

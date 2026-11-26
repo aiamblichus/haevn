@@ -15,15 +15,8 @@ import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
 import { useStatus } from "../../context/StatusContext";
 import {
-  type DroppedItem,
   type FragmentSource,
-  type GatheredFragments,
-  gatherFragmentSources,
-  overLimit,
-  type ReadFragments,
-  readFragmentFiles,
   sourceFromFolderPick,
-  sourcesFromDrop,
   takeDroppedItems,
 } from "../../import/fragmentFiles";
 import { askFragments } from "../../import/fragmentImportApi";
@@ -39,34 +32,31 @@ import {
   inSentence,
   isMissingFrontmatter,
   leftOutLine,
-  type Notice,
   noIdWords,
-  noMarkdownNotice,
-  overLimitNotice,
   type PlanGroup,
   type PlanRow,
   planHeading,
   plural,
-  readFailedNotice,
+  replacedLine,
 } from "../../import/fragmentPlanView";
+import {
+  FragmentSession,
+  type RunView,
+  type SessionState,
+  type ToneNotice,
+} from "../../import/fragmentSession";
 import { FilesRegion } from "./FilesRegion";
 
 const DOCS = "https://haevn.pages.dev/user-guide/fragments/";
 /** A group longer than this shows this many rows, and a button for the rest */
 const ROWS_SHOWN = 20;
 
-type NoticeTone = "info" | "bad" | "warn";
-type ToneNotice = Notice & { tone: NoticeTone };
-
-type View =
-  | { kind: "empty"; notice?: ToneNotice }
-  | { kind: "listing" }
-  | { kind: "reading"; read: number; total: number }
-  | { kind: "checking"; total: number }
-  | { kind: "failed"; error: string }
-  | { kind: "plan"; notice?: ToneNotice }
+/** What the import itself shows, over what the session shows: the run, the result, a refusal */
+type PanelView =
   | { kind: "importing"; count: number }
   | { kind: "done"; outcome: ImportOutcome; replace: boolean };
+
+type View = RunView | PanelView;
 
 interface FragmentImportPanelProps {
   /** The dialog is held (Esc and the close button do nothing) while an import runs */
@@ -92,7 +82,25 @@ export const FragmentImportPanel = ({
   focusFirst,
 }: FragmentImportPanelProps) => {
   const { setStatus } = useStatus();
-  const [view, setView] = useState<View>({ kind: "empty" });
+  const sessionRef = useRef<FragmentSession | null>(null);
+  if (sessionRef.current === null) {
+    sessionRef.current = new FragmentSession({
+      ask: (files) => askFragments(files, { dryRun: true, overwrite: true }),
+      onChange: (state) => {
+        setRun(state);
+        setPlan(state.plan);
+        setPanelView(null);
+        setImportNotice(undefined);
+      },
+      onError: (err) => log.warn("[FragmentImport] Could not read the chosen files", err),
+    });
+  }
+  const session = sessionRef.current;
+  const [run, setRun] = useState<SessionState>(session.snapshot);
+  const [panelView, setPanelView] = useState<PanelView | null>(null);
+  // What an import that did not run said (another operation holds the lock, it stopped)
+  const [importNotice, setImportNotice] = useState<ToneNotice | undefined>();
+  const view: View = panelView ?? run.view;
   const [plan, setPlan] = useState<FragmentPlanEntry[]>([]);
   const [replace, setReplace] = useState(true);
   const [dragging, setDragging] = useState(false);
@@ -100,9 +108,8 @@ export const FragmentImportPanel = ({
   const [copied, setCopied] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const gatheredRef = useRef<GatheredFragments | null>(null);
-  const readRef = useRef<ReadFragments | null>(null);
-  const runRef = useRef(0);
+  const importRunRef = useRef(0);
+  const viewKindRef = useRef<View["kind"]>("empty");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const importButtonRef = useRef<HTMLButtonElement>(null);
   const refocusImport = useRef(false);
@@ -116,11 +123,20 @@ export const FragmentImportPanel = ({
 
   const importing = view.kind === "importing";
   importingRef.current = importing;
+  viewKindRef.current = view.kind;
+
+  // Clear: nothing is kept, the Replace choice included
+  const startAgain = useCallback(() => {
+    session.clear();
+    setReplace(true);
+    setExpanded(new Set());
+  }, [session]);
 
   // A run that outlives the dialog finds itself stale and stops
   useEffect(() => {
     return () => {
-      runRef.current += 1;
+      importRunRef.current += 1;
+      sessionRef.current?.dispose();
     };
   }, []);
 
@@ -157,92 +173,6 @@ export const FragmentImportPanel = ({
     }
   }, [view.kind]);
 
-  const ask = useCallback(async (run: number, read: ReadFragments, local: FragmentPlanEntry[]) => {
-    setView({ kind: "checking", total: read.files.length });
-    const answer = await askFragments(read.files, { dryRun: true, overwrite: true });
-    if (run !== runRef.current) return;
-    if (!answer.ok) {
-      setView({
-        kind: "failed",
-        error: "busy" in answer ? "the extension is busy" : answer.error,
-      });
-      return;
-    }
-    setPlan([...local, ...answer.reply.plan]);
-    setReplace(true);
-    setExpanded(new Set());
-    setView({ kind: "plan" });
-  }, []);
-
-  const begin = useCallback(
-    async (sources: FragmentSource[]) => {
-      if (sources.length === 0) return;
-      const run = ++runRef.current;
-      const gathered = gatherFragmentSources(sources);
-      gatheredRef.current = gathered;
-      readRef.current = null;
-
-      if (gathered.candidates.length === 0) {
-        setView({ kind: "empty", notice: { tone: "info", ...noMarkdownNotice(gathered) } });
-        return;
-      }
-      if (overLimit(gathered)) {
-        setView({ kind: "empty", notice: { tone: "bad", ...overLimitNotice(gathered) } });
-        return;
-      }
-
-      const total = gathered.candidates.length;
-      setView({ kind: "reading", read: 0, total });
-      let read: ReadFragments | undefined;
-      try {
-        read = await readFragmentFiles(gathered, {
-          onProgress: (n) => {
-            if (run === runRef.current) setView({ kind: "reading", read: n, total });
-          },
-          isCancelled: () => run !== runRef.current,
-        });
-      } catch (err) {
-        if (run !== runRef.current) return;
-        log.warn("[FragmentImport] Could not read the chosen files", err);
-        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice() } });
-        return;
-      }
-      if (!read || run !== runRef.current) return;
-      readRef.current = read;
-      if (read.files.length === 0) {
-        // Every file was refused here: there is nothing to ask the extension
-        setPlan(read.refused);
-        setExpanded(new Set());
-        setView({ kind: "plan" });
-        return;
-      }
-      await ask(run, read, read.refused);
-    },
-    [ask],
-  );
-
-  // A drop: the folders are listed (one level) before anything is read. The list can be long, or
-  // fail, so it has its own state and its own failure.
-  const handleDrop = useCallback(
-    async (items: DroppedItem[]) => {
-      if (!items.some((item) => item.file || item.entry)) return;
-      const run = ++runRef.current;
-      if (items.some((item) => item.entry?.isDirectory)) setView({ kind: "listing" });
-      let sources: FragmentSource[];
-      try {
-        sources = await sourcesFromDrop(items);
-      } catch (err) {
-        if (run !== runRef.current) return;
-        log.warn("[FragmentImport] Could not read the chosen files", err);
-        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice() } });
-        return;
-      }
-      if (run !== runRef.current) return;
-      await begin(sources);
-    },
-    [begin],
-  );
-
   // The whole dialog takes a drop, not only the zone: a file let go on the title or the format row
   // would otherwise do nothing, with the cursor saying it would
   useEffect(() => {
@@ -270,7 +200,10 @@ export const FragmentImportPanel = ({
       setDragging(false);
       if (importingRef.current) return;
       // The items are gone when this handler returns: take them before anything is awaited
-      void handleDrop(takeDroppedItems(event.dataTransfer));
+      const items = takeDroppedItems(event.dataTransfer);
+      // A drop after a result starts again: what was imported is not a set to add to
+      if (viewKindRef.current === "done") startAgain();
+      session.addDropped(items);
     };
     target.addEventListener("dragenter", enter);
     target.addEventListener("dragover", over);
@@ -282,32 +215,23 @@ export const FragmentImportPanel = ({
       target.removeEventListener("dragleave", leave);
       target.removeEventListener("drop", drop);
     };
-  }, [handleDrop]);
+  }, [session, startAgain]);
 
-  const retry = () => {
-    const read = readRef.current;
-    if (!read) return;
-    void ask(++runRef.current, read, read.refused);
-  };
-
-  const reset = () => {
-    runRef.current += 1;
-    gatheredRef.current = null;
-    readRef.current = null;
-    setPlan([]);
-    setView({ kind: "empty" });
-  };
+  const retry = () => session.retry();
 
   const confirm = async () => {
-    const read = readRef.current;
+    const read = session.read;
     if (!read) return;
-    const run = ++runRef.current;
+    const run = ++importRunRef.current;
     const count = describePlan(plan, { replace }).toImport;
-    setView({ kind: "importing", count });
+    // Nothing is added to the set, and no check reports over it, until the import ends
+    session.lock(true);
+    setPanelView({ kind: "importing", count });
     onBusyChange(true);
     const answer = await askFragments(read.files, { dryRun: false, overwrite: replace });
     onBusyChange(false);
-    if (run !== runRef.current) return;
+    session.lock(false);
+    if (run !== importRunRef.current) return;
     if (!answer.ok) {
       const notice: ToneNotice =
         "busy" in answer
@@ -318,7 +242,8 @@ export const FragmentImportPanel = ({
               body: "Choose the files again: the plan will show what is already in.",
             };
       refocusImport.current = true;
-      setView({ kind: "plan", notice });
+      setImportNotice(notice);
+      setPanelView(null);
       return;
     }
     const outcome = describeOutcome(
@@ -327,7 +252,7 @@ export const FragmentImportPanel = ({
     );
     setPlan([...read.refused, ...answer.reply.plan]);
     setExpanded(new Set());
-    setView({ kind: "done", outcome, replace });
+    setPanelView({ kind: "done", outcome, replace });
     // The list reloads, and says "Loaded." when it is done: this is said after it, or it is lost
     await onImported();
     setStatus(
@@ -340,12 +265,13 @@ export const FragmentImportPanel = ({
     const input = event.target;
     const files = Array.from(input.files ?? []);
     input.value = "";
-    if (files.length === 0) return;
+    if (files.length === 0 || importingRef.current) return;
+    if (viewKindRef.current === "done") startAgain();
     if (folder) {
       const source = sourceFromFolderPick(files);
-      if (source) void begin([source]);
+      if (source) session.add([source]);
     } else {
-      void begin(files.map((file) => ({ kind: "file" as const, file })));
+      session.add(files.map((file): FragmentSource => ({ kind: "file", file })));
     }
   };
 
@@ -376,7 +302,7 @@ export const FragmentImportPanel = ({
 
   // ─── Pieces ────────────────────────────────────────────────────────────────
 
-  const gathered = gatheredRef.current;
+  const gathered = session.gathered;
   const summary = describePlan(plan, { replace });
   const everyRefused =
     summary.toImport === 0 && summary.changedCount === 0 && summary.refusedCount > 0;
@@ -623,7 +549,8 @@ export const FragmentImportPanel = ({
     <div className="flex flex-wrap items-center justify-end gap-2">
       {parts.left}
       <span className="flex-1" />
-      {parts.right}
+      {/* One group, so that Cancel and Import wrap together on a narrow dialog */}
+      <div className="ml-auto flex flex-wrap gap-2">{parts.right}</div>
     </div>
   );
 
@@ -635,11 +562,21 @@ export const FragmentImportPanel = ({
     ),
   });
 
-  const chooseOther = (
-    <Button variant="outline" onClick={reset} disabled={importing}>
-      Choose other files
-    </Button>
+  // More files are added to the set; Clear is the way to start again with none (HVN-179)
+  const setButtons = (disabled: boolean) => (
+    <>
+      <Button variant="outline" disabled={disabled} onClick={() => filesInputRef.current?.click()}>
+        Add files…
+      </Button>
+      <Button variant="outline" disabled={disabled} onClick={() => folderInputRef.current?.click()}>
+        Add a folder…
+      </Button>
+      <Button variant="outline" disabled={disabled} onClick={startAgain}>
+        Clear
+      </Button>
+    </>
   );
+  const chooseOther = setButtons(importing);
 
   // ─── The views ─────────────────────────────────────────────────────────────
 
@@ -689,7 +626,7 @@ export const FragmentImportPanel = ({
               </a>
             </div>
           </div>
-          {view.notice && noticeView(view.notice)}
+          {run.notice && noticeView(run.notice)}
           {cancelFooter}
         </>
       );
@@ -782,6 +719,7 @@ export const FragmentImportPanel = ({
         title = gathered ? planHeading(total, gathered) : plural(total, "file");
       }
       const left = gathered ? leftOutLine(gathered) : "";
+      const replacedText = replacedLine(run.replaced);
       if (everyRefused) {
         counts = (
           <>
@@ -864,17 +802,15 @@ export const FragmentImportPanel = ({
                 </div>
               )}
               {left && <div className="text-xs text-muted-foreground">{left}</div>}
+              {replacedText && <div className="text-xs text-muted-foreground">{replacedText}</div>}
             </div>
           )}
-          {view.kind === "plan" && view.notice && noticeView(view.notice)}
+          {!waiting && importNotice && noticeView(importNotice)}
+          {!waiting && run.notice && noticeView(run.notice)}
           {!waiting && filesRegion("Files", groups)}
           {waiting
             ? footer({
-                left: (
-                  <Button variant="outline" disabled>
-                    Choose other files
-                  </Button>
-                ),
+                left: setButtons(true),
                 right: (
                   <>
                     <Button variant="outline" disabled>
@@ -1005,7 +941,7 @@ export const FragmentImportPanel = ({
           {refusedGroups.length > 0 && filesRegion("Refused files", refusedGroups)}
           {footer({
             left: (
-              <Button variant="outline" onClick={reset}>
+              <Button variant="outline" onClick={startAgain}>
                 Import more
               </Button>
             ),
