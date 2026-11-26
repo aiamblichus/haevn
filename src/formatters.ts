@@ -14,7 +14,7 @@ import type {
   VideoResponsePart,
   VideoUrl,
 } from "./model/haevn_model";
-import { formatRoughDate, roughDateOf } from "./model/roughDate";
+import { roughDateOf } from "./model/roughDate";
 import { log } from "./utils/logger";
 import {
   branchSections,
@@ -372,14 +372,15 @@ function generateMarkdownContent(
     frontmatter.conversation_id = chat.id;
   }
 
-  // A chat with a rough date has made-up times (HVN-163): its date is the label the archive shows,
-  // and no other time is written for it (HVN-171). An undated chat has no date line, as a fragment
-  // with no `date:` has none.
+  // A chat with a rough date has made-up times (HVN-163): its date is written as the person wrote
+  // it, in the form the Markdown importer reads back (HVN-175), and no other time is written for it
+  // (HVN-171). The archive's label is for display only. An undated chat has no date line, as a
+  // fragment with no `date:` has none.
   const rough = roughDateOf(chat);
   if (!rough) {
     frontmatter.created_at = new Date(chat.timestamp).toISOString();
   } else if (rough.precision !== "unknown") {
-    frontmatter.date = formatRoughDate(rough);
+    frontmatter.date = rough.text;
   }
 
   if (!rough && chat.providerLastModifiedTimestamp) {

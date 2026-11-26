@@ -107,10 +107,11 @@ Assistant message text
 - `conversation_id` (optional): stable source identifier; when omitted, HAEVN computes an ID from file content
 - `created_at` (optional): chat creation timestamp (ISO 8601 string, milliseconds, or numeric string)
 - `modified_at` (optional): source/provider last-modified timestamp (same accepted formats as `created_at`)
+- `date` (optional, read only when `created_at` is absent): a date in the forms a fragment's `date:` takes (`2024`, `~2024-03`, `2023-11..2024-02`, `2024-03..`, and so on; see [Dates](/user-guide/fragments/#dates)). Left out, empty or `unknown` means undated. A date that is none of those forms is not read: the chat is dated at the time of the import, as it was before these forms were read, and HAEVN logs a warning.
 - `system` (optional): system prompt/context
 - `models_used` (optional): list of model names; defaults to `unknown` when omitted
 
-A chat with a rough date (a fragment dated `2024` or `~2024-03`) has made-up times for its messages, so its Markdown export writes its date as `date:`, holding the label the archive shows (`c. Mar 2024`), and writes neither `created_at` nor `modified_at`. An undated chat has no `date:` line. The importer does not read `date:`, so a file exported this way imports with the time of the import.
+A chat with a rough date (a fragment dated `2024` or `~2024-03`) has made-up times for its messages, so its Markdown export writes its date as `date:`, in the form it was written (`~2024-03`), and writes neither `created_at` nor `modified_at`. The importer reads that `date:` back as a fragment's is read: the chat has the same rough date, and its messages the same made-up times. An undated chat has no `date:` line, and imports undated.
 
 ### Message section rules
 
