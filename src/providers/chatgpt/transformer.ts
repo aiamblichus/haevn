@@ -580,12 +580,7 @@ export function transformOpenAIToHaevn(
           kind: "response",
           parts,
           timestamp: timestampIso,
-          model_name: getModelName(
-            msg.metadata?.model_slug ||
-              msg.metadata?.default_model_slug ||
-              conversation.default_model_slug ||
-              "",
-          ),
+          model_name: getModelName(slugOf(msg, conversation.default_model_slug)),
           vendor_id: msg.id,
         } as ModelResponse;
       } // end normal assistant handling
@@ -596,7 +591,8 @@ export function transformOpenAIToHaevn(
       parentId: treeNode.parentId,
       childrenIds: [],
       message: [modelEntry],
-      model: "ChatGPT",
+      // The slug of the model that answered; what asks, and what a tool returns, names none.
+      model: role === "assistant" ? slugOf(msg, conversation.default_model_slug) : "",
       done: true,
       timestamp: timestampMs,
       chatId: conversationId,
@@ -617,7 +613,7 @@ export function transformOpenAIToHaevn(
     source: "chatgpt",
     sourceId: convId,
     title: conversation.title || "ChatGPT Conversation",
-    models: ["ChatGPT"],
+    models: modelsOf(messages),
     system: "",
     params: {},
     currentId: currentId || rootIds[rootIds.length - 1] || "",
@@ -633,6 +629,20 @@ export function transformOpenAIToHaevn(
   };
 
   return chat;
+}
+
+/** The model slug a response was made with: its own, else the conversation's default; "" if none. */
+function slugOf(msg: OpenAIMessage, conversationDefault: string | null | undefined): string {
+  const slug =
+    msg.metadata?.model_slug || msg.metadata?.default_model_slug || conversationDefault || "";
+  return slug.trim();
+}
+
+/** The models a chat was answered by, each once; "ChatGPT" only when its data names none. */
+function modelsOf(messages: Record<string, { model: string }>): string[] {
+  const slugs = new Set<string>();
+  for (const { model } of Object.values(messages)) if (model) slugs.add(model);
+  return slugs.size > 0 ? [...slugs] : ["ChatGPT"];
 }
 
 /** The id the chat is saved under, and the folder of its media in OPFS. */
