@@ -214,7 +214,7 @@ haevn search "emergence" --format json | jq '[.results[] | select(.label | not)]
 ```
 
 Useful fields:
-- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`. A hit on a model or a tag (from `model:` or `tag:`) has `label` set and no `messageRef`; skip it with `select(.label | not)` before you pass a ref to `haevn get`
+- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`. A hit in a chat that has only a rough date has `dateLabel` (`"2024"`, `"c. Mar 2024"`, `"undated"`) and no `messageTimestamp`. A hit on a model or a tag (from `model:` or `tag:`) has `label` set and no `messageRef`; skip it with `select(.label | not)` before you pass a ref to `haevn get`
 - `branches`: `tree`, `branches[].leafMessageRef`, `branches[].path`
 - `get`: branch content suitable for markdown or structured JSON workflows
 

@@ -38,6 +38,8 @@ haevn import --format fragment --assign-ids ./recovered
 
 `--assign-ids` **changes your files**, so it is opt-in. It writes one line, `id: <uuid>`, as the first line of the frontmatter (or a frontmatter block with only that line, in front of a file that has none), and nothing else in the file changes. With `--dry-run` it writes nothing and tells you which files it would change. Without `--assign-ids`, a file with no id is refused.
 
+An id is written only to a file that could then be imported. A file that would be refused for another reason (an empty body, a date that is not one) is left as it is, with the reason, and so is a file whose frontmatter does not begin with a `key: value` line at the left margin (a `{ title: x }` block, an indented one): add the `id:` line to those by hand. A dry run decides the same way, so what it says is what the real run does. The file keeps its permissions. A read-only file is left alone, and so is a file you save while the command is running: your edit stays, and the file is named as having no id. A symlink you name on the command line is written through, to the file it points to; a symlink found inside a folder is not read, and the summary counts them.
+
 Run `--assign-ids` once on a folder. Run it on a second copy of the same folder and every file gets a second identity: the dry run warns when a new file has the same text as a fragment that is already in the archive.
 
 ## Frontmatter
@@ -65,6 +67,8 @@ Any other key is kept in the stored copy of the frontmatter and not read. A YAML
 If the frontmatter gives a `title`, `description`, `synopsis`, `categories` or `keywords`, that metadata is yours: it is saved as written and nothing is generated for the chat. If it gives none, the chat is queued for [AI metadata](/user-guide/metadata/) like any import, when automatic generation is on. Writing a title therefore also turns off a generated description. `generate: false` keeps a file out of automatic generation altogether; a file with `generate: false` and no title will stay "(Untitled)".
 
 When a file changes and you import it again, the metadata fields the file gives are written over the chat's record. A field the file does not give is left as it is.
+
+If you take `generate: false` out of a file (and the file gives no metadata of its own), the next import hands the chat back to generation: the record that `generate: false` made, which holds nothing but the title, is removed, and the chat is queued like any import. A record you added to or retitled in the archive is yours and is kept; for such a chat, ask for generation in the metadata editor.
 
 ## Dates
 
@@ -172,4 +176,6 @@ tag:ghost
 
 ## Backup
 
-A fragment is a chat like another: a backup keeps it, and a restore gives back the file you imported, byte for byte, with its date as you gave it.
+A fragment is a chat like another: a backup keeps it, and a restore gives back its text as you wrote it: the body byte for byte, and the frontmatter as text, comments included, with its date as you gave it. The line endings of the two fences and a byte-order mark at the top of the file are not kept.
+
+A fragment you deleted in the archive comes back when you import its file again, whether the file changed or not.
