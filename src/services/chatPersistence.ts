@@ -111,7 +111,8 @@ export function deriveProviderTimestamp(
  * - Setting lastSyncedTimestamp
  * - Generating checksum
  * - Setting syncStatus
- * - Deriving providerLastModifiedTimestamp
+ * - Deriving providerLastModifiedTimestamp when the provider has one (this function falls back to the
+ *   chat's own timestamp, so the "Modified Time" index always holds the row: HVN-165)
  * - Updating search index
  * - Updating cache
  * - Broadcasting events
@@ -131,6 +132,11 @@ export async function saveChatToDb(chat: Chat): Promise<void> {
   }));
   const chatRow: Chat = {
     ...chat,
+    // An index leaves out a row without its key: a chat with no modified time would vanish from the
+    // archive under the "Modified Time" sort and from its count (HVN-165). The chat's own
+    // `timestamp` stands in when the provider gave none.
+    providerLastModifiedTimestamp:
+      chat.providerLastModifiedTimestamp ?? chat.timestamp ?? chat.lastSyncedTimestamp,
     messages: {},
   };
 
