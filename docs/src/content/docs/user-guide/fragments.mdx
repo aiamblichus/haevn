@@ -133,7 +133,7 @@ speakers:
   break: [Copy, Thought for a few seconds]
 ```
 
-**The text before the first mark** is a block of its own when it has anything but white space: it is never dropped and never folded into the line that follows. When you know who wrote it, `lead` says so. `lead: user` makes it the person's turn, and `lead: system` makes it the chat's system prompt. `lead` names the speaker of that one stretch only, and does nothing when no line matched.
+**The text before the first mark** is a block of its own when it has anything but white space: it is never dropped and never folded into the line that follows. When you know who wrote it, `lead` says so. `lead: user` makes it the person's turn, and `lead: system` makes it the chat's system prompt. `lead` names the speaker of that one stretch only, and it does so whichever marks the file uses, the body's own markers and headings included. When no line matched at all, the stretch is the whole body: `lead: user` or `lead: assistant` makes the whole file that speaker's one turn. `lead: system` alone leaves nothing to say, so the file stays one block and the plan says so.
 
 ```yaml
 speakers:
@@ -166,7 +166,7 @@ Every file gets one state in the plan:
 | State | Meaning |
 | --- | --- |
 | `new` | a valid id that is not in the archive: it is saved |
-| `changed` | the id is in the archive and the file is not the one that was imported, or it was imported by an older reader of the format: it is saved over the old chat |
+| `changed` | the id is in the archive and the file is not the one that was imported, or it declares `break` or `lead` and was imported by a reader that did not know them: it is saved over the old chat |
 | `unchanged` | the id is in the archive and the file is the same: nothing is written |
 | `no-id` | no frontmatter, or none with an `id`: refused, unless `--assign-ids` |
 | `bad-id` | `id` is not a UUID: refused |
@@ -177,7 +177,7 @@ Every file gets one state in the plan:
 
 **A refused file does not stop the others.** The exit status is 1 when any file was refused, and running the import again after you fix them leaves the ones that are in as `unchanged`. A file that is `unchanged` is not touched, so a title you edited in the archive is still there. `--no-overwrite` leaves a `changed` file as it is. `--skip-index` saves without indexing for search.
 
-**A changed file replaces its chat, whole.** The messages are the new file's and none of the old ones is kept: a file that was one block and now declares a `break` becomes a chain of many messages, and one that loses its declaration becomes one again. The chat keeps its id. The title, description, categories and keywords that generation made from the old text stay as they are, and the chat is not queued for generation again; they are not made again from the new text. A field the file itself gives is written over the record. A new form of the format reaches a file you have not edited: a fragment imported by an older reader is `changed` on the next import, though its bytes are equal, so importing the folder again is all it takes.
+**A changed file replaces its chat, whole.** The messages are the new file's and none of the old ones is kept: a file that was one block and now declares a `break` becomes a chain of many messages, and one that loses its declaration becomes one again. The chat keeps its id. The title, description, categories and keywords that generation made from the old text stay as they are, and the chat is not queued for generation again; they are not made again from the new text. A field the file itself gives is written over the record. A new form of the format reaches a file you have not edited only when the file uses it: a file that declares `break` or `lead` and was imported by a reader that did not know them is `changed` on the next import, though its bytes are equal, so importing the folder again is all it takes. Every other file is `unchanged` and is not touched.
 
 The last lines of the plan count the files by state and the warnings by kind, and say how many files have no title.
 
