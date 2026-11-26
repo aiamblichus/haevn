@@ -11,6 +11,7 @@ import { log } from "../utils/logger";
 import { charsOf, shapeOf } from "../utils/logShape";
 import { originAndPath } from "../utils/network_utils";
 import { detectCurrentPlatform, getConversationId } from "../utils/platform";
+import { replaceMessageListener } from "./replaceMessageListener";
 
 log.debug("[HAEVN][Content] Script loading...");
 registerAllProviders();
@@ -73,7 +74,10 @@ async function fetchChatDataForPlatform(
 // Message Handler
 // ============================================================================
 
-chrome.runtime.onMessage.addListener(
+// This script is evaluated once per injection (manifest + executeScript) in one isolated world:
+// registering through replaceMessageListener keeps one live listener per tab (HVN-161).
+
+replaceMessageListener(
   (message: unknown, _sender, sendResponse: (response: ContentScriptResponse) => void) => {
     try {
       if (!isContentScriptRequest(message)) {
