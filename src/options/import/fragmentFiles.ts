@@ -28,7 +28,7 @@ export interface FolderEntry {
 }
 
 export interface FragmentCandidate {
-  /** What the plan calls the file */
+  /** What the plan calls the file: unique among the candidates, so a result maps to one file */
   name: string;
   file: File;
   /** The folder it came from; undefined for a loose file */
@@ -54,6 +54,17 @@ export interface GatheredFragments {
 
 const isMarkdown = (name: string) => name.toLowerCase().endsWith(".md");
 
+/** "a.md" is taken: "a (2).md", then "a (3).md", until the name is free */
+function freeName(name: string, taken: Set<string>): string {
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf(".");
+  const [stem, extension] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let n = 2; ; n++) {
+    const next = `${stem} (${n})${extension}`;
+    if (!taken.has(next)) return next;
+  }
+}
+
 /**
  * Decides what is read, from what was given, and names each file. No file is opened. A folder's
  * files are in name order (the CLI's order); the folders and loose files keep the order given.
@@ -61,6 +72,10 @@ const isMarkdown = (name: string) => name.toLowerCase().endsWith(".md");
 export function gatherFragmentSources(sources: FragmentSource[]): GatheredFragments {
   const found: FragmentCandidate[] = [];
   const folders: string[] = [];
+  // Two folders of one name (dropped from two places) would give `notes/1.md` twice: the plan, the
+  // rows and the batch's `failed` all go by name, so the second is called `notes (2)`
+  const folderNames = new Set<string>();
+  const looseNames = new Set<string>();
   const notMarkdownNames: string[] = [];
   let looseFiles = 0;
   let notMarkdown = 0;
@@ -70,14 +85,18 @@ export function gatherFragmentSources(sources: FragmentSource[]): GatheredFragme
     if (source.kind === "file") {
       looseFiles++;
       if (isMarkdown(source.file.name)) {
-        found.push({ name: source.file.name, file: source.file });
+        const name = freeName(source.file.name, looseNames);
+        looseNames.add(name);
+        found.push({ name, file: source.file });
       } else {
         notMarkdown++;
         if (notMarkdownNames.length < LEFT_OUT_NAMES) notMarkdownNames.push(source.file.name);
       }
       continue;
     }
-    folders.push(source.name);
+    const label = freeName(source.name, folderNames);
+    folderNames.add(label);
+    folders.push(label);
     const listed = source.entries.filter((entry) => !entry.name.startsWith("."));
     subfolders += listed.filter((entry) => !entry.file).length;
     const files = listed
@@ -85,7 +104,7 @@ export function gatherFragmentSources(sources: FragmentSource[]): GatheredFragme
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const entry of files) {
       if (isMarkdown(entry.name)) {
-        found.push({ name: entry.name, file: entry.file, folder: source.name });
+        found.push({ name: entry.name, file: entry.file, folder: label });
       } else {
         notMarkdown++;
       }

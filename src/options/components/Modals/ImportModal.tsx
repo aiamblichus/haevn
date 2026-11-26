@@ -60,7 +60,7 @@ interface ImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   importProviderFilter: string | null;
-  onLoadChats: () => void;
+  onLoadChats: () => void | Promise<void>;
   /** Closes the dialog and shows the archive filtered to fragments (HVN-163) */
   onShowFragments: () => void;
   /** Where focus goes when the dialog closes: the page decides (the opener, or the Provider filter) */

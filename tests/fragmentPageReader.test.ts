@@ -31,6 +31,45 @@ const folder = (name: string, ...entries: (File | string)[]): FragmentSource => 
 
 const loose = (f: File): FragmentSource => ({ kind: "file", file: f });
 
+describe("every file has a name of its own (HVN-163, slice 3)", () => {
+  it("calls the second of two dropped folders of one name by another, so no two rows are alike", () => {
+    const gathered = gatherFragmentSources([
+      folder("notes", file("1.md"), file("2.md")),
+      folder("notes", file("1.md")),
+    ]);
+
+    expect(gathered.candidates.map((c) => c.name)).toEqual([
+      "notes/1.md",
+      "notes/2.md",
+      "notes (2)/1.md",
+    ]);
+    expect(gathered.folders).toEqual(["notes", "notes (2)"]);
+    expect(new Set(gathered.candidates.map((c) => c.name)).size).toBe(3);
+  });
+
+  it("calls the second of two loose files of one name by another, before its extension", () => {
+    const gathered = gatherFragmentSources([
+      loose(file("a.md")),
+      loose(file("a.md")),
+      loose(file("a.md")),
+      loose(file("a (2).md")),
+    ]);
+
+    expect(gathered.candidates.map((c) => c.name)).toEqual([
+      "a.md",
+      "a (2).md",
+      "a (3).md",
+      "a (2) (2).md",
+    ]);
+  });
+
+  it("leaves a name as it is when it is alone", () => {
+    const gathered = gatherFragmentSources([folder("recovered", file("a.md"), file("b.md"))]);
+
+    expect(gathered.candidates.map((c) => c.name)).toEqual(["a.md", "b.md"]);
+  });
+});
+
 describe("gathering what was given (HVN-163, slice 3)", () => {
   it("reads a folder flat: its .md files in name order, any case, and counts the rest", () => {
     const gathered = gatherFragmentSources([

@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
-import type { FragmentPlanEntry } from "../src/providers/fragment";
 import { gatherFragmentSources } from "../src/options/import/fragmentFiles";
 import {
-  assignIdsCommand,
+  assignIdsPlan,
   busyNotice,
   describeOutcome,
   describePlan,
+  idBlock,
   idLine,
+  indexesLater,
+  inSentence,
+  isMissingFrontmatter,
   leftOutLine,
+  noIdWords,
   noMarkdownNotice,
   overLimitNotice,
   planHeading,
+  readFailedNotice,
   shellWord,
 } from "../src/options/import/fragmentPlanView";
+import type { FragmentPlanEntry } from "../src/providers/fragment";
+import { parseFragment } from "../src/providers/fragment";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../src/utils/importLimits";
 
 // HVN-163, slice 3: the words the Import dialog says about a plan and about what an import did.
 // The design's table of states is /project/haevn/product/design/fragment-import.
@@ -103,6 +111,20 @@ describe("grouping a plan by what the person must do (HVN-163, slice 3)", () => 
     expect(describePlan(plan, { replace: false }).toImport).toBe(2);
   });
 
+  it("counts a warning only on a file that would be written", () => {
+    const view = describePlan(
+      [
+        entry("n.md", "new", { warnings: warn("a copy of x") }),
+        entry("c.md", "changed", { warnings: warn("one side only") }),
+        entry("u.md", "unchanged", { warnings: warn("a copy of y") }),
+        entry("s.md", "same-file", { warnings: warn("a copy of z") }),
+      ],
+      { replace: true },
+    );
+
+    expect(view.warnedCount).toBe(2);
+  });
+
   it("says how many new files have no title in the group's sentence", () => {
     const [group] = describePlan(
       [entry("a.md", "new"), entry("b.md", "new", { title: "B" }), entry("c.md", "new")],
@@ -138,6 +160,42 @@ describe("the heading and what was left out (HVN-163, slice 3)", () => {
     expect(planHeading(486, three)).toBe("486 files from 3 folders");
     expect(planHeading(12, none)).toBe("12 files");
     expect(planHeading(1, none)).toBe("1 file");
+  });
+
+  it("splits a drop of a folder and loose files, counting .md files only", () => {
+    const gathered = gatherFragmentSources([
+      {
+        kind: "folder",
+        name: "walk-second",
+        entries: ["a", "b", "c"].map((n) => ({ name: `${n}.md`, file: file(`${n}.md`) })),
+      },
+      { kind: "file", file: file("one.md") },
+      { kind: "file", file: file("two.md") },
+      { kind: "file", file: file("three.md") },
+      { kind: "file", file: file("notes.txt") },
+      { kind: "file", file: file("photo.jpg") },
+    ]);
+
+    expect(planHeading(gathered.candidates.length, gathered)).toBe(
+      "6 files: 3 from walk-second/, 3 loose",
+    );
+  });
+
+  it("says several folders and loose files the same way, and ignores loose files that are not .md", () => {
+    const folderOf = (name: string) => ({
+      kind: "folder" as const,
+      name,
+      entries: [{ name: "x.md", file: file("x.md") }],
+    });
+    const mixed = gatherFragmentSources([
+      folderOf("a"),
+      folderOf("b"),
+      { kind: "file", file: file("one.md") },
+    ]);
+    const onlyText = gatherFragmentSources([folderOf("a"), { kind: "file", file: file("t.txt") }]);
+
+    expect(planHeading(3, mixed)).toBe("3 files: 2 from 2 folders, 1 loose");
+    expect(planHeading(1, onlyText)).toBe("1 file from a/");
   });
 
   it("says the files that are not .md and the folders inside, and is empty when nothing was left out", () => {
@@ -204,30 +262,67 @@ describe("the notices (HVN-163, slice 3)", () => {
 });
 
 describe("the command for the files that have no id (HVN-163, slice 3)", () => {
-  it("names the folder when every such file came from one folder", () => {
+  it("names the folder when every such file came from the one folder given", () => {
     const noId = [
       { name: "a.md", folder: "recovered" },
       { name: "b.md", folder: "recovered" },
     ];
 
-    expect(assignIdsCommand(noId, { folderIsEverything: true })).toBe(
-      "haevn import --format fragment --assign-ids recovered",
-    );
+    expect(assignIdsPlan(noId, { folderIsEverything: true })).toEqual({
+      command: "haevn import --format fragment --assign-ids recovered",
+      folder: "recovered",
+    });
   });
 
-  it("names each file when they came from several places", () => {
+  it("names each file when they came from several places, and has no folder then", () => {
     expect(
-      assignIdsCommand(
+      assignIdsPlan(
         [
           { name: "one/a.md", folder: "one" },
           { name: "b.md", folder: undefined },
         ],
         { folderIsEverything: false },
       ),
-    ).toBe("haevn import --format fragment --assign-ids one/a.md b.md");
-    expect(assignIdsCommand([{ name: "letters-1.md" }], { folderIsEverything: false })).toBe(
-      "haevn import --format fragment --assign-ids letters-1.md",
+    ).toEqual({
+      command: "haevn import --format fragment --assign-ids one/a.md b.md",
+      folder: undefined,
+    });
+    expect(assignIdsPlan([{ name: "letters-1.md" }], { folderIsEverything: false })).toEqual({
+      command: "haevn import --format fragment --assign-ids letters-1.md",
+      folder: undefined,
+    });
+  });
+
+  it("names a loose no-id file by its name, though a folder was dropped beside it", () => {
+    // the walk's mixed drop: the one file without an id was loose
+    const advice = assignIdsPlan([{ name: "loose-noid.md", folder: undefined }], {
+      folderIsEverything: false,
+    });
+
+    expect(advice.command).toBe("haevn import --format fragment --assign-ids loose-noid.md");
+    expect(noIdWords(1, advice.folder).where).not.toContain("walk-second");
+  });
+
+  it("says the folder form: it imports the folder, and where that folder is", () => {
+    expect(noIdWords(2, "recovered")).toEqual({
+      lead: "2 files have no id, and this page cannot write one into your files. In a terminal, this gives each of them an id and imports the folder:",
+      where:
+        "Run it in the folder that holds recovered/, or put the folder's full path in its place.",
+    });
+    expect(noIdWords(1, "recovered").lead).toBe(
+      "1 file has no id, and this page cannot write one into your files. In a terminal, this gives it an id and imports the folder:",
     );
+  });
+
+  it("says the file form: it imports them (or it), and where the files are", () => {
+    expect(noIdWords(2, undefined)).toEqual({
+      lead: "2 files have no id, and this page cannot write one into your files. In a terminal, this gives each of them an id and imports them:",
+      where: "Run it in the folder that holds these files, or give each its full path.",
+    });
+    expect(noIdWords(1, undefined)).toEqual({
+      lead: "1 file has no id, and this page cannot write one into your files. In a terminal, this gives it an id and imports it:",
+      where: "Run it in the folder that holds this file, or give its full path.",
+    });
   });
 
   it("puts a name with anything outside A-Za-z0-9._/- in single quotes", () => {
@@ -244,6 +339,57 @@ describe("the command for the files that have no id (HVN-163, slice 3)", () => {
 
     expect(a).toMatch(/^id: [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(a).not.toBe(b);
+  });
+
+  it("gives a file with no frontmatter the whole block, with a fresh id in it", () => {
+    const block = idBlock("11111111-1111-4111-8111-111111111111");
+
+    expect(block).toBe("---\nid: 11111111-1111-4111-8111-111111111111\n---\n");
+    expect(idBlock()).not.toBe(idBlock());
+  });
+
+  it("knows a file with no frontmatter by the parser's own reason, and no other", () => {
+    const reason = (text: string) => {
+      const outcome = parseFragment({ name: "x.md", content: text });
+      return outcome.ok ? undefined : outcome.message;
+    };
+
+    expect(isMissingFrontmatter(reason("just a chat, no fence\n"))).toBe(true);
+    expect(isMissingFrontmatter(reason("---\ntitle: T\n---\nbody\n"))).toBe(false);
+    expect(isMissingFrontmatter(undefined)).toBe(false);
+  });
+});
+
+describe("an error message in a sentence, and a read that failed (HVN-163, slice 3)", () => {
+  it("drops its full stop, and its capital when the word is an ordinary one", () => {
+    expect(inSentence("Could not establish connection. Receiving end does not exist.")).toBe(
+      "could not establish connection. Receiving end does not exist",
+    );
+    expect(inSentence("The database is closed.")).toBe("the database is closed");
+    expect(inSentence("IndexedDB failed.")).toBe("IndexedDB failed");
+    expect(inSentence("HTTP 500")).toBe("HTTP 500");
+    expect(inSentence("")).toBe("");
+  });
+
+  it("says the files could not be read, with the reason, and that nothing was written", () => {
+    expect(
+      readFailedNotice(new Error("A requested file or directory could not be found.")),
+    ).toEqual({
+      title: "The files could not be read.",
+      body: "a requested file or directory could not be found. Nothing was written.",
+    });
+    expect(readFailedNotice("gone").body).toBe("gone. Nothing was written.");
+  });
+});
+
+describe("when search catches up (HVN-163, slice 3)", () => {
+  it("counts the new and the changed together, as the batch does, whether they are replaced or not", () => {
+    const edge = INCREMENTAL_INDEX_MAX_CHATS;
+
+    expect(indexesLater({ newCount: edge, changedCount: 0 })).toBe(false);
+    expect(indexesLater({ newCount: edge, changedCount: 1 })).toBe(true);
+    expect(indexesLater({ newCount: 0, changedCount: edge + 1 })).toBe(true);
+    expect(indexesLater({ newCount: 3, changedCount: 3 })).toBe(false);
   });
 });
 
@@ -311,6 +457,26 @@ describe("what an import did (HVN-163, slice 3)", () => {
     );
 
     expect(outcome).toMatchObject({ newSaved: 2, replaced: 0, leftAsIs: 2, attempted: 2 });
+  });
+
+  it("does not count a changed file that failed as left as it is as well", () => {
+    const outcome = describeOutcome(
+      {
+        plan,
+        imported: {
+          processed: 4,
+          saved: 1,
+          skipped: 1,
+          errors: 1,
+          failed: [{ name: "c.md", message: "load failed" }],
+        },
+      },
+      { replace: false },
+    );
+
+    // c.md failed to load, so only d.md was left as it is: c.md is not counted twice
+    expect(outcome.leftAsIs).toBe(1);
+    expect(outcome.failed.map((f) => f.name)).toEqual(["c.md"]);
   });
 
   it("carries the index's failure", () => {

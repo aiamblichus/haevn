@@ -9,8 +9,19 @@ import {
   type FragmentPlanEntry,
   type FragmentState,
   REFUSED_STATES,
-} from "../../providers/fragment";
+} from "../../providers/fragment/model";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../../utils/importLimits";
 import { FRAGMENT_IMPORT_MAX_BYTES, type GatheredFragments } from "./fragmentFiles";
+
+/**
+ * An error message as the middle of a sentence: its own full stop would double ours, and its
+ * capital would stand mid-line ("Could not..." but not "IndexedDB..." or "HTTP...")
+ */
+export function inSentence(message: string): string {
+  const bare = message.replace(/[.\s]+$/, "");
+  // The first word only, and only when it is an ordinary one: not "IndexedDB" or "HTTP"
+  return /^[A-Z][a-z]*(?=[\s,:;]|$)/.test(bare) ? bare[0].toLowerCase() + bare.slice(1) : bare;
+}
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -65,7 +76,7 @@ export interface PlanView {
   unchangedCount: number;
   sameFileCount: number;
   refusedCount: number;
-  /** Files that would be saved, or are in already, with something to say */
+  /** New or changed files with something to say (an unchanged file is not written) */
   warnedCount: number;
   /** New or changed, with no title in the file */
   untitledCount: number;
@@ -187,7 +198,7 @@ export function describePlan(
     sameFileCount: sameRows.length,
     refusedCount: refusedRows.length,
     warnedCount: entries.filter(
-      (entry) => !REFUSED_STATES.has(entry.state) && entry.warnings.length > 0,
+      (entry) => (entry.state === "new" || entry.state === "changed") && entry.warnings.length > 0,
     ).length,
     untitledCount: untitledNew + untitled("changed"),
   };
@@ -195,16 +206,20 @@ export function describePlan(
 
 // ─── What was given ──────────────────────────────────────────────────────────
 
-/** "486 files from recovered/", "12 files", "486 files from 3 folders" */
+/**
+ * "486 files from recovered/", "12 files", "486 files from 3 folders", and for a drop of both
+ * "6 files: 3 from walk-second/, 3 loose". Only the `.md` files are counted: they are the plan.
+ */
 export function planHeading(fileCount: number, gathered: GatheredFragments): string {
   const files = plural(fileCount, "file");
-  if (gathered.folders.length === 0) return files;
-  if (gathered.looseFiles > 0 && gathered.folders.length === 1) {
-    return `${files} from ${gathered.folders[0]}/ and ${plural(gathered.looseFiles, "loose file")}`;
-  }
-  return gathered.folders.length === 1
-    ? `${files} from ${gathered.folders[0]}/`
-    : `${files} from ${gathered.folders.length} folders`;
+  const { folders, candidates } = gathered;
+  if (folders.length === 0) return files;
+  const loose = candidates.filter((candidate) => !candidate.folder).length;
+  const inFolders = candidates.length - loose;
+  const from = folders.length === 1 ? `${folders[0]}/` : `${folders.length} folders`;
+  return loose > 0
+    ? `${files}: ${inFolders} from ${from}, ${loose} loose`
+    : `${files} from ${from}`;
 }
 
 /** What was left out, in a line: files that are not `.md`, and folders inside a folder */
@@ -250,6 +265,15 @@ export function noMarkdownNotice(gathered: GatheredFragments): Notice {
   return { title: "No .md files here.", body: parts.join(" ") };
 }
 
+/** A read that threw (a folder that could not be listed, a file that vanished) */
+export function readFailedNotice(error: unknown): Notice {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    title: "The files could not be read.",
+    body: `${inSentence(message)}. Nothing was written.`,
+  };
+}
+
 export const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 export function overLimitNotice(gathered: GatheredFragments): Notice {
@@ -289,25 +313,66 @@ export function shellWord(path: string): string {
   return /^[A-Za-z0-9._/-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
+/** The command, and the folder it imports when it names a folder (else it names each file) */
+export interface AssignIds {
+  command: string;
+  folder?: string;
+}
+
 /**
  * The command that gives each `no-id` file an id and imports. It names the folder when every one
- * of them came from one folder (the command imports the folder), else each file by its name.
+ * of them came from the one folder that was given (the command imports the folder), else each
+ * file by its name.
  */
-export function assignIdsCommand(
+export function assignIdsPlan(
   noId: { name: string; folder?: string }[],
   options: { folderIsEverything: boolean },
-): string {
+): AssignIds {
   const folders = new Set(noId.map((file) => file.folder));
   const [only] = folders;
-  const paths =
-    folders.size === 1 && only !== undefined && options.folderIsEverything
-      ? [only]
-      : noId.map((file) => file.name);
-  return `haevn import --format fragment --assign-ids ${paths.map(shellWord).join(" ")}`;
+  const folder = folders.size === 1 && options.folderIsEverything ? only : undefined;
+  const paths = folder === undefined ? noId.map((file) => file.name) : [folder];
+  return {
+    command: `haevn import --format fragment --assign-ids ${paths.map(shellWord).join(" ")}`,
+    folder,
+  };
+}
+
+/** The two sentences around the command, in the words of its form (a folder, or the files) */
+export function noIdWords(count: number, folder: string | undefined) {
+  const cannot = "and this page cannot write one into your files. In a terminal, this gives";
+  if (folder !== undefined) {
+    return {
+      lead: `${count === 1 ? "1 file has no id" : `${count} files have no id`}, ${cannot} ${count === 1 ? "it" : "each of them"} an id and imports the folder:`,
+      where: `Run it in the folder that holds ${folder}/, or put the folder's full path in its place.`,
+    };
+  }
+  return {
+    lead: `${count === 1 ? "1 file has no id" : `${count} files have no id`}, ${cannot} ${count === 1 ? "it an id and imports it" : "each of them an id and imports them"}:`,
+    where:
+      count === 1
+        ? "Run it in the folder that holds this file, or give its full path."
+        : "Run it in the folder that holds these files, or give each its full path.",
+  };
 }
 
 /** A fresh line to paste into a file's frontmatter; the page writes nothing to the file */
 export const idLine = (id = crypto.randomUUID()) => `id: ${id}`;
+
+/** The reason the plan gives for a file that has no `---` block at all (the parser's own words) */
+export const isMissingFrontmatter = (reason: string | undefined) =>
+  reason?.startsWith("no frontmatter") === true;
+
+/** What to paste at the top of a file that has no frontmatter: the block, with the id in it */
+export const idBlock = (id = crypto.randomUUID()) => `---\n${idLine(id)}\n---\n`;
+
+/**
+ * True when the service indexes the import in one pass at the end, so that search finds the chats
+ * later. The batch counts every file it is given: the new, and the changed even when they are not
+ * replaced (it loads them, then leaves them).
+ */
+export const indexesLater = (view: Pick<PlanView, "newCount" | "changedCount">) =>
+  view.newCount + view.changedCount > INCREMENTAL_INDEX_MAX_CHATS;
 
 // ─── What an import did ──────────────────────────────────────────────────────
 
@@ -361,7 +426,7 @@ export function describeOutcome(
     saved,
     newSaved: newSaved.length,
     replaced: replaced.length,
-    leftAsIs: options.replace ? 0 : changed.length,
+    leftAsIs: options.replace ? 0 : changed.filter(survives).length,
     unchanged: of("unchanged").length,
     untitled: [...newSaved, ...replaced].filter((entry) => !entry.title).length,
     refused: reply.plan.filter((entry) => REFUSED_STATES.has(entry.state)).length,
