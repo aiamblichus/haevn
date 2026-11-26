@@ -2536,23 +2536,24 @@ hi there
       expect(chatsOf(await passages("tag:kept-tag"))).toEqual(["old"]);
     });
 
-    it("says it is rebuilding to a search that arrives before init has got as far as the rebuild, never that nothing was found", async () => {
+    it("starts the rebuild itself when a search is the first message, and says it is rebuilding, never that nothing was found (HVN-98)", async () => {
       await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
       await kit.seedFormat(BEFORE_LABELS);
       await loadWorker();
 
-      // No init yet: the file of the old format is wiped when the search opens it, and nothing
-      // has started the rebuild. This is the window the first start after an update is in.
+      // No init: the file of the old format is wiped when the search opens it. This is the
+      // window the first start after an update is in, and a worker that restarted on its own is
+      // in it for good unless the search starts the rebuild.
       const [hydrated] = await search("pineapple", true);
       const [ids] = await search("pineapple", false);
 
       for (const chunk of [hydrated, ids]) {
         expect(chunk.results).toEqual([]);
-        expect(chunk.indexRebuilding).toEqual({ processed: 0, total: 0, percentage: 0 });
+        expect(chunk.indexRebuilding).toBeDefined();
       }
-      await send({ type: "init" });
       await waitUntilIndexReady("pineapple");
       expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
     });
 
     it("says it too to a search sent while init is still counting the chats", async () => {
@@ -2673,6 +2674,257 @@ hi there
 
       expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(0);
       expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
+    });
+  });
+});
+
+describe("search worker: a worker that no init has come to (HVN-98)", () => {
+  // The offscreen document makes a new worker when the old one dies, and `init` is sent only when
+  // the service worker starts: the first message a worker gets can be an add, a remove or a search.
+  const lastChunk = (chunks: Posted[]) => chunks[chunks.length - 1];
+  const rebuilds = () => posted.filter((m) => m.type === "indexRebuildComplete").length;
+
+  /** An archive with one chat, indexed, and a new worker on it that has had no init. */
+  async function restartedWorker(): Promise<void> {
+    await seedChats([buildChat("old", "an old pineapple")]);
+    await send({ type: "init" });
+    await waitUntilIndexReady();
+    await loadWorker();
+  }
+
+  it("indexes a chat added as the first message", async () => {
+    await restartedWorker();
+    await seedChats([buildChat("fresh", "a quokka")]);
+
+    await send({ type: "add", chatId: "fresh" });
+
+    expect(hitIds(await search("quokka", false))).toEqual(["fresh"]);
+    expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+    expect(rebuilds()).toBe(0); // the index was whole: nothing to rebuild
+  });
+
+  it("takes a chat out of the index when the remove is the first message", async () => {
+    await restartedWorker();
+
+    await send({ type: "remove", chatId: "old" });
+
+    expect(hitIds(await search("pineapple", false))).toEqual([]);
+  });
+
+  it("takes several chats out when removeMany is the first message", async () => {
+    await restartedWorker();
+
+    await send({ type: "removeMany", chatIds: ["old", "never-indexed"] });
+
+    expect(hitIds(await search("pineapple", false))).toEqual([]);
+  });
+
+  it("waits for one open when messages arrive together", async () => {
+    await restartedWorker();
+    await seedChats([buildChat("one", "a quokka"), buildChat("two", "a quokka")]);
+    const opensBefore = opens.count;
+
+    await Promise.all([
+      send({ type: "add", chatId: "one" }),
+      send({ type: "add", chatId: "two" }),
+      send({ type: "init" }),
+    ]);
+
+    expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["one", "two"]));
+    expect(opens.count - opensBefore).toBe(1);
+  });
+
+  describe("with no finished file to write to", () => {
+    const BEFORE_LABELS = 3;
+
+    async function workerOnOldFile(): Promise<void> {
+      await seedChats([buildChat("old", "an old pineapple")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+    }
+
+    it("starts the rebuild when an add is the first message, and the chat is in the new file", async () => {
+      await workerOnOldFile();
+      await seedChats([buildChat("fresh", "a quokka")]);
+
+      await send({ type: "add", chatId: "fresh" });
+      await waitUntilIndexReady();
+
+      expect(hitIds(await search("quokka", false))).toEqual(["fresh"]);
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+      expect(rebuilds()).toBe(1);
+    });
+
+    it("starts one rebuild, not a second pass, for an add, a search and an init that arrive together", async () => {
+      const { log } = await import("../src/utils/logger");
+      vi.mocked(log.warn).mockClear();
+      await workerOnOldFile();
+      await seedChats([buildChat("fresh", "a quokka")]);
+
+      await Promise.all([
+        send({ type: "add", chatId: "fresh" }),
+        search("quokka", false),
+        send({ type: "init" }),
+      ]);
+      await waitUntilIndexReady();
+
+      expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["fresh"]));
+      expect(rebuilds()).toBe(1);
+      // A second request that joined the run would have made it go once more.
+      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
+      expect(said.filter((line) => line.includes("Rebuild already in progress"))).toEqual([]);
+    });
+  });
+
+  describe("when a write cannot be applied", () => {
+    const REASON = "Access Handles cannot be created: another worker holds the file";
+    const BEFORE_LABELS = 3;
+
+    /** A chat the rebuild cannot read: the pass fails and the old-format file stays unfinished. */
+    function unreadable(id: string): Chat {
+      const bad = buildChat(id, "an unreadable pineapple");
+      (bad.messages[`${id}-m1`] as { message: unknown }).message = 42;
+      return bad;
+    }
+
+    const dropLines = async () => {
+      const { log } = await import("../src/utils/logger");
+      return vi
+        .mocked(log.warn)
+        .mock.calls.map((call) => String(call[0]))
+        .filter((line) => line.includes("was not applied to the search index"));
+    };
+
+    it("says so in the log once while the index cannot be opened, for adds and removes", async () => {
+      const { log } = await import("../src/utils/logger");
+      vi.mocked(log.warn).mockClear();
+      await seedChats([buildChat("fresh", "a quokka"), buildChat("other", "a quokka")]);
+      faults.open = new Error(REASON);
+      faults.openFailures = 5;
+
+      await send({ type: "add", chatId: "fresh" });
+      await send({ type: "add", chatId: "other" });
+      await send({ type: "remove", chatId: "fresh" });
+
+      const said = await dropLines();
+      expect(said).toHaveLength(1);
+      expect(said[0]).toContain("Adding chat fresh was not applied");
+      expect(said[0]).toContain(`could not be opened (${REASON})`);
+      // And the worker still answers, so the caller is not left waiting.
+      expect(
+        posted.filter((m) => m.type === "addComplete" || m.type === "removeComplete"),
+      ).toHaveLength(3);
+      expect(lastChunk(await search("quokka", false)).indexIncomplete).toEqual({ error: REASON });
+    });
+
+    describe("after a rebuild that failed with no finished file", () => {
+      async function failedRebuildWorker(): Promise<void> {
+        await seedChats([buildChat("old", "an old pineapple"), unreadable("zzz-bad")]);
+        await kit.seedFormat(BEFORE_LABELS);
+        await loadWorker();
+        const before = passEnds();
+        await send({ type: "init" });
+        await waitForPassEnd(before);
+        const { log } = await import("../src/utils/logger");
+        vi.mocked(log.warn).mockClear();
+      }
+
+      it("logs the first add that is left to the next rebuild, once, and does not start a rebuild", async () => {
+        await failedRebuildWorker();
+        await seedChats([buildChat("one", "a quokka"), buildChat("two", "a quokka")]);
+        const endsBefore = passEnds();
+
+        await send({ type: "add", chatId: "one" });
+        await send({ type: "add", chatId: "two" });
+
+        const said = await dropLines();
+        expect(said).toHaveLength(1);
+        expect(said[0]).toContain("no finished file and no rebuild is running");
+        expect(passEnds()).toBe(endsBefore); // no pass was started by either add
+        expect(posted.filter((m) => m.type === "addComplete" && m.success === true)).toHaveLength(
+          2,
+        );
+      });
+
+      it("writes again once a rebuild has finished, and says nothing more", async () => {
+        await failedRebuildWorker();
+        await seedChats([buildChat("one", "a quokka")]);
+        await send({ type: "add", chatId: "one" });
+        expect(await dropLines()).toHaveLength(1);
+
+        await getDB().chats.delete("zzz-bad");
+        await getDB().chatMessages.where("chatId").equals("zzz-bad").delete();
+        await send({ type: "rebuild" });
+        await seedChats([buildChat("two", "a quokka")]);
+        await send({ type: "add", chatId: "two" });
+
+        expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["one", "two"]));
+        expect(await dropLines()).toHaveLength(1); // nothing new was lost
+      });
+    });
+
+    it("logs again for a later outage: the index opens, then has no finished file", async () => {
+      const { log } = await import("../src/utils/logger");
+      await seedChats([buildChat("old", "an old pineapple"), unreadable("zzz-bad")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+      vi.mocked(log.warn).mockClear();
+      faults.open = new Error(REASON);
+      faults.openFailures = 1;
+
+      await send({ type: "add", chatId: "old" }); // the file cannot be opened
+      const before = passEnds();
+      await send({ type: "init" }); // it opens, has no finished file, and the rebuild fails
+      await waitForPassEnd(before);
+      await send({ type: "add", chatId: "old" });
+
+      const said = await dropLines();
+      expect(said).toHaveLength(2);
+      expect(said[0]).toContain("could not be opened");
+      expect(said[1]).toContain("no finished file and no rebuild is running");
+    });
+
+    it("does not join a rebuild that was requested while the check counted the chats", async () => {
+      const { log } = await import("../src/utils/logger");
+      await seedChats([buildChat("old", "an old pineapple")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+      vi.mocked(log.warn).mockClear();
+
+      // Hold the first count of the chats: the one the consistency check makes.
+      const table = workerDbs[workerDbs.length - 1].chats as unknown as {
+        count: () => Promise<number>;
+      };
+      const realCount = table.count.bind(table);
+      let reached!: () => void;
+      const atCount = new Promise<void>((r) => {
+        reached = r;
+      });
+      let release!: () => void;
+      const released = new Promise<void>((r) => {
+        release = r;
+      });
+      let held = false;
+      vi.spyOn(table, "count").mockImplementation(async () => {
+        if (!held) {
+          held = true;
+          reached();
+          await released;
+        }
+        return realCount();
+      });
+
+      const init = send({ type: "init" });
+      await atCount;
+      const rebuild = send({ type: "rebuild" });
+      release();
+      await Promise.all([init, rebuild]);
+      await waitUntilIndexReady();
+
+      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
+      expect(said.filter((line) => line.includes("Rebuild already in progress"))).toEqual([]);
+      expect(rebuilds()).toBe(1);
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
     });
   });
 });
