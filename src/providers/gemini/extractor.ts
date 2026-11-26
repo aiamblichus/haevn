@@ -137,8 +137,35 @@ function visibleTextOf(element: Element): string {
   return clone.textContent ?? "";
 }
 
+/** What Gemini appends to a chat's title in the tab's title. */
+const GEMINI_TITLE_SUFFIX = " - Google Gemini";
+
+/** What the tab's title is when no chat is open, or the chat has no title yet. */
+const GEMINI_PRODUCT_NAMES = new Set(["Google Gemini", "Gemini"]);
+
+/**
+ * The chat's own title as the tab's title holds it: the title, then " - Google Gemini". It equalled
+ * the title in Gemini's own chat list in 13 of 13 chats read in HVN-161, and was there whenever the
+ * messages were. "" when the tab holds only the product's name.
+ *
+ * `document.title` is already stripped and has each run of whitespace collapsed to one space (the
+ * HTML standard's getter; Chrome returns "Two words - Google Gemini" for a title written as
+ * "  Two   words\n - Google Gemini  "), so cutting the suffix leaves nothing to trim.
+ */
+function titleFromDocumentTitle(): string {
+  const tabTitle = document.title ?? "";
+  const title = tabTitle.endsWith(GEMINI_TITLE_SUFFIX)
+    ? tabTitle.slice(0, -GEMINI_TITLE_SUFFIX.length)
+    : tabTitle;
+  return GEMINI_PRODUCT_NAMES.has(title) ? "" : title;
+}
+
 // Title Extraction
 export function extractGeminiConversationTitle(): string {
+  // First: the tab's title, which every page of a chat carries
+  const tabTitle = titleFromDocumentTitle();
+  if (tabTitle) return tabTitle;
+
   // Primary: Try conversation-actions header (current Gemini UI)
   const headerTitle = document
     .querySelector("conversation-actions .conversation-title")
