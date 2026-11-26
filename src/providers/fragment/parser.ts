@@ -15,6 +15,7 @@ import type {
   FragmentWarning,
   ParseOutcome,
 } from "./model";
+import { FRAGMENT_BASE_VERSION, FRAGMENT_PARSER_VERSION } from "./model";
 
 // ─── Rough dates ───────────────────────────────────────────────────────────────
 
@@ -346,7 +347,10 @@ interface SpeakerConfig {
   prompts: string[];
   /** Who speaks the text before the first mark, when the file says */
   lead?: FragmentRole;
-  /** it declares at least one label, prompt or lead that can match */
+  /**
+   * It declares at least one label (a `break` too) or prompt that can match. `lead` is not one: it
+   * names the speaker of a stretch of text and competes with no mark.
+   */
   usable: boolean;
 }
 
@@ -405,7 +409,7 @@ function readSpeakers(speakers: unknown, warnings: FragmentWarning[]): SpeakerCo
       warn(warnings, "speakers-bad-type", "speakers.lead must be user, assistant or system");
     }
   }
-  config.usable = config.labels.size > 0 || config.prompts.length > 0 || config.lead !== undefined;
+  config.usable = config.labels.size > 0 || config.prompts.length > 0;
   return config;
 }
 
@@ -463,7 +467,7 @@ function declaredMarks(lines: Line[], config: SpeakerConfig): Mark[] {
 
 interface Candidate {
   role: FragmentRole | null;
-  /** The text before the first mark, named by `speakers.lead` */
+  /** The text before the first mark (all of it, when there is none), named by `speakers.lead` */
   lead?: boolean;
   /** Offsets into the body: the text is body.slice(from, to) */
   from: number;
@@ -504,9 +508,10 @@ function candidatesFor(lines: Line[], marks: Mark[], lead?: FragmentRole): Candi
     if (to > from) out.push({ role, from, to, ...(isLead ? { lead: true } : {}) });
   };
 
-  // With no mark at all the whole body is one block: there is no "before the first mark"
-  if (marks.length === 0) add(null, 0, lines.length);
-  else if (marks[0].line > 0) add(lead ?? null, 0, marks[0].line, undefined, lead !== undefined);
+  // With no mark at all the whole body is the text before the first mark: one block, or the
+  // speaker's when `lead` says whose it is
+  const before = marks.length === 0 ? lines.length : marks[0].line;
+  if (before > 0) add(lead ?? null, 0, before, undefined, lead !== undefined);
   marks.forEach((mark, i) => {
     const stop = marks[i + 1]?.line ?? lines.length;
     if (mark.prompt) {
@@ -540,13 +545,19 @@ function segment(body: string, candidates: Candidate[]): Segmented {
   return { turns, seams, tail: body.slice(cursor) };
 }
 
-function splitTurns(body: string, speakers: unknown, warnings: FragmentWarning[]): Segmented {
+interface SplitTurns extends Segmented {
+  /** The lowest parser version that reads this file as it is stored (see `ParsedFragment`) */
+  minVersion: number;
+}
+
+function splitTurns(body: string, speakers: unknown, warnings: FragmentWarning[]): SplitTurns {
   const lines = scanLines(body);
   const config = readSpeakers(speakers, warnings);
 
   let marks = marksByPattern(lines, HAEVN_MARKER);
   if (marks.length === 0) marks = marksByPattern(lines, HEADING);
   const own = marks.length > 0;
+  let noMatchWarned = false;
   if (own) {
     if (config.usable) {
       warn(
@@ -559,17 +570,30 @@ function splitTurns(body: string, speakers: unknown, warnings: FragmentWarning[]
     marks = declaredMarks(lines, config);
     if (config.usable && marks.length === 0) {
       warn(warnings, "speakers-no-match", "speakers declared, no line matched");
+      noMatchWarned = true;
     }
   }
 
-  // `lead` is for a declared body; a body with marks of its own has its own first block
-  const candidates = candidatesFor(lines, marks, own ? undefined : config.lead);
+  // The version a reader needs for this file: a `break` that is read, or a `lead`, is a form the
+  // first parser did not know. Any other file is stored the same by both, and is left alone.
+  const breakRead = !own && [...config.labels.values()].includes("break");
+  const minVersion =
+    breakRead || config.lead !== undefined ? FRAGMENT_PARSER_VERSION : FRAGMENT_BASE_VERSION;
+
+  const candidates = candidatesFor(lines, marks, config.lead);
   // A body whose marks have nothing after them, or only a system prompt, is one block as written
   if (!candidates.some((candidate) => candidate.role !== "system")) {
-    return segment(body, candidatesFor(lines, []));
+    if (candidates.some((candidate) => candidate.lead) && !noMatchWarned) {
+      warn(
+        warnings,
+        "speakers-no-match",
+        "speakers.lead is system and no other text is marked: the file is one block",
+      );
+    }
+    return { ...segment(body, candidatesFor(lines, [])), minVersion };
   }
   if (!own && config.usable) oneSidedWarning(candidates, config, warnings);
-  return segment(body, candidates);
+  return { ...segment(body, candidates), minVersion };
 }
 
 /**
@@ -642,7 +666,7 @@ export function parseFragment(file: FragmentFile): ParseOutcome {
       "no title, and generate is false: nothing will ever name this chat",
     );
   }
-  const { turns, seams, tail } = splitTurns(split.body, fields.speakers, warnings);
+  const { turns, seams, tail, minVersion } = splitTurns(split.body, fields.speakers, warnings);
 
   return {
     ok: true,
@@ -657,6 +681,7 @@ export function parseFragment(file: FragmentFile): ParseOutcome {
       turns,
       seams,
       tail,
+      minVersion,
       warnings,
     },
   };

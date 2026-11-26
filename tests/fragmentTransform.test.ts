@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { roughDateOf } from "../src/model/roughDate";
 import {
   assertReassembles,
+  FRAGMENT_BASE_VERSION,
   FRAGMENT_PARSER_VERSION,
   type FragmentLookup,
   type FragmentParams,
@@ -192,7 +193,7 @@ describe("the chat a fragment becomes", () => {
   it("keeps the whole of what the parser needs to put the file back", async () => {
     const chat = await chatOf("speakers:\n  user: [Q]\n# note", "Q\nhi\n");
     expect(chat.params.fragment).toMatchObject({
-      v: FRAGMENT_PARSER_VERSION,
+      v: FRAGMENT_BASE_VERSION,
       frontmatter: `id: ${ID_A}\nspeakers:\n  user: [Q]\n# note`,
       seams: ["Q\n"],
       tail: "\n",
@@ -258,6 +259,25 @@ describe("the chat a fragment becomes", () => {
       expect.objectContaining({ part_kind: "user-prompt", content: "my first prompt" }),
     ]);
     expect((chat.params.fragment as FragmentParams).unattributed).toEqual([1]);
+  });
+
+  it("stores the version a file needs: 1 for most, 2 for a file that declares break or lead", async () => {
+    const version = async (extra: string, body: string) =>
+      ((await chatOf(extra, body)).params.fragment as FragmentParams).v;
+    expect(await version("", "words\n")).toBe(FRAGMENT_BASE_VERSION);
+    expect(await version("speakers:\n  break: [Copy]", "Copy\nwords\n")).toBe(
+      FRAGMENT_PARSER_VERSION,
+    );
+    expect(await version("speakers:\n  lead: user", "words\n")).toBe(FRAGMENT_PARSER_VERSION);
+  });
+
+  it("joins a frontmatter system prompt and lead: system with a blank line, the frontmatter's first", async () => {
+    const chat = await chatOf(
+      "system: From the frontmatter.\nspeakers:\n  lead: system\n  break: [Copy]",
+      "From the body.\nCopy\nthe reply\n",
+    );
+    expect(chat.system).toBe("From the frontmatter.\n\nFrom the body.");
+    expect(Object.keys(chat.messages)).toEqual(["t0001"]);
   });
 
   it("makes lead: system the chat's system prompt, not a message", async () => {
@@ -389,6 +409,23 @@ describe("the plan", () => {
       withBody: async () => undefined,
     });
     expect(plan.entries[0]).toMatchObject({ state: "changed", turns: 2 });
+  });
+
+  it("leaves a file that declares neither unchanged when it was stored by the first parser", async () => {
+    const file = withId("speakers:\n  user: [Q]", "Q\nhi\n");
+    const sha = (await parsed(file)).fileSha256;
+    const plan = await planFragmentImport([file], {
+      stored: stored(sha, 1),
+      withBody: async () => undefined,
+    });
+    expect(plan.entries[0].state).toBe("unchanged");
+    expect(plan.importable).toEqual([]);
+    // and a version before any parser the stored row could have is still brought up
+    const older = await planFragmentImport([file], {
+      stored: stored(sha, 0),
+      withBody: async () => undefined,
+    });
+    expect(older.entries[0].state).toBe("changed");
   });
 
   it("refuses both files that share an id and differ, and is not moved by their order", async () => {

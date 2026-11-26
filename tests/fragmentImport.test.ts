@@ -64,6 +64,27 @@ beforeEach(async () => {
   );
 });
 
+/** The fragment as the first parser stored it: the file's own bytes, read as one block. */
+async function storeAsFirstParserDid(file: FragmentFile): Promise<void> {
+  const fragment = await parsed(file);
+  const oneBlock = {
+    ...fragment,
+    turns: [{ role: null, text: fragment.body.trim() }],
+    seams: [fragment.body.slice(0, fragment.body.indexOf(fragment.body.trim()))],
+    tail: fragment.body.slice(
+      fragment.body.indexOf(fragment.body.trim()) + fragment.body.trim().length,
+    ),
+  };
+  const chat = transformFragmentToHaevnChat(oneBlock);
+  const { messages, ...row } = chat;
+  await getDB().chats.put({
+    ...row,
+    messages: {},
+    params: { ...row.params, fragment: { ...row.params.fragment, v: 1 } },
+  } as Chat);
+  await getDB().chatMessages.bulkPut(Object.values(messages));
+}
+
 describe("importing fragments (HVN-163)", () => {
   it("saves a new fragment as a chat under fragment:<id>, and a second import writes nothing", async () => {
     const files = [
@@ -136,27 +157,6 @@ describe("importing fragments (HVN-163)", () => {
     const BREAKS = "speakers:\n  break: [Copy]";
     const body = (exchanges: number) =>
       Array.from({ length: exchanges }, (_, i) => `Copy\nblock ${i + 1}\n\n`).join("");
-
-    /** The fragment as the first parser stored it: the file's own bytes, read as one block. */
-    async function storeAsFirstParserDid(file: FragmentFile): Promise<void> {
-      const fragment = await parsed(file);
-      const oneBlock = {
-        ...fragment,
-        turns: [{ role: null, text: fragment.body.trim() }],
-        seams: [fragment.body.slice(0, fragment.body.indexOf(fragment.body.trim()))],
-        tail: fragment.body.slice(
-          fragment.body.indexOf(fragment.body.trim()) + fragment.body.trim().length,
-        ),
-      };
-      const chat = transformFragmentToHaevnChat(oneBlock);
-      const { messages, ...row } = chat;
-      await getDB().chats.put({
-        ...row,
-        messages: {},
-        params: { ...row.params, fragment: { ...row.params.fragment, v: 1 } },
-      } as Chat);
-      await getDB().chatMessages.bulkPut(Object.values(messages));
-    }
 
     it("turns the one block the first parser kept into the chain a break gives, in place", async () => {
       const file = withId(BREAKS, body(5));
@@ -235,20 +235,37 @@ describe("importing fragments (HVN-163)", () => {
     expect(reassembleFragment(await fullChat(ID_A))).toBe("old text\n");
   });
 
-  it("brings a stored fragment up to date when the parser that stored it was older", async () => {
-    await importFragments([withId("", "same bytes\n")], RUN);
-    const row = await getDB().chats.get(chatId(ID_A));
-    await getDB().chats.put({
-      ...row,
-      params: { ...row?.params, fragment: { ...(row?.params.fragment as object), v: 0 } },
-    } as Chat);
+  it("brings a stored fragment up to date when the parser that stored it was older and the file needs the newer one", async () => {
+    const file = withId("speakers:\n  break: [Copy]", "Copy\nfirst\nCopy\nsecond\n");
+    await storeAsFirstParserDid(file);
 
-    const result = await importFragments([withId("", "same bytes\n")], RUN);
+    const result = await importFragments([file], RUN);
 
     expect(states(result.plan)).toEqual(["changed"]);
+    expect(Object.keys((await fullChat(ID_A)).messages)).toEqual(["t0001", "t0002"]);
     expect((await SyncService.getChat(chatId(ID_A)))?.params.fragment).toMatchObject({
       v: FRAGMENT_PARSER_VERSION,
     });
+  });
+
+  it("writes nothing for a file stored by the first parser that needs nothing the second one reads", async () => {
+    const file = withId("title: From the file\nspeakers:\n  user: [TB]", "TB\nhi\nBot\nho\n");
+    await importFragments([file], RUN);
+    // stored by slice 1, which wrote version 1 on every fragment, and edited in the archive since
+    const row = await getDB().chats.get(chatId(ID_A));
+    await getDB().chats.put({
+      ...row,
+      params: { ...row?.params, fragment: { ...(row?.params.fragment as object), v: 1 } },
+    } as Chat);
+    await MetadataRepository.set(chatId(ID_A), { title: "Edited in the app", source: "manual" });
+    const before = await getDB().chats.toArray();
+
+    const result = await importFragments([file], RUN);
+
+    expect(states(result.plan)).toEqual(["unchanged"]);
+    expect(result.imported).toBeUndefined();
+    expect(await getDB().chats.toArray()).toEqual(before);
+    expect((await MetadataRepository.get(chatId(ID_A)))?.title).toBe("Edited in the app");
   });
 
   it("brings a fragment back that was deleted in the app: importing its file again does, changed or not", async () => {

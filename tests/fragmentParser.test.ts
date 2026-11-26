@@ -424,7 +424,7 @@ describe("speakers: the text before the first mark, and lead", () => {
     expect(fragment.turns.map((turn) => turn.role)).toEqual(["user", null, null]);
   });
 
-  it("is not applied when no mark was found: the file is one block, and it warns", () => {
+  it("does not make a body that is only a system prompt a chat of nothing else: one block, and a word", () => {
     const fragment = parseOk(withId("speakers:\n  user: [TB]\n  lead: system", "just text\n"));
     expect(fragment.turns).toEqual([{ role: null, text: "just text" }]);
     expect(codes(fragment.warnings)).toEqual(["speakers-no-match"]);
@@ -435,10 +435,51 @@ describe("speakers: the text before the first mark, and lead", () => {
     expect(fragment.turns).toEqual([{ role: null, text: "text\nTB" }]);
   });
 
-  it("is unused, with a word, when the body marks its own turns", () => {
-    const fragment = parseOk(withId("speakers:\n  lead: system", "preface\n## User\nhi\n"));
+  it("is applied when the body marks its own turns, headings and HAEVN markers alike, with no warning", () => {
+    for (const body of [
+      "preface\n## User\nhi\n## Assistant\nho\n",
+      'preface\n<!-- HAEVN: role="user" -->\nhi\n<!-- HAEVN: role="assistant" -->\nho\n',
+    ]) {
+      const fragment = parseOk(withId("speakers:\n  lead: system", body));
+      expect(fragment.turns.map((turn) => [turn.role, turn.text])).toEqual([
+        ["system", "preface"],
+        ["user", "hi"],
+        ["assistant", "ho"],
+      ]);
+      expect(fragment.warnings).toEqual([]);
+    }
+  });
+
+  it("is still not a label: labels beside the body's own marks are unused, with a word, and lead is not", () => {
+    const fragment = parseOk(
+      withId("speakers:\n  user: [TB]\n  lead: assistant", "preface\n## User\nhi\n"),
+    );
     expect(codes(fragment.warnings)).toEqual(["speakers-unused"]);
-    expect(fragment.turns.map((turn) => turn.role)).toEqual([null, "user"]);
+    expect(fragment.turns.map((turn) => turn.role)).toEqual(["assistant", "user"]);
+  });
+
+  it("names the whole body when no mark was found and it is the user's or the assistant's", () => {
+    for (const lead of ["user", "assistant"] as const) {
+      const fragment = parseOk(withId(`speakers:\n  lead: ${lead}`, "all of it\n\nand more\n"));
+      expect(fragment.turns).toEqual([{ role: lead, text: "all of it\n\nand more" }]);
+      expect(fragment.warnings).toEqual([]);
+    }
+  });
+
+  it("says, for a lead that is system and nothing else, that the file is one block, and names lead", () => {
+    const fragment = parseOk(withId("speakers:\n  lead: system", "only rules\n"));
+    expect(fragment.turns).toEqual([{ role: null, text: "only rules" }]);
+    expect(fragment.warnings).toEqual([
+      expect.objectContaining({
+        code: "speakers-no-match",
+        message: expect.stringContaining("speakers.lead"),
+      }),
+    ]);
+  });
+
+  it("says it once when labels matched nothing as well", () => {
+    const fragment = parseOk(withId("speakers:\n  user: [TB]\n  lead: system", "rules\n"));
+    expect(codes(fragment.warnings)).toEqual(["speakers-no-match"]);
   });
 
   it("is not a turn a label found: it does not make a one-sided file two-sided", () => {
@@ -446,6 +487,29 @@ describe("speakers: the text before the first mark, and lead", () => {
       withId("speakers:\n  user: [TB]\n  lead: assistant", "hello\nTB\none\nTB\ntwo\n"),
     );
     expect(codes(fragment.warnings)).toEqual(["speakers-one-side"]);
+  });
+});
+
+describe("the parser version a file needs", () => {
+  const needs = (extra: string, body: string) => parseOk(withId(extra, body)).minVersion;
+
+  it("is 2 for a file that declares break or lead, and 1 for any other", () => {
+    expect(needs("speakers:\n  break: [Copy]", "Copy\nhi\n")).toBe(2);
+    expect(needs("speakers:\n  lead: user", "hi\n")).toBe(2);
+    expect(needs("speakers:\n  lead: system", "hi\n")).toBe(2);
+    expect(needs("", "plain\n")).toBe(1);
+    expect(needs("speakers:\n  user: [TB]\n  prompt: '>'", "TB\nhi\n")).toBe(1);
+    expect(needs("speakers:\n  user: [TB]", "## User\nhi\n")).toBe(1);
+  });
+
+  it("does not count a break the body's own marks leave unread, or a lead that is not read", () => {
+    expect(needs("speakers:\n  break: [Copy]", "## User\nhi\n")).toBe(1);
+    expect(needs("speakers:\n  lead: narrator", "hi\n")).toBe(1);
+    expect(needs("speakers:\n  break: []", "hi\n")).toBe(1);
+  });
+
+  it("is 2 for a break that matched nothing, as for one that matched", () => {
+    expect(needs("speakers:\n  break: [Copy]", "no mark here\n")).toBe(2);
   });
 });
 
