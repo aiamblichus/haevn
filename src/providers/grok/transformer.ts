@@ -130,12 +130,14 @@ export async function convertGrokToHaevn(
   const { messages } = buildMessageTree(nodes, (node) => {
     const { response, conversationId, downloadedMedia } = node.data;
 
-    // Get model name from response metadata
-    const modelName =
+    // The model the response says it came from; "" when it names none (a user's message never does)
+    const realModel = (
       response.model ||
       response.metadata?.requestModelDetails?.modelId ||
       response.requestMetadata?.model ||
-      "Grok";
+      ""
+    ).trim();
+    const modelName = realModel || "Grok";
 
     const timestamp = new Date(response.createTime).getTime();
 
@@ -166,7 +168,7 @@ export async function convertGrokToHaevn(
             parts: [userPromptPart],
           } as ModelRequest,
         ],
-        model: modelName,
+        model: "",
         done: true,
         timestamp,
         chatId: conversationId,
@@ -211,7 +213,7 @@ export async function convertGrokToHaevn(
             vendor_id: response.responseId,
           } as ModelResponse,
         ],
-        model: modelName,
+        model: realModel,
         done: !response.partial,
         timestamp,
         chatId: conversationId,
@@ -225,7 +227,7 @@ export async function convertGrokToHaevn(
     source: "grok",
     sourceId: conversation.conversationId,
     title: conversation.title,
-    models: ["Grok"], // Could be multiple models, but we'll use generic "Grok"
+    models: modelsOf(messages),
     system: conversation.systemPromptName || "",
     params: {},
     currentId: responseNodes.length > 0 ? responseNodes[responseNodes.length - 1].responseId : "",
@@ -246,4 +248,11 @@ export async function convertGrokToHaevn(
   });
 
   return chat;
+}
+
+/** The models a chat was answered by, each once; "Grok" only when its data names none. */
+function modelsOf(messages: Record<string, { model: string }>): string[] {
+  const names = new Set<string>();
+  for (const { model } of Object.values(messages)) if (model) names.add(model);
+  return names.size > 0 ? [...names] : ["Grok"];
 }
