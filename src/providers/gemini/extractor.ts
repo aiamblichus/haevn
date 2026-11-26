@@ -181,39 +181,6 @@ export function extractGeminiConversationTitle(): string {
   return "Untitled Gemini Conversation";
 }
 
-// Wait for title to be populated (used during bulk sync)
-async function waitForGeminiTitle(): Promise<void> {
-  const maxAttempts = 10;
-  const delay = 200; // Reduced from 300ms for faster polling
-  let lastTitleText: string | null = null;
-  let stableCount = 0;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    const titleEl = document.querySelector("div.conversation-title");
-    const titleText = titleEl?.textContent?.trim() || null;
-
-    // If we have a title element with text, check if it's stable
-    if (titleText !== null) {
-      if (titleText === lastTitleText) {
-        stableCount++;
-        // If the title has been stable for 2 consecutive checks, consider it ready
-        if (stableCount >= 2) {
-          return;
-        }
-      } else {
-        // Title changed, reset stability counter
-        stableCount = 0;
-        lastTitleText = titleText;
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-
-  // If we still don't have a stable title after waiting, proceed anyway
-  log.warn("[Gemini] Title not stable after waiting, proceeding with extraction");
-}
-
 // Image extraction functions
 
 /**
@@ -590,8 +557,6 @@ export async function extractGeminiConversationData(
   }
 
   await waitForChatMessages();
-  // Wait for title to be populated (important for bulk sync when navigating between chats)
-  await waitForGeminiTitle();
   // Attempt to load earlier messages by scrolling the chat's infinite scroller upwards
   await loadAllGeminiMessagesUpwards();
   // Expand any collapsed user prompts so we capture full multi-line text
