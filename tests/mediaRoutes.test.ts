@@ -397,6 +397,39 @@ describe("a link kept on purpose (linkOnly)", () => {
     expect(countUnstoredMedia(chat)).toBe(0);
   });
 
+  it("logs the host, and not the address, of a link kept on another Google host (HVN-169)", async () => {
+    const fetchSpy = respondWith(200);
+    vi.stubGlobal("fetch", fetchSpy);
+    const signed =
+      "https://drive-thirdparty.googleusercontent.com/gg/AbC_SIGNED?token=SECRETQUERY#SECRETFRAGMENT";
+
+    await transformGeminiToHaevn(
+      conversation([
+        { url: signed, type: "image/jpeg" },
+        { url: UPLOAD, type: "image/jpeg" },
+      ]),
+    );
+
+    // one line names the kept link's host, and it names no path and no query
+    const infoLines = vi
+      .mocked(log.info)
+      .mock.calls.flat()
+      .map((arg) => String(arg));
+    const hostLines = infoLines.filter((line) => line.includes("drive-thirdparty"));
+    expect(hostLines).toHaveLength(1);
+    expect(hostLines[0]).toContain("drive-thirdparty.googleusercontent.com");
+    expect(hostLines[0]).not.toContain("/gg/");
+    // and no line of any level carries the address's path or query, the upload's own lines included
+    const everything = [log.info, log.warn, log.error]
+      .flatMap((spy) => vi.mocked(spy).mock.calls.flat())
+      .map((arg) => String(arg))
+      .join("\n");
+    expect(everything).not.toContain("AbC_SIGNED");
+    expect(everything).not.toContain("SECRET");
+    // the upload on lh3 is still fetched: the new line is for the other host only
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("is not fetched, marked or counted by the generic caller either", async () => {
     const fetchSpy = respondWith(200);
     vi.stubGlobal("fetch", fetchSpy);
