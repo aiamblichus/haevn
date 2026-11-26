@@ -16,7 +16,7 @@ import {
   readBulkWindow,
   settleBulkWindow,
 } from "./searchBulkWindow";
-import { extractIndexedChat } from "./searchDocument";
+import { extractIndexedChat, labelKindOf } from "./searchDocument";
 import { inCategory, needsCategory } from "./searchFilters";
 import {
   createSearchIndex,
@@ -559,6 +559,18 @@ function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
 }
 
 /**
+ * The index is open and has no finished file, and nothing has failed: a rebuild is about to start
+ * (the start of the worker has not got as far as counting the chats yet), so the search cannot be
+ * answered and must not say "no results". Without this, a search in that gap, which the first
+ * start after an update that changes the index format is sure to have, got an empty list as if
+ * the archive had been searched (HVN-164).
+ */
+function awaitingRebuildStatus(): SearchIndexRebuildStatus | undefined {
+  if (!index || hasLiveIndex || rebuildFailure !== null || openFailure !== null) return undefined;
+  return { processed: 0, total: 0, percentage: 0 };
+}
+
+/**
  * Set on the last chunk of every search answered after a failed rebuild, and when the index cannot
  * be opened: the answer may be missing chats.
  */
@@ -598,18 +610,22 @@ async function performSearch(
 
 /** The passages of one chat, as the results a caller shows. */
 function resultsOf(chat: Chat, found: MarkedPassage[], radius: number): SearchResult[] {
-  return found.map((passage) => ({
-    chatId: chat.id as string,
-    chatTitle: chat.title || "Untitled",
-    source: chat.source,
-    messageId: passage.messageId,
-    messageContent: passage.text,
-    messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
-    messageRole: passage.role,
-    messageTimestamp: passage.timestamp ?? chat.timestamp,
-    model: passage.model,
-    params: chat.params,
-  }));
+  return found.map((passage) => {
+    const label = labelKindOf(passage.messageId);
+    return {
+      chatId: chat.id as string,
+      chatTitle: chat.title || "Untitled",
+      source: chat.source,
+      messageId: passage.messageId,
+      messageContent: passage.text,
+      messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
+      messageRole: passage.role,
+      ...(label ? { label } : {}),
+      messageTimestamp: passage.timestamp ?? chat.timestamp,
+      model: passage.model,
+      params: chat.params,
+    };
+  });
 }
 
 // --- Message Handling ---
@@ -638,7 +654,12 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "search") {
-      const rebuilding = currentRebuildStatus();
+      let rebuilding = currentRebuildStatus();
+      if (!rebuilding) {
+        // Open the file first, so that it is known whether there is one to answer from.
+        if (!index && !openFailure) await openIndex();
+        rebuilding = currentRebuildStatus() ?? awaitingRebuildStatus();
+      }
       if (rebuilding) {
         log.info("[SearchWorker] Search during rebuild: reporting the rebuild instead of results");
         self.postMessage({

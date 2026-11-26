@@ -68,7 +68,7 @@ haevn search '"you may not recognize me"'
 
 When you run an unquoted multi-word query, CLI text output shows a tip, and JSON output includes a top-level `hint` field.
 
-HAEVN reads these operators itself (it does not pass the query to the search index as typed). Nothing else is syntax: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
+HAEVN reads these operators itself (it does not pass the query to the search index as typed). Nothing else is syntax, except `model:` and `tag:` below: a colon, a plus sign or a bracket is a character like the others. A hyphen splits a word the way a space does, so `local-first` and `local first` find the same chats, and `c++ templates` is the words `c` and `templates`.
 
 | Operator | Example | Description |
 |----------|---------|-------------|
@@ -78,6 +78,10 @@ HAEVN reads these operators itself (it does not pass the query to the search ind
 | `*` | `react*` | Prefix at the end of a word: matches `react`, `reactive`, etc. A star inside a word splits it, like a hyphen |
 | `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 (a larger number counts as 2) |
 | `^` | `api^10` | Accepted and ignored: a term has no weight of its own. The word is searched as if `^10` were not there |
+| `model:` | `model:gpt-4o` | The chat has a model with these words. `model:sonnet` finds `claude-3-5-sonnet`; the words of `model:gpt-4` must be next to each other, in that order, so it finds `gpt-4` and not `gpt-4o` (write `model:gpt-4*` for both) |
+| `tag:` | `tag:poetry`, `tag:"creative writing"` | The chat has a tag with these words. `-tag:draft` leaves out the chats that have it |
+
+A plain word, and `-word`, are about what was said: they never look at a chat's models or tags (`haevn search poetry` does not find a chat only because it is tagged `poetry`, and `python -claude` does not drop the chats whose model is called `Claude`). Only `model:` and `tag:` look at the labels, and `-model:` and `-tag:` leave chats out by them. A hit on a label is shown as `model` or `tag` instead of a message. In JSON it has `label` set (`"model"` or `"tag"`) and no `messageRef`: its `messageId` is a name the index makes up (`haevn:model`, `haevn:tag`), not a message of the chat, so do not pass it to `haevn get`. A chat's models are the ones it names and the ones its messages name; its tags are the ones its provider or its file gave it. A chat has at most 50 models and 50 tags in the index (the first 50 of each); a later one is not found by `model:` or `tag:`.
 
 **Examples:**
 
@@ -96,6 +100,10 @@ haevn search "kubernates~2"
 
 # Prefix/wildcard
 haevn search "async* await*"
+
+# By the model or the tag of a chat
+haevn search "model:claude-sonnet-4*"
+haevn search "tag:poetry sunset"
 ```
 
 If a strict AND query returns no results, HAEVN automatically retries with relaxed prefix matching (OR semantics) on the words that say something: stop words such as `how` or `should` are left out of the retry.
@@ -440,7 +448,7 @@ Human-readable output with colors and formatting:
 Structured output for piping to other tools:
 
 ```bash
-haevn search "query" --format json | jq '.results[0].messageRef'
+haevn search "query" --format json | jq '[.results[] | select(.label | not)][0].messageRef'
 ```
 
 ## Development

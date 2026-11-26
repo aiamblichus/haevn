@@ -3,7 +3,9 @@
 // worker, which sees the `SearchIndex` below and nothing of how it is kept.
 //
 // Shape of the data. One FTS5 table, `msgs`, with a row for each thing a chat said: its title, its
-// system prompt, and what the user and what the assistant said in each message. A row's rowid is
+// system prompt, and what the user and what the assistant said in each message, and then a row
+// for each model and each tag it carries (`mid` is `haevn:model` or `haevn:tag`, the label is the
+// row's body; HVN-164). A row's rowid is
 // `chat * 2^20 + position`, so the chat of a hit is `rowid >> 20` and a chat's rows are one range,
 // both without reading the row. The text is stored in the table: FTS5's `highlight()` marks
 // exactly the words its tokenizer matched, so a mark never disagrees with the index about what a
@@ -16,9 +18,15 @@
 // worker that dies mid-rebuild leaves a slot that is never read.
 
 import sqlite3InitModule, { type Database, type Sqlite3Static } from "@sqlite.org/sqlite-wasm";
-import type { IndexedChat } from "./searchDocument";
+import { type IndexedChat, LABEL_IDS, type LabelKind, MAX_LABELS } from "./searchDocument";
 import { foldText } from "./searchFold";
-import { anyOf, buildMatches, editDistanceWithin } from "./searchMatch";
+import {
+  anyOf,
+  buildMatches,
+  editDistanceWithin,
+  type Match,
+  type PlanMatches,
+} from "./searchMatch";
 import type { TextRange } from "./searchSnippet";
 import type { QueryPlan } from "./searchWorkerQuery";
 
@@ -192,8 +200,10 @@ export async function openSqliteHost(): Promise<SqliteHost> {
  * means. An index of another format is not read, and the next start rebuilds it.
  *   1, 2: Lunr segments in the `lunrIndex` table (before SQLite).
  *   3: SQLite FTS5, one row for each message, text stored, accents folded.
+ *   4: and a row for each model and each tag of a chat (HVN-164). The tables are the same; an
+ *      index of format 3 has no label rows, so it is not read and the next start rebuilds it.
  */
-export const INDEX_FORMAT_VERSION = 3;
+export const INDEX_FORMAT_VERSION = 4;
 
 /** What a search may be narrowed to, before the cut. */
 export interface IndexFilters {
@@ -280,7 +290,6 @@ const SLOT_FILES = ["/haevn-search-a.db", "/haevn-search-b.db"] as const;
 export const TOKENIZER = "unicode61 remove_diacritics 2 categories 'L* N* Co So M*' tokenchars '_'";
 /** A chat's rows are the rowids from `chat << ORDINAL_BITS` up. */
 const ORDINAL_BITS = 20;
-const ORDINAL_SPAN = 2 ** ORDINAL_BITS;
 /** The title counts ten times what the body does, as it did in the Lunr index. */
 const TITLE_WEIGHT = 10;
 const VARIANTS_LIMIT = 64;
@@ -304,10 +313,6 @@ function isNotAnIndex(error: unknown): boolean {
   if (typeof code !== "number") return false;
   const primary = code & 0xff;
   return primary === SQLITE_ERROR || primary === SQLITE_CORRUPT || primary === SQLITE_NOTADB;
-}
-
-function firstRowid(chat: number): number {
-  return chat * ORDINAL_SPAN;
 }
 
 /** A marked text as its plain text and the spans that were marked. */
@@ -338,6 +343,55 @@ function readMarks(marked: string): { text: string; marks: TextRange[] } {
   return { text: pieces.join(""), marks };
 }
 
+/** One MATCH that rows are looked for by, and the label rows it is confined to, if it is. */
+interface Source {
+  match: string;
+  scope?: LabelKind;
+}
+
+/** A row of a chat that a search shows a passage of, and which source found it. */
+interface ShownRow {
+  rowid: number;
+  mid: string;
+  source: number;
+}
+
+/**
+ * The rows a MATCH looks at, as a condition on `mid`: the rows of one kind of label for a clause
+ * confined to it, and for every other clause the title and the messages, never a label. A word
+ * typed plain is about what was said, and the labels of a synced chat are often the provider's own
+ * name, so `-claude` must not drop every chat of Claude's (HVN-164).
+ */
+function rowsOf(scope: LabelKind | undefined): string {
+  return scope ? " AND mid = ?" : " AND mid NOT IN (?, ?)";
+}
+
+/** The binding of `rowsOf`. */
+function scopeBinding(scope: LabelKind | undefined): Binding {
+  return scope ? [LABEL_IDS[scope]] : [LABEL_IDS.model, LABEL_IDS.tag];
+}
+
+/** The binding of a source's MATCH and of its `rowsOf`. */
+function matchBinding(source: Source): Binding {
+  return [source.match, ...scopeBinding(source.scope)];
+}
+
+/**
+ * What a plan is looked for by: every word that is not confined as one MATCH (it looks at the
+ * title and the messages), then the words confined to the models, then the ones confined to the
+ * tags. A passage is a row that one of them matches.
+ */
+function passageSources(matches: PlanMatches): Source[] {
+  const sources: Source[] = [];
+  const plain = anyOf([...matches.required, ...matches.optional]);
+  if (plain) sources.push({ match: plain });
+  for (const scope of ["model", "tag"] as const) {
+    const confined = anyOf(matches.required, scope);
+    if (confined) sources.push({ match: confined, scope });
+  }
+  return sources;
+}
+
 /** One index file. */
 class Slot implements IndexWriter {
   private inTransaction = false;
@@ -345,10 +399,21 @@ class Slot implements IndexWriter {
   /** `variants` answers since the last write; a write can add a word. */
   private nearSpellings = new Map<string, string[]>();
 
+  /** How many rowids a chat's rows have between them: 2^bits (only a test makes it smaller). */
+  private readonly span: number;
+
   constructor(
     readonly name: string,
     readonly db: Database,
-  ) {}
+    private readonly bits: number,
+  ) {
+    this.span = 2 ** bits;
+  }
+
+  /** The first rowid of the chat with this key. */
+  private firstRowid(chat: number): number {
+    return chat * this.span;
+  }
 
   /** Whether the file already has this index's tables (a file just made does not). */
   hasSchema(): boolean {
@@ -424,7 +489,7 @@ class Slot implements IndexWriter {
   private clearRows(key: number): void {
     this.db.exec({
       sql: "DELETE FROM msgs WHERE rowid BETWEEN ? AND ?",
-      bind: [firstRowid(key), firstRowid(key + 1) - 1],
+      bind: [this.firstRowid(key), this.firstRowid(key + 1) - 1],
     });
   }
 
@@ -458,11 +523,13 @@ class Slot implements IndexWriter {
       try {
         let ordinal = 0;
         const add = (...values: Binding) => {
-          insert.bind([firstRowid(key) + ordinal++, ...values]).stepReset();
+          insert.bind([this.firstRowid(key) + ordinal++, ...values]).stepReset();
         };
         if (chat.title) add(chat.title, "", "title", "user", null, null);
+        // The labels come last, with room kept for them, so that a chat of a million messages
+        // still has its models and tags.
         for (const message of chat.messages) {
-          if (ordinal >= ORDINAL_SPAN) break;
+          if (ordinal >= this.span - 2 * MAX_LABELS) break;
           add(
             "",
             message.text,
@@ -471,6 +538,12 @@ class Slot implements IndexWriter {
             message.timestamp ?? null,
             message.model ?? null,
           );
+        }
+        for (const label of chat.models.slice(0, MAX_LABELS)) {
+          add("", label, LABEL_IDS.model, "user", null, null);
+        }
+        for (const label of chat.tags.slice(0, MAX_LABELS)) {
+          add("", label, LABEL_IDS.tag, "user", null, null);
         }
       } finally {
         insert.finalize();
@@ -524,27 +597,27 @@ class Slot implements IndexWriter {
   }
 
   search(plan: QueryPlan, filters: IndexFilters): RankedChat[] {
-    const { required, optional, excluded } = buildMatches(plan, (term, max) =>
-      this.variants(term, max),
-    );
-    const positive = anyOf([...required, ...optional]);
-    if (!positive) return [];
+    const matches = buildMatches(plan, (term, max) => this.variants(term, max));
+    const { required, optional, excluded } = matches;
+    const sources = passageSources(matches);
+    if (sources.length === 0) return [];
 
     // The chats that satisfy every required clause (or any optional one), less the excluded ones.
-    const chatsOf = "SELECT rowid >> 20 AS c FROM msgs WHERE msgs MATCH ?";
+    // A clause confined to the models or the tags looks only at those rows; any other looks only
+    // at the title and the messages.
     const bind: Binding = [];
-    let sets: string;
-    if (required.length > 0) {
-      sets = required.map(() => chatsOf).join(" INTERSECT ");
-      bind.push(...required);
-    } else {
-      sets = chatsOf;
-      bind.push(positive);
-    }
+    const chatsOf = (match: Match): string => {
+      bind.push(match.text, ...scopeBinding(match.scope));
+      return `SELECT rowid >> ${this.bits} AS c FROM msgs WHERE msgs MATCH ?${rowsOf(match.scope)}`;
+    };
+    let sets =
+      required.length > 0
+        ? required.map(chatsOf).join(" INTERSECT ")
+        : chatsOf({ text: anyOf(optional) as string });
     const out = anyOf(excluded);
-    if (out) {
-      sets += " EXCEPT SELECT rowid >> 20 FROM msgs WHERE msgs MATCH ?";
-      bind.push(out);
+    if (out) sets += ` EXCEPT ${chatsOf({ text: out })}`;
+    for (const match of excluded) {
+      if (match.scope) sets += ` EXCEPT ${chatsOf(match)}`;
     }
 
     const where: string[] = [];
@@ -578,76 +651,168 @@ class Slot implements IndexWriter {
     if (hits.size === 0) return [];
 
     // One scale for every chat: bm25 over the whole index, summed over a chat's rows.
-    this.db.exec({
-      sql: `SELECT rowid >> 20, bm25(msgs, ${TITLE_WEIGHT}.0, 1.0) FROM msgs WHERE msgs MATCH ?`,
-      bind: [positive],
-      rowMode: "array",
-      callback: (row: unknown[]) => {
-        const hit = hits.get(Number(row[0]));
-        if (hit) hit.score -= Number(row[1]);
-      },
-    });
+    for (const source of sources) {
+      this.db.exec({
+        sql: `SELECT rowid >> ${this.bits}, bm25(msgs, ${TITLE_WEIGHT}.0, 1.0) FROM msgs WHERE msgs MATCH ?${rowsOf(
+          source.scope,
+        )}`,
+        bind: matchBinding(source),
+        rowMode: "array",
+        callback: (row: unknown[]) => {
+          const hit = hits.get(Number(row[0]));
+          if (hit) hit.score -= Number(row[1]);
+        },
+      });
+    }
 
     return [...hits.entries()]
       .sort((a, b) => b[1].score - a[1].score || a[0] - b[0])
       .map(([, hit]) => hit);
   }
 
-  passages(plan: QueryPlan, chatId: string, limit: number): MarkedPassage[] {
-    const key = this.chatKey(chatId);
-    if (key === undefined) return [];
-    const { required, optional } = buildMatches(plan, (term, max) => this.variants(term, max));
-    const positive = anyOf([...required, ...optional]);
-    if (!positive) return [];
+  /** What a plan is looked for by when its passages are shown. */
+  private sourcesOf(plan: QueryPlan): Source[] {
+    return passageSources(buildMatches(plan, (term, max) => this.variants(term, max)));
+  }
 
-    // A message is one passage, however many of its rows have a word: the row of the first hit,
-    // the user's text before the assistant's. The rows are found first, and only the ones that
-    // are shown are marked.
-    const range = [firstRowid(key), firstRowid(key + 1) - 1];
-    const shown: number[] = [];
-    const seen = new Set<string>();
-    this.db.exec({
-      sql: "SELECT rowid, mid FROM msgs WHERE msgs MATCH ? AND rowid BETWEEN ? AND ? ORDER BY rowid",
-      bind: [positive, ...range],
-      rowMode: "array",
-      callback: (row: unknown[]) => {
-        const message = String(row[1]);
-        if (seen.has(message) || (limit >= 0 && shown.length >= limit)) return;
-        seen.add(message);
-        shown.push(Number(row[0]));
-      },
+  /**
+   * The rows to show for the chats in `wanted` (their keys): a message is one passage, however
+   * many of its rows have a word, so the first row of each, in rowid order (the user's text before
+   * the assistant's), up to `limit` of them for a chat. Rows are found for every source, and a row
+   * that two of them match belongs to the first. `range` is one chat's rowids, when it is one.
+   */
+  private findRows(
+    sources: Source[],
+    wanted: ReadonlySet<number>,
+    limit: number,
+    range?: number[],
+  ): Map<number, ShownRow[]> {
+    const found = new Map<number, Map<number, ShownRow>>();
+    sources.forEach((source, which) => {
+      // A source's own first `limit` messages of a chat are all it can add to what is shown.
+      const taken = new Map<number, Set<string>>();
+      this.db.exec({
+        sql: `SELECT rowid, mid FROM msgs WHERE msgs MATCH ?${rowsOf(source.scope)}${
+          range ? " AND rowid BETWEEN ? AND ? ORDER BY rowid" : ""
+        }`,
+        bind: [...matchBinding(source), ...(range ?? [])],
+        rowMode: "array",
+        callback: (row: unknown[]) => {
+          const rowid = Number(row[0]);
+          const key = Math.floor(rowid / this.span);
+          if (!wanted.has(key)) return;
+          const message = String(row[1]);
+          let messages = taken.get(key);
+          if (!messages) {
+            messages = new Set();
+            taken.set(key, messages);
+          }
+          if (messages.has(message) || (limit >= 0 && messages.size >= limit)) return;
+          messages.add(message);
+          let rows = found.get(key);
+          if (!rows) {
+            rows = new Map();
+            found.set(key, rows);
+          }
+          if (!rows.has(rowid)) rows.set(rowid, { rowid, mid: message, source: which });
+        },
+      });
     });
-    if (shown.length === 0) return [];
 
-    const passages: MarkedPassage[] = [];
-    this.db.exec({
-      sql: `SELECT mid, role, ts, model,
-              highlight(msgs, 0, ?, ?), highlight(msgs, 1, ?, ?)
-            FROM msgs
-            WHERE msgs MATCH ? AND rowid BETWEEN ? AND ? AND rowid IN (${shown.join(",")})
-            ORDER BY rowid`,
-      bind: [MARK_OPEN, MARK_CLOSE, MARK_OPEN, MARK_CLOSE, positive, ...range],
-      rowMode: "array",
-      callback: (row: unknown[]) => {
-        const marked = String(row[4]) || String(row[5]);
-        const { text, marks } = readMarks(marked);
-        passages.push({
-          messageId: String(row[0]),
-          role: row[1] === "assistant" ? "assistant" : "user",
-          text,
-          marks,
-          ...(row[2] === null ? {} : { timestamp: Number(row[2]) }),
-          ...(row[3] === null ? {} : { model: String(row[3]) }),
+    const shown = new Map<number, ShownRow[]>();
+    for (const [key, rows] of found) {
+      const seen = new Set<string>();
+      const list: ShownRow[] = [];
+      for (const row of [...rows.values()].sort((a, b) => a.rowid - b.rowid)) {
+        if (seen.has(row.mid)) continue;
+        if (limit >= 0 && list.length >= limit) break;
+        seen.add(row.mid);
+        list.push(row);
+      }
+      shown.set(key, list);
+    }
+    return shown;
+  }
+
+  /**
+   * The marks of the rows that are shown, and of no others. Without a `range` the unary plus keeps
+   * `rowid IN` from becoming one seek for each row; the rows that pass are marked.
+   */
+  private markRows(
+    sources: Source[],
+    rows: ShownRow[],
+    range?: number[],
+  ): Map<number, MarkedPassage> {
+    const marked = new Map<number, MarkedPassage>();
+    sources.forEach((source, which) => {
+      const own = rows.filter((row) => row.source === which).map((row) => row.rowid);
+      for (let at = 0; at < own.length; at += SHOWN_PER_QUERY) {
+        const list = own.slice(at, at + SHOWN_PER_QUERY).join(",");
+        this.db.exec({
+          sql: `SELECT rowid, mid, role, ts, model,
+                  highlight(msgs, 0, ?, ?), highlight(msgs, 1, ?, ?)
+                FROM msgs
+                WHERE msgs MATCH ?${rowsOf(source.scope)} AND ${
+                  range ? `rowid BETWEEN ? AND ? AND rowid IN (${list})` : `+rowid IN (${list})`
+                }`,
+          bind: [
+            MARK_OPEN,
+            MARK_CLOSE,
+            MARK_OPEN,
+            MARK_CLOSE,
+            ...matchBinding(source),
+            ...(range ?? []),
+          ],
+          rowMode: "array",
+          callback: (row: unknown[]) => {
+            const { text, marks } = readMarks(String(row[5]) || String(row[6]));
+            marked.set(Number(row[0]), {
+              messageId: String(row[1]),
+              role: row[2] === "assistant" ? "assistant" : "user",
+              text,
+              marks,
+              ...(row[3] === null ? {} : { timestamp: Number(row[3]) }),
+              ...(row[4] === null ? {} : { model: String(row[4]) }),
+            });
+          },
         });
-      },
+      }
     });
+    return marked;
+  }
+
+  /** The passages of the chats in `chatOf` (key to id), in rowid order for each. */
+  private readPassages(
+    sources: Source[],
+    chatOf: ReadonlyMap<number, string>,
+    limit: number,
+    range?: number[],
+  ): Map<string, MarkedPassage[]> {
+    const passages = new Map<string, MarkedPassage[]>();
+    if (sources.length === 0) return passages;
+    const rows = this.findRows(sources, new Set(chatOf.keys()), limit, range);
+    const marked = this.markRows(sources, [...rows.values()].flat(), range);
+    for (const [key, list] of rows) {
+      const chatId = chatOf.get(key);
+      const found = list.flatMap((row) => marked.get(row.rowid) ?? []);
+      if (chatId !== undefined && found.length > 0) passages.set(chatId, found);
+    }
     return passages;
   }
 
+  passages(plan: QueryPlan, chatId: string, limit: number): MarkedPassage[] {
+    const key = this.chatKey(chatId);
+    if (key === undefined) return [];
+    // The rows are found first, and only the ones that are shown are marked.
+    const range = [this.firstRowid(key), this.firstRowid(key + 1) - 1];
+    const found = this.readPassages(this.sourcesOf(plan), new Map([[key, chatId]]), limit, range);
+    return found.get(chatId) ?? [];
+  }
+
   passagesFor(plan: QueryPlan, chatIds: string[], limit: number): Map<string, MarkedPassage[]> {
-    const found = new Map<string, MarkedPassage[]>();
     // A few chats are cheaper one by one (a seek in each term's rows); many are cheaper in one pass.
     if (chatIds.length <= SEEK_MAX_CHATS) {
+      const found = new Map<string, MarkedPassage[]>();
       for (const chatId of chatIds) {
         const passages = this.passages(plan, chatId, limit);
         if (passages.length > 0) found.set(chatId, passages);
@@ -655,71 +820,12 @@ class Slot implements IndexWriter {
       return found;
     }
 
-    const { required, optional } = buildMatches(plan, (term, max) => this.variants(term, max));
-    const positive = anyOf([...required, ...optional]);
-    if (!positive) return found;
-
     const idOf = new Map<number, string>();
     for (const chatId of chatIds) {
       const key = this.chatKey(chatId);
       if (key !== undefined) idOf.set(key, chatId);
     }
-
-    // Pass one: the rows of the plan, in order, and the first rows of each chat that is asked for,
-    // one for each message.
-    const rows = new Map<number, { messages: Set<string>; rowids: number[] }>();
-    this.db.exec({
-      sql: "SELECT rowid, mid FROM msgs WHERE msgs MATCH ?",
-      bind: [positive],
-      rowMode: "array",
-      callback: (row: unknown[]) => {
-        const rowid = Number(row[0]);
-        const key = Math.floor(rowid / ORDINAL_SPAN);
-        if (!idOf.has(key)) return;
-        let entry = rows.get(key);
-        if (!entry) {
-          entry = { messages: new Set(), rowids: [] };
-          rows.set(key, entry);
-        }
-        const message = String(row[1]);
-        if (entry.messages.has(message) || (limit >= 0 && entry.messages.size >= limit)) return;
-        entry.messages.add(message);
-        entry.rowids.push(rowid);
-      },
-    });
-
-    // Pass two: the marks of those rows only. The unary plus keeps `rowid IN` from becoming one
-    // seek for each row; the rows that pass are marked, and no others.
-    const shown = [...rows.values()].flatMap((entry) => entry.rowids);
-    for (let at = 0; at < shown.length; at += SHOWN_PER_QUERY) {
-      this.db.exec({
-        sql: `SELECT rowid, mid, role, ts, model,
-                highlight(msgs, 0, ?, ?), highlight(msgs, 1, ?, ?)
-              FROM msgs
-              WHERE msgs MATCH ? AND +rowid IN (${shown.slice(at, at + SHOWN_PER_QUERY).join(",")})`,
-        bind: [MARK_OPEN, MARK_CLOSE, MARK_OPEN, MARK_CLOSE, positive],
-        rowMode: "array",
-        callback: (row: unknown[]) => {
-          const chatId = idOf.get(Math.floor(Number(row[0]) / ORDINAL_SPAN));
-          if (chatId === undefined) return;
-          const { text, marks } = readMarks(String(row[5]) || String(row[6]));
-          let list = found.get(chatId);
-          if (!list) {
-            list = [];
-            found.set(chatId, list);
-          }
-          list.push({
-            messageId: String(row[1]),
-            role: row[2] === "assistant" ? "assistant" : "user",
-            text,
-            marks,
-            ...(row[3] === null ? {} : { timestamp: Number(row[3]) }),
-            ...(row[4] === null ? {} : { model: String(row[4]) }),
-          });
-        },
-      });
-    }
-    return found;
+    return this.readPassages(this.sourcesOf(plan), idOf, limit);
   }
 }
 
@@ -728,6 +834,9 @@ export class SqliteSearchIndex implements SearchIndex {
   private host: SqliteHost | undefined;
   private live: Slot | undefined;
   private building: Slot | undefined;
+
+  /** `ordinalBits` is for a test that needs a chat to run out of rowids without a million rows. */
+  constructor(private readonly ordinalBits = ORDINAL_BITS) {}
 
   describe(): string {
     return this.host ? `SQLite ${this.host.version}, ${this.host.kind}` : "SQLite, not opened";
@@ -779,7 +888,7 @@ export class SqliteSearchIndex implements SearchIndex {
   }
 
   private openSlot(name: string): Slot {
-    return new Slot(name, this.requireHost().open(name));
+    return new Slot(name, this.requireHost().open(name), this.ordinalBits);
   }
 
   /** The generation of a finished index in the current format, or undefined for any other file. */

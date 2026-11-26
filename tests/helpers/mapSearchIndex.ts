@@ -4,7 +4,12 @@
 // tests need: words are cut where the real tokenizer cuts them, folded the same way, and a
 // passage's marks are the tokens the query matched.
 
-import type { IndexedChat } from "../../src/services/searchDocument";
+import {
+  type IndexedChat,
+  LABEL_IDS,
+  type LabelKind,
+  MAX_LABELS,
+} from "../../src/services/searchDocument";
 import { foldText } from "../../src/services/searchFold";
 import {
   INDEX_FORMAT_VERSION,
@@ -39,6 +44,8 @@ interface Row {
   role: "user" | "assistant";
   text: string;
   title: boolean;
+  /** Set on the rows that are a model or a tag. */
+  label?: LabelKind;
   timestamp?: number;
   model?: string;
   tokens: Token[];
@@ -88,6 +95,19 @@ function rowsOf(chat: IndexedChat): Row[] {
   for (const message of chat.messages) {
     rows.push({ ...message, title: false, tokens: tokenize(message.text) });
   }
+  // One row for each model and each tag, after the messages, as the SQLite index writes them.
+  for (const kind of ["model", "tag"] as const) {
+    for (const text of (kind === "model" ? chat.models : chat.tags).slice(0, MAX_LABELS)) {
+      rows.push({
+        id: LABEL_IDS[kind],
+        role: "user",
+        text,
+        title: false,
+        label: kind,
+        tokens: tokenize(text),
+      });
+    }
+  }
   return rows;
 }
 
@@ -111,6 +131,14 @@ function vocabulary(file: File): Map<string, number> {
 }
 
 function matcherFor(clause: QueryClause, file: File): Matcher {
+  const matches = unscopedMatcherFor(clause, file);
+  const { scope } = clause;
+  // A clause confined to the models or the tags sees no other row, and any other clause sees no
+  // label.
+  return (row) => (row.label === scope ? matches(row) : []);
+}
+
+function unscopedMatcherFor(clause: QueryClause, file: File): Matcher {
   const words = clauseWords(clause);
   if (words.length === 0) return () => [];
 

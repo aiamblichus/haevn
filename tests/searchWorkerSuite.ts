@@ -2,6 +2,11 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
 import { saveChatToDb } from "../src/services/chatPersistence";
+import { registerAllProviders } from "../src/providers/index";
+import { parsePiJsonl } from "../src/providers/pi/importer";
+import { transformPiToHaevnChat } from "../src/providers/pi/transformer";
+import type { PoeConversationData } from "../src/providers/poe/model";
+import { transformPoeToHaevn } from "../src/providers/poe/transformer";
 import { getDB } from "../src/services/db";
 import {
   BULK_WINDOW_KEY,
@@ -11,6 +16,8 @@ import {
 } from "../src/services/searchBulkWindow";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
+import { validateAndNormalizeChat } from "../src/utils/jsonImporter";
+import { parseMarkdownContent } from "../src/utils/markdownImporter";
 import { faults, opens, resetFaults, withFaults } from "./helpers/faultyIndex";
 import { type IndexKit, mapKit, sqliteKit } from "./helpers/indexKit";
 
@@ -2287,5 +2294,255 @@ describe("search worker: a bulk window survives a restart of the worker (HVN-88)
     await settle();
 
     expect(await windowRow()).toBeDefined();
+  });
+});
+
+describe("search worker: models and tags (HVN-164)", () => {
+  /** Chats as the providers make them: one synced from the web, three imported from files. */
+  async function archive(): Promise<Record<"synced" | "markdown" | "json" | "session", Chat>> {
+    registerAllProviders();
+    const turn = (id: number, text: string, bot: boolean) =>
+      ({
+        id: `msg-${id}`,
+        messageId: id,
+        messageCode: `code-${id}`,
+        authorUser: bot ? null : { uid: 1, id: "user-1", fullName: "U", handle: "u" },
+        bot: bot
+          ? { botId: 4, id: "bot-4", displayName: "Bot", deletionState: "not_deleted" }
+          : null,
+        text,
+        contentType: "text_markdown",
+        sourceType: "chat_input",
+        state: "complete",
+        creationTime: 1714557480000000 + id * 1000,
+        isEdited: false,
+        isDeleted: false,
+        isChatAnnouncement: false,
+        hasCitations: false,
+        attachments: [],
+        referencedMessageV2: null,
+        usersCanEdit: [],
+        messageStateText: null,
+        parameters: null,
+        command: null,
+      }) as unknown as PoeConversationData["messages"][number];
+    const [synced] = await transformPoeToHaevn({
+      chatId: "Q2hhdDoxMjM=",
+      chatCode: "poe-synced",
+      title: "A synced chat",
+      botName: "Claude-in-Poe",
+      extractedAt: "2024-05-10T10:00:00.000Z",
+      messages: [turn(1, "hello", false), turn(2, "hi there", true)],
+    });
+
+    const markdown = await parseMarkdownContent(`---
+title: An imported file
+conversation_id: md-imported
+models_used:
+  - gemini-2.5-pro
+---
+
+<!-- HAEVN: role="user" -->
+hello
+
+<!-- HAEVN: role="assistant" -->
+hi there
+`);
+
+    const json = validateAndNormalizeChat(
+      {
+        id: "json-imported",
+        title: "An imported backup",
+        source: "claude",
+        currentId: "m1",
+        models: ["claude-opus-4"],
+        tags: ["archive-2023", "starred"],
+        messages: { m1: buildChat("json-imported", "hello").messages["json-imported-m1"] },
+      },
+      "hash",
+    );
+
+    const session = transformPiToHaevnChat(
+      await parsePiJsonl(
+        [
+          { type: "session", version: 3, id: "pi-imported", timestamp: "2026-03-23T10:00:00.000Z" },
+          {
+            type: "message",
+            id: "u-1",
+            timestamp: "2026-03-23T10:00:02.000Z",
+            message: { role: "user", content: [{ type: "text", text: "hello" }] },
+          },
+          {
+            type: "message",
+            id: "a-1",
+            timestamp: "2026-03-23T10:00:03.000Z",
+            message: {
+              role: "assistant",
+              model: "claude-sonnet-4-6",
+              content: [{ type: "text", text: "hi there" }],
+            },
+          },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join("\n"),
+      ),
+    );
+    return { synced, markdown, json, session };
+  }
+
+  /** A hydrated search: the passages the archive and the CLI show. */
+  async function passages(query: string): Promise<SearchResult[]> {
+    const requestId = `test-${++requestCounter}`;
+    await send({ type: "search", query, requestId, hydrate: true });
+    return posted
+      .filter((m) => m.type === "searchResultChunk" && m.requestId === requestId)
+      .flatMap((m) => m.results as SearchResult[]);
+  }
+
+  const chatsOf = (results: SearchResult[]) => [...new Set(results.map((r) => r.chatId))].sort();
+
+  it("finds synced and imported chats by their model and their tag", async () => {
+    const chats = await archive();
+    await seedChats(Object.values(chats));
+    await send({ type: "rebuild" });
+
+    // The synced chat: Poe's bot is its model, and its tags are the platform and the bot.
+    expect(chatsOf(await passages("model:claude-in-poe"))).toEqual(["poe-synced"]);
+    expect(chatsOf(await passages("tag:poe"))).toEqual(["poe-synced"]);
+    // The three imports, one for each way a chat gets in without a provider's own sync.
+    expect(chatsOf(await passages("model:gemini-2.5-pro"))).toEqual(["md-imported"]);
+    expect(chatsOf(await passages("tag:archive-2023"))).toEqual(["json-imported"]);
+    expect(chatsOf(await passages("model:claude-opus-4"))).toEqual(["json-imported"]);
+    expect(chatsOf(await passages("model:claude-sonnet-4-6"))).toEqual(["pi-imported"]);
+  });
+
+  it("says which label a hit was, and does not find a chat by its label typed as a plain word", async () => {
+    const chats = await archive();
+    await seedChats(Object.values(chats));
+    await send({ type: "rebuild" });
+
+    const found = await passages("tag:starred");
+    expect(await passages("starred")).toEqual([]);
+
+    expect(chatsOf(found)).toEqual(["json-imported"]);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      label: "tag",
+      messageContent: "starred",
+      messageSnippet: "{{HIGHLIGHT}}starred{{/HIGHLIGHT}}",
+    });
+  });
+
+  it("does not call a message a label, or a label a message", async () => {
+    const chats = await archive();
+    await seedChats(Object.values(chats));
+    await send({ type: "rebuild" });
+
+    const [text] = await passages("hello");
+    const label = (await passages("tag:starred"))[0];
+
+    expect(text.label).toBeUndefined();
+    expect(label.label).toBe("tag");
+  });
+
+  it("finds a chat by its tag as soon as it is saved, without a rebuild", async () => {
+    await seedChats([buildChat("first", "pineapple")]);
+    await send({ type: "rebuild" });
+    const later = { ...buildChat("later", "mango"), tags: ["fresh-tag"], models: ["new-model-1"] };
+    await seedChats([later]);
+
+    await send({ type: "add", chatId: "later" });
+
+    expect(chatsOf(await passages("tag:fresh-tag"))).toEqual(["later"]);
+    expect(chatsOf(await passages("model:new-model-1"))).toEqual(["later"]);
+  });
+
+  it("indexes a chat's new tags when it is saved again, and drops the old ones", async () => {
+    const chat = { ...buildChat("again", "pineapple"), tags: ["before"] };
+    await seedChats([chat]);
+    await send({ type: "rebuild" });
+    expect(chatsOf(await passages("tag:before"))).toEqual(["again"]);
+
+    await seedChats([{ ...chat, tags: ["after"] }]);
+    await send({ type: "add", chatId: "again" });
+
+    expect(chatsOf(await passages("tag:before"))).toEqual([]);
+    expect(chatsOf(await passages("tag:after"))).toEqual(["again"]);
+  });
+
+  it("does not find a label with the relaxed search that finds near words", async () => {
+    await seedChats([{ ...buildChat("one", "pineapple"), tags: ["poetry"] }]);
+    await send({ type: "rebuild" });
+
+    expect(chatsOf(await passages("tag:poetr"))).toEqual([]);
+    expect(chatsOf(await passages("tag:poetr*"))).toEqual(["one"]);
+  });
+
+  describe("an index from before there were labels", () => {
+    // Format 3 is what a release before HVN-164 leaves: the same tables, and no label rows.
+    const BEFORE_LABELS = 3;
+
+    it("is not read: the worker says it is rebuilding, rebuilds on its own, and then finds the labels", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"], models: ["m-1"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+
+      await send({ type: "init" });
+      const [during] = await search("tag:kept-tag", false);
+
+      expect(during.results).toEqual([]);
+      expect(during.indexRebuilding).toBeDefined(); // "not searched", never "no matches"
+      await waitUntilIndexReady("tag:kept-tag");
+      expect(chatsOf(await passages("tag:kept-tag"))).toEqual(["old"]);
+      expect(chatsOf(await passages("model:m-1"))).toEqual(["old"]);
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+    });
+
+    it("is rebuilt once, and the next start finds the labels without rebuilding", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+      await send({ type: "init" });
+      await waitUntilIndexReady("tag:kept-tag");
+
+      await loadWorker();
+      await send({ type: "init" });
+
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(0);
+      expect(chatsOf(await passages("tag:kept-tag"))).toEqual(["old"]);
+    });
+
+    it("says it is rebuilding to a search that arrives before init has got as far as the rebuild, never that nothing was found", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+
+      // No init yet: the file of the old format is wiped when the search opens it, and nothing
+      // has started the rebuild. This is the window the first start after an update is in.
+      const [hydrated] = await search("pineapple", true);
+      const [ids] = await search("pineapple", false);
+
+      for (const chunk of [hydrated, ids]) {
+        expect(chunk.results).toEqual([]);
+        expect(chunk.indexRebuilding).toEqual({ processed: 0, total: 0, percentage: 0 });
+      }
+      await send({ type: "init" });
+      await waitUntilIndexReady("pineapple");
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+    });
+
+    it("says it too to a search sent while init is still counting the chats", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+
+      const init = send({ type: "init" });
+      const [chunk] = await search("pineapple", false);
+      await init;
+
+      expect(chunk.indexRebuilding).toBeDefined();
+      expect(chunk.results).toEqual([]);
+      await waitUntilIndexReady("pineapple");
+    });
   });
 });

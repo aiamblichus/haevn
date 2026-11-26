@@ -724,7 +724,12 @@ const App = () => {
             await openChatInViewer(chatId, undefined, searchQuery);
           } else {
             const result = payload;
-            await openChatInViewer(result.chatId, result.messageId, searchQuery);
+            // A model or a tag is no message of the chat: open it at the top.
+            await openChatInViewer(
+              result.chatId,
+              result.label ? undefined : result.messageId,
+              searchQuery,
+            );
           }
           break;
         }

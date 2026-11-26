@@ -1,3 +1,4 @@
+import type { LabelKind } from "./searchDocument";
 import { wordBounds } from "./searchSnippet";
 
 /** A search that did not run because its query has nothing to look for; the message says why. */
@@ -18,6 +19,19 @@ export type QueryTerm = {
   editDistance?: number;
 };
 
+/**
+ * A word or phrase that must be (or, with `excluded`, must not be) a model or a tag of the chat:
+ * `model:gpt-4o`, `-tag:draft`, `tag:"creative writing"`, `model:claude*`.
+ */
+export type ScopedTerm = {
+  scope: LabelKind;
+  /** The words as typed, lower case: a label row has them next to each other, in this order. */
+  text: string;
+  /** Typed `word*`: the last word may go on. */
+  prefix: boolean;
+  excluded: boolean;
+};
+
 export type ParsedQuery = {
   /** The "quoted" parts, lower case, as typed. */
   phrases: string[];
@@ -30,6 +44,8 @@ export type ParsedQuery = {
   required: QueryTerm[];
   /** The words a chat must not have (`-word`). */
   excluded: string[];
+  /** The `model:` and `tag:` parts: looked for among the chat's labels, not in its text. */
+  scoped: ScopedTerm[];
   /** Why there is nothing to search for, when there is not. */
   problem?: string;
 };
@@ -86,6 +102,59 @@ export function splitQuotedSearchQuery(query: string): {
   if (tail) remainderParts.push(tail);
 
   return { phrases, remainderParts };
+}
+
+/** `model:` or `tag:` (or the plural, in any case), then its value: a quoted phrase or a word. */
+const SCOPED_TERM = /(-?)(model|tag)s?:("[^"]+"|\S+)/iy;
+
+/**
+ * Take the `model:` and `tag:` parts out of a query. They are found only where a word starts and
+ * outside quotes, so `"the model:x problem"` is still a phrase. What is left is the query without
+ * them, in the same order.
+ */
+export function splitScopedTerms(query: string): { rest: string; scoped: ScopedTerm[] } {
+  const scoped: ScopedTerm[] = [];
+  let rest = "";
+  let at = 0;
+  while (at < query.length) {
+    const char = query[at];
+    if (char === '"') {
+      const close = query.indexOf('"', at + 1);
+      const end = close === -1 ? query.length : close + 1;
+      rest += query.slice(at, end);
+      at = end;
+      continue;
+    }
+    if (at === 0 || /\s/.test(query[at - 1])) {
+      SCOPED_TERM.lastIndex = at;
+      const found = SCOPED_TERM.exec(query);
+      if (found) {
+        const value = found[3];
+        // A quote still being typed (`tag:"creative`) is no phrase yet: the word is what follows it.
+        const quoted = value.length > 1 && value.startsWith('"') && value.endsWith('"');
+        const text = normalizeSearchToken(
+          (quoted ? value.slice(1, -1) : value.replace(/^"+/, ""))
+            .replace(/\*+/g, " ")
+            .replace(/\s+/g, " "),
+        );
+        // A value with no letter or digit in it names nothing to look for.
+        if (/[\p{L}\p{N}]/u.test(text)) {
+          scoped.push({
+            scope: found[2].toLowerCase() === "model" ? "model" : "tag",
+            text,
+            prefix: !quoted && value.endsWith("*"),
+            excluded: found[1] === "-",
+          });
+        }
+        rest += " ";
+        at += found[0].length;
+        continue;
+      }
+    }
+    rest += char;
+    at++;
+  }
+  return { rest, scoped };
 }
 
 /** The most edits `word~N` allows. */
@@ -162,13 +231,15 @@ export const MAX_QUERY_CLAUSES = 100;
  * Parse a search query into the words and phrases it asks for. This is the only parser of query
  * text: the worker builds its index query from the result and never hands the typed text to the
  * index (HVN-78), so `local-first` is the words `local` and `first`, `foo:bar` is a word with a colon
- * in it, and `c++ templates` is `c` and `templates`.
+ * in it, and `c++ templates` is `c` and `templates`. The one colon that means something is
+ * `model:` and `tag:` (HVN-164), which look among the chat's models and tags.
  *
  * A query with nothing to look for (only punctuation, or only words to leave out) comes back
  * with `problem` set, in words a reader can act on.
  */
 export function parseSearchQuery(query: string): ParsedQuery {
-  const { phrases, remainderParts } = splitQuotedSearchQuery(query);
+  const { rest, scoped } = splitScopedTerms(query);
+  const { phrases, remainderParts } = splitQuotedSearchQuery(rest);
   const required: QueryTerm[] = [];
   const excluded: string[] = [];
   const seen = new Set<string>();
@@ -188,17 +259,21 @@ export function parseSearchQuery(query: string): ParsedQuery {
   const terms = [
     ...new Set(required.filter((term) => !term.editDistance).map((term) => term.text)),
   ];
-  const parsed: ParsedQuery = { phrases, terms, required, excluded };
+  const parsed: ParsedQuery = { phrases, terms, required, excluded, scoped };
+  const scopedRequired = scoped.filter((term) => !term.excluded).length;
 
-  if (LEFT_OUT_PHRASE.test(query)) {
+  if (LEFT_OUT_PHRASE.test(rest)) {
     // The minus would be dropped and the phrase required: the opposite of what was typed.
     parsed.problem = "Leaving out a phrase is not supported; use -word.";
-  } else if (required.length === 0 && phrases.length === 0) {
+  } else if (required.length === 0 && phrases.length === 0 && scopedRequired === 0) {
     parsed.problem =
-      excluded.length > 0
+      excluded.length > 0 || scoped.length > 0
         ? "A search needs a word to look for, not only words to leave out."
         : "Type a word to search for.";
-  } else if (required.length + phrases.length + excluded.length > MAX_QUERY_CLAUSES) {
+  } else if (
+    required.length + phrases.length + excluded.length + scoped.length >
+    MAX_QUERY_CLAUSES
+  ) {
     parsed.problem = `That is more than ${MAX_QUERY_CLAUSES} words and phrases. Search for fewer of them.`;
   }
   return parsed;

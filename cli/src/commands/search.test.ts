@@ -108,3 +108,40 @@ describe("haevn search refuses a negative --limit or --context, either way (HVN-
     expect(daemonRequestWithMeta).not.toHaveBeenCalled();
   });
 });
+
+describe("haevn search and a hit on a model or a tag (HVN-164)", () => {
+  const tagHit = hit({
+    messageId: "haevn:tag",
+    messageContent: "poetry",
+    messageSnippet: "{{HIGHLIGHT}}poetry{{/HIGHLIGHT}}",
+    label: "tag",
+  });
+
+  it("says in text that the hit is a tag, and gives it no message ref and no time", () => {
+    const out = formatSearchResultsText([tagHit]);
+
+    expect(out).toContain("tag");
+    expect(out).toContain("poetry");
+    expect(out).not.toContain("asst");
+    expect(out).not.toContain("user");
+    expect(out).not.toMatch(/\[[0-9a-f]{12}\]/);
+  });
+
+  it("still gives a message hit its ref and its role", () => {
+    const out = formatSearchResultsText([hit({})]);
+
+    expect(out).toMatch(/\[[0-9a-f]{12}\]/);
+    expect(out).toContain("user");
+  });
+
+  it("says in JSON which kind of label it is, and gives no messageRef for it", () => {
+    const parsed = JSON.parse(
+      searchJson([tagHit, hit({})], { includeMetadata: true, hasMore: false }),
+    );
+
+    expect(parsed.results[0]).toMatchObject({ label: "tag", messageContent: "poetry" });
+    expect(parsed.results[0]).not.toHaveProperty("messageRef");
+    expect(parsed.results[1].messageRef).toMatch(/^[0-9a-f]{12}$/);
+    expect(parsed.results[1]).not.toHaveProperty("label");
+  });
+});

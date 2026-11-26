@@ -219,3 +219,76 @@ describe("the relaxed plan, for a search that found nothing (HVN-78)", () => {
     expect(relaxed('"fish chips" soup')).toBeNull();
   });
 });
+
+describe("model: and tag: (HVN-164)", () => {
+  const scoped = (query: string) => parseSearchQuery(query).scoped;
+
+  it("reads a word, a hyphenated word and a quoted phrase as one label each", () => {
+    expect(scoped("model:gpt-4o")).toEqual([
+      { scope: "model", text: "gpt-4o", prefix: false, excluded: false },
+    ]);
+    expect(scoped('tag:"Creative Writing"')).toEqual([
+      { scope: "tag", text: "creative writing", prefix: false, excluded: false },
+    ]);
+  });
+
+  it("takes the plural and any case, a trailing star as a prefix, and a minus as a leave-out", () => {
+    expect(scoped("MODELS:Claude*")).toEqual([
+      { scope: "model", text: "claude", prefix: true, excluded: false },
+    ]);
+    expect(scoped("-tag:draft")).toEqual([
+      { scope: "tag", text: "draft", prefix: false, excluded: true },
+    ]);
+  });
+
+  it("leaves the rest of the query as it was, in order", () => {
+    const parsed = parseSearchQuery('sunset tag:poem "a phrase" -rain model:gpt-4o');
+    expect(parsed.required.map((t) => t.text)).toEqual(["sunset"]);
+    expect(parsed.phrases).toEqual(["a phrase"]);
+    expect(parsed.excluded).toEqual(["rain"]);
+    expect(parsed.scoped.map((t) => `${t.scope}:${t.text}`)).toEqual(["tag:poem", "model:gpt-4o"]);
+  });
+
+  it("is not an operator inside a quoted phrase, inside a word, or without a value", () => {
+    expect(scoped('"the model:x problem"')).toEqual([]);
+    expect(parseSearchQuery('"the model:x problem"').phrases).toEqual(["the model:x problem"]);
+    expect(scoped("xmodel:x foo-tag:y")).toEqual([]);
+    expect(scoped("tag:")).toEqual([]);
+    expect(scoped("tag:***")).toEqual([]);
+  });
+
+  it("takes the word after a quote that is still being typed", () => {
+    expect(scoped('tag:"creative')[0]?.text).toBe("creative");
+  });
+
+  it("is a query by itself, and not one when it only leaves labels out", () => {
+    expect(parseSearchQuery("model:gpt-4o").problem).toBeUndefined();
+    expect(parseSearchQuery("-tag:draft").problem).toMatch(/not only words to leave out/);
+    expect(parseSearchQuery("tag:poem -tag:draft").problem).toBeUndefined();
+  });
+
+  it("counts toward the most words and phrases a query may have", () => {
+    const query = Array.from({ length: 101 }, (_, i) => `tag:t${i}`).join(" ");
+    expect(parseSearchQuery(query).problem).toMatch(/more than 100/);
+  });
+
+  it("makes a clause that is confined to the label, whole and exact", () => {
+    expect(planOf("model:gpt-4o tag:poem*").clauses).toEqual([
+      { term: "gpt-4o", presence: "required", prefix: false, phrase: true, scope: "model" },
+      { term: "poem", presence: "required", prefix: true, phrase: true, scope: "tag" },
+    ]);
+    expect(planOf("-tag:draft poem").clauses.map((c) => [c.term, c.presence, c.scope])).toEqual([
+      ["poem", "required", undefined],
+      ["draft", "excluded", "tag"],
+    ]);
+  });
+
+  it("keeps a stop word that is typed as a label, and drops one typed next to it", () => {
+    expect(asText(planOf("to tag:to").clauses)).toEqual(['"to"']);
+  });
+
+  it("has no relaxed form: a label is exact on purpose", () => {
+    expect(buildRelaxedPlan(parseSearchQuery("tag:poetri"))).toBeNull();
+    expect(buildRelaxedPlan(parseSearchQuery("migrate model:gpt-4o"))).toBeNull();
+  });
+});

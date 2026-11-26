@@ -48,6 +48,15 @@ describe("stripEventHandlers (HVN-69)", () => {
 });
 
 describe("highlightTerms (HVN-59)", () => {
+  it("marks no word of a model: or a tag: part, which is not looked for in the text (HVN-164)", () => {
+    expect(highlightTerms("<p>a model of the tag poetry</p>", "model:gpt-4o tag:poetry")).toBe(
+      "<p>a model of the tag poetry</p>",
+    );
+    expect(highlightTerms("<p>a model of the tag poetry</p>", "model:gpt-4o tag")).toBe(
+      '<p>a model of the <span class="highlight">tag</span> poetry</p>',
+    );
+  });
+
   it("leaves a link intact when the query matches its URL text", () => {
     expect(highlightTerms('<a href="https://a.test/x">https://a.test/x</a>', "https")).toBe(
       '<a href="https://a.test/x"><span class="highlight">https</span>://a.test/x</a>',

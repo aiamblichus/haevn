@@ -53,6 +53,16 @@ The words must appear consecutively and in that exact order.
 | `~` | `roam~2` | Fuzzy match with edit distance 1 or 2 — catches typos like `room`, `foam`. |
 | `^` | `important^10` | Accepted and ignored: no term weighs more than another. |
 | `"` | `"exact phrase"` | Phrase search — terms must appear consecutively. |
+| `model:` | `model:gpt-4o` | The chat has a model with these words. `model:sonnet` finds `claude-3-5-sonnet`. The words must be next to each other: `model:gpt-4` finds `gpt-4` but not `gpt-4o`; `model:gpt-4*` finds both. |
+| `tag:` | `tag:poetry`, `tag:"creative writing"` | The chat has a tag with these words. `-tag:draft` leaves out the chats that have it. |
+
+### Models and tags
+
+Every chat is indexed with the models it used and the tags it carries, whether it was synced from a platform or imported from a file. A plain word, and `-word`, are about what was said: they never look at the models and tags, so `poetry` finds the chats that mention poetry and not the ones that are only tagged `poetry`, and `python -claude` does not drop the chats whose model is called `Claude`. Only `model:` and `tag:` look at the models and the tags (`tag:poetry` finds the tagged chats), and `-model:` and `-tag:` leave chats out by them. A chat keeps its first 50 models and first 50 tags in the index; a later one is not found. A result that is a model or a tag says so, instead of "User" or "Assistant", and opens the chat at the top.
+
+<Aside type="note">
+  After an update that changes the index, HAEVN rebuilds it by itself the next time the extension starts. Until it has finished, a search says that the index is rebuilding instead of returning an empty list. The update that added `model:` and `tag:` is one of these. Chats synced from some platforms carry the platform's own name as their model (for example `Claude` or `ChatGPT`), not the model of each reply.
+</Aside>
 
 ### Examples
 

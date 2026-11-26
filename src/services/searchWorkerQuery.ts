@@ -1,3 +1,4 @@
+import type { LabelKind } from "./searchDocument";
 import { normalizeSearchToken, type ParsedQuery, type QueryTerm } from "./searchQuery";
 import { isStopWord } from "./searchStopWords";
 
@@ -11,6 +12,12 @@ export type QueryClause = {
   /** `term` is several words that must stand next to each other, in that order. */
   phrase?: boolean;
   editDistance?: number;
+  /**
+   * Look only among the chat's models or its tags (`model:`, `tag:`), where each model and each
+   * tag is a row of its own, so a phrase stands for one label. A clause with none looks at what
+   * was said, the title and the messages, and never at a label.
+   */
+  scope?: LabelKind;
 };
 
 export type QueryPlan = {
@@ -47,8 +54,20 @@ export function buildQueryPlan(parsed: ParsedQuery): QueryPlan {
   const plain = (term: QueryTerm) => !term.prefix && !term.editDistance;
   const words = parsed.required.filter((term) => !plain(term) || isIndexedTerm(term.text));
   // A query of stop words only ("to be or not to be") keeps them; next to a phrase, they go.
-  const kept = words.length > 0 || parsed.phrases.length > 0 ? words : parsed.required;
+  const hasOtherClause = parsed.phrases.length > 0 || parsed.scoped.some((t) => !t.excluded);
+  const kept = words.length > 0 || hasOtherClause ? words : parsed.required;
   for (const term of kept) clauses.push(requiredClause(term));
+
+  // A label is looked for whole, as the words it was typed with, stop words too.
+  for (const term of parsed.scoped) {
+    clauses.push({
+      term: term.text,
+      presence: term.excluded ? "excluded" : "required",
+      prefix: term.prefix,
+      phrase: true,
+      scope: term.scope,
+    });
+  }
 
   for (const term of parsed.excluded) {
     clauses.push({ term, presence: "excluded", prefix: false });
@@ -60,10 +79,10 @@ export function buildQueryPlan(parsed: ParsedQuery): QueryPlan {
 /**
  * The plan for a search that found nothing: any of the words, as prefixes, without the stop words
  * (a question that matched on `how*` alone is not an answer). Null when the query has no word that
- * can be relaxed, or has a phrase, which is exact on purpose.
+ * can be relaxed, or has a phrase or a `model:` or `tag:`, which are exact on purpose.
  */
 export function buildRelaxedPlan(parsed: ParsedQuery): QueryPlan | null {
-  if (parsed.phrases.length > 0) return null;
+  if (parsed.phrases.length > 0 || parsed.scoped.length > 0) return null;
 
   const candidates = parsed.required.filter((term) => term.text.length >= 3);
   const significant = candidates.filter((term) => isIndexedTerm(term.text));
