@@ -145,3 +145,38 @@ describe("haevn search and a hit on a model or a tag (HVN-164)", () => {
     expect(parsed.results[1]).not.toHaveProperty("label");
   });
 });
+
+describe("haevn search and a chat with a rough date (HVN-163)", () => {
+  // A Gemini chat, not a fragment: the label is keyed on the date, not on the source. The times
+  // of its messages are made up, so the extension sends the label and no messageTimestamp.
+  it("shows the label, not a time and not unknown", () => {
+    const out = formatSearchResultsText([
+      hit({ source: "gemini", dateLabel: "undated" }),
+      hit({ source: "gemini", messageId: "m2", dateLabel: "c. Mar 2024" }),
+    ]);
+
+    expect(out).toContain("undated");
+    expect(out).toContain("c. Mar 2024");
+    expect(out).not.toContain("unknown");
+    expect(out).not.toContain("1970");
+    expect(out).not.toContain("ago");
+  });
+
+  it("keeps the label in JSON, with no message time", () => {
+    const parsed = JSON.parse(
+      searchJson([hit({ source: "gemini", dateLabel: "2024" })], {
+        includeMetadata: true,
+        hasMore: false,
+      }),
+    );
+
+    expect(parsed.results[0]).toMatchObject({ dateLabel: "2024" });
+    expect(parsed.results[0]).not.toHaveProperty("messageTimestamp");
+  });
+
+  it("still shows a chat with no rough date the time of its message", () => {
+    const out = formatSearchResultsText([hit({ messageTimestamp: Date.now() - 3 * 3600_000 })]);
+
+    expect(out).toContain("3h ago");
+  });
+});
