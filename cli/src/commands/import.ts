@@ -9,6 +9,12 @@ import { defineCommand } from "citty";
 import { daemonRequest } from "../daemon/client.js";
 import type { ImportFilePayload, ImportFormat, ImportResult } from "../types";
 import { consola, pc } from "../utils/output";
+import {
+  assignIds,
+  collectFragmentFiles,
+  type FragmentInput,
+  summarizeFragmentImport,
+} from "./fragmentImport";
 
 // ─── Format metadata ─────────────────────────────────────────────────────────
 
@@ -21,6 +27,7 @@ const SUPPORTED_FORMATS: ImportFormat[] = [
   "openrouter",
   "haevn_json",
   "markdown",
+  "fragment",
   "image",
   "video",
 ];
@@ -164,6 +171,74 @@ export function summarizeImport(
   return { lines, exitCode: result.indexError ? 1 : 0 };
 }
 
+// ─── Fragments ───────────────────────────────────────────────────────────────
+
+async function runFragmentImport(
+  inputs: string[],
+  options: { overwrite: boolean; skipIndex: boolean; dryRun: boolean; assign: boolean },
+): Promise<void> {
+  const { overwrite, skipIndex, dryRun, assign } = options;
+
+  let input: FragmentInput;
+  try {
+    input = await collectFragmentFiles(inputs);
+  } catch (err) {
+    consola.error(
+      `Failed to read input files: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  }
+
+  const ask = (files: ImportFilePayload[], planOnly: boolean) =>
+    daemonRequest<ImportResult>({
+      action: "import",
+      format: "fragment",
+      files,
+      options: { overwrite, skipIndex, dryRun: planOnly },
+    });
+
+  let result: ImportResult | undefined;
+  try {
+    if (input.files.length > 0) {
+      if (assign) {
+        // The plan says which files have no id; the ids are written, and then the import is asked for
+        const plan = await ask(input.files, true);
+        const assigned = await assignIds(plan.plan ?? [], input.files, input.paths, dryRun);
+        for (const { name } of assigned) {
+          consola.log(
+            `  ${pc.cyan("id")} ${dryRun ? "would write an id to" : "wrote an id to"} ${name}`,
+          );
+        }
+        if (dryRun) {
+          // The files that would get an id are no longer refused: say what they will be
+          const given = new Set(assigned.map((a) => a.name));
+          plan.plan = (plan.plan ?? []).map((entry) =>
+            given.has(entry.name)
+              ? { ...entry, state: "new", message: "would get a new id" }
+              : entry,
+          );
+          result = plan;
+        } else {
+          result = await ask(input.files, false);
+        }
+      } else {
+        result = await ask(input.files, dryRun);
+      }
+    }
+  } catch (err) {
+    consola.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  const summary = summarizeFragmentImport(result, input, { dryRun, skipIndex });
+  if (!result && input.refused.length === 0) {
+    consola.error("No .md files found in the input; nothing was imported");
+    process.exit(1);
+  }
+  consola.log(summary.lines.join("\n"));
+  if (summary.exitCode !== 0) process.exit(summary.exitCode);
+}
+
 // ─── Command ─────────────────────────────────────────────────────────────────
 
 export default defineCommand({
@@ -196,12 +271,25 @@ export default defineCommand({
       description: "Save without indexing for search (the next index rebuild picks the chats up)",
       default: false,
     },
+    "dry-run": {
+      type: "boolean",
+      description: "Fragments only: say what each file would do, and write nothing",
+      default: false,
+    },
+    "assign-ids": {
+      type: "boolean",
+      description:
+        "Fragments only: write a fresh id into each file that has none (this changes your files)",
+      default: false,
+    },
   },
   async run({ args }) {
     const format = args.format as ImportFormat;
     const overwrite = !args["no-overwrite"];
     const skipIndex = args["skip-index"];
     const prompt = args.prompt as string | undefined;
+    const dryRun = args["dry-run"] === true;
+    const assign = args["assign-ids"] === true;
     const extraPositional = (args._ || []).map(String).filter(Boolean);
     const rawFiles = [String(args.file), ...extraPositional].filter(Boolean);
 
@@ -219,6 +307,17 @@ export default defineCommand({
         `Unsupported format: ${format}. Expected one of: ${SUPPORTED_FORMATS.join(", ")}`,
       );
       process.exit(1);
+    }
+
+    // A flag that would be ignored must not look as if it had been obeyed: --dry-run would import
+    if ((dryRun || assign) && format !== "fragment") {
+      consola.error(`--dry-run and --assign-ids are only for --format fragment, not "${format}"`);
+      process.exit(1);
+    }
+
+    if (format === "fragment") {
+      await runFragmentImport(files, { overwrite, skipIndex, dryRun, assign });
+      return;
     }
 
     if (prompt && !BINARY_FORMATS.has(format)) {
