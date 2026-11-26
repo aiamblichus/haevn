@@ -909,17 +909,18 @@ async function finishWhenWorkerIdle(): Promise<void> {
           });
           return;
         }
+        // A chat that already has its failure on the run stays pending only when the write that
+        // settled it failed after the failure was recorded (HVN-169): it is counted once.
+        const alreadyFailed = new Set(state.failedSyncs.map((f) => f.chatId));
+        const silent = pending.chatIds.filter((chatId) => !alreadyFailed.has(chatId));
         log.warn(
-          `[Bulk Sync] Giving up on the worker after ${Math.round(idleMs / 1000)} s of silence; ${pending.chatIds.length} chat(s) never reported: ${pending.chatIds.join(", ")}`,
+          `[Bulk Sync] Giving up on the worker after ${Math.round(idleMs / 1000)} s of silence; ${silent.length} chat(s) never reported: ${silent.join(", ")}`,
         );
         // A chat the worker never reported on is not a success: count it as failed.
         const error = `worker never reported (gave up after ${Math.round(idleMs / 1000)} s of silence)`;
         state = {
           ...state,
-          failedSyncs: [
-            ...state.failedSyncs,
-            ...pending.chatIds.map((chatId) => ({ chatId, error })),
-          ],
+          failedSyncs: [...state.failedSyncs, ...silent.map((chatId) => ({ chatId, error }))],
         };
         await setBulkSyncState(state);
       }

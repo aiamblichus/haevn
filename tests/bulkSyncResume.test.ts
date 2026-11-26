@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupBulkSync,
   handleBulkSyncTick,
+  onWorkerReport,
   resumeBulkSync,
   stopWaitingForWorker,
+  WORKER_IDLE_GIVE_UP_MS,
 } from "../src/background/bulkSync/orchestrator";
 import {
   addPendingHandoff,
@@ -11,6 +13,7 @@ import {
   getPendingHandoffs,
   settlePendingHandoff,
   settleWorkerReport,
+  takeOverRun,
 } from "../src/background/bulkSync/pendingHandoffs";
 import { planResume } from "../src/background/bulkSync/stateManager";
 import type { BulkSyncState } from "../src/background/bulkSync/types";
@@ -447,6 +450,77 @@ describe("the plan of a resume", () => {
   it("is a no-op for a run with nothing pending", () => {
     const plan = planResume({ chatIds: ids(3), processedChatIds: ["c1"], failedSyncs: [] }, []);
     expect(plan).toMatchObject({ chatIds: ids(3), total: 3, currentIndex: 1, refetched: [] });
+  });
+});
+
+describe("a take-over writes the run before it forgets the hand-offs (HVN-169)", () => {
+  // the take-over as resumeBulkSync builds it (orchestrator.ts)
+  const takeOver = () =>
+    takeOverRun(STARTED, (run, pendingChatIds) => {
+      const plan = planResume(run, pendingChatIds);
+      return {
+        plan,
+        next: {
+          ...run,
+          chatIds: plan.chatIds,
+          total: plan.total,
+          currentIndex: plan.currentIndex,
+          processedChatIds: plan.processedChatIds,
+          failedSyncs: plan.failedSyncs,
+          resumeCount: (run.resumeCount ?? 0) + 1,
+          status: "running" as const,
+          extractionTabId: NEW_TAB,
+          lastProgressAt: Date.now(),
+          isProcessing: false,
+          isCancelled: false,
+        },
+      };
+    });
+
+  it("a stop between the take-over's two writes still leaves the held chats to fetch again", async () => {
+    // 6 chats: c1 settled; c2 and c3 handed to the worker, and no report yet
+    await interruptedRun({ n: 6, handedOver: 3, pending: ["c2", "c3"] });
+
+    // the service worker stops before the take-over's second write: the first one has landed
+    const adapter = getStorageAdapter();
+    const set = adapter.set.bind(adapter);
+    const remove = adapter.remove.bind(adapter);
+    let writes = 0;
+    const stopBeforeSecondWrite = () => {
+      writes += 1;
+      if (writes === 2) throw new Error("service worker stopped");
+    };
+    adapter.set = (async (key: string, value: unknown) => {
+      stopBeforeSecondWrite();
+      return set(key, value);
+    }) as typeof adapter.set;
+    adapter.remove = (async (key: string) => {
+      stopBeforeSecondWrite();
+      return remove(key);
+    }) as typeof adapter.remove;
+    try {
+      await expect(takeOver()).rejects.toThrow("service worker stopped");
+    } finally {
+      adapter.set = set;
+      adapter.remove = remove;
+    }
+    expect(writes).toBe(2);
+
+    // the next start resumes the run: the chats the worker had been handed are fetched again
+    await restart();
+    await driveToEnd();
+
+    expect(fetched).toEqual(["c2", "c3", "c4", "c5", "c6"]);
+    expect(sent("bulkSyncComplete").at(-1)).toMatchObject({ totalCount: 6, failedCount: 0 });
+  });
+
+  it("a hand-off the run does not count as settled changes nothing in the plan", () => {
+    // what the stop above leaves in storage: the run lists c2 and c3 to fetch, and the stored
+    // hand-offs still name them; c9 was never in the run
+    const run = { chatIds: ids(6), processedChatIds: ["c1"], failedSyncs: [] };
+
+    expect(planResume(run, ["c2", "c3", "c9"])).toEqual(planResume(run, []));
+    expect(planResume(run, ["c2", "c3", "c9"]).chatIds).toEqual(ids(6));
   });
 });
 
@@ -1111,5 +1185,49 @@ describe("a failed chat is recorded before it leaves the pending set (HVN-160)",
       { chatId: "c7", error: "download failed" },
     ]);
     expect((await getPendingHandoffs()).chatIds).toEqual(["c7"]);
+  });
+});
+
+describe("the worker-silence give-up does not count a failed chat twice (HVN-169)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a failure already on the run is not appended again when the give-up fires", async () => {
+    await setBulkSyncState(
+      runState({ chatIds: ["c7"], total: 1, currentIndex: 1, processedChatIds: ["c7"] }),
+    );
+    await setActiveOperation("bulkSync");
+    await addPendingHandoff("c7");
+
+    // the failure is recorded, then the write that settles it fails: c7 stays pending
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    let failed = false;
+    adapter.set = (async (key: string, value: unknown) => {
+      if (key === "bulkSyncPendingHandoffs" && !failed) {
+        failed = true;
+        throw new Error("quota exceeded");
+      }
+      return write(key, value);
+    }) as typeof adapter.set;
+    try {
+      await expect(
+        settleWorkerReport({
+          chatId: "c7",
+          runId: `${STARTED}:0`,
+          failure: { error: "download failed" },
+        }),
+      ).rejects.toThrow("quota exceeded");
+    } finally {
+      adapter.set = write;
+    }
+
+    // the worker stays silent past the give-up; only the clock moves
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + WORKER_IDLE_GIVE_UP_MS + 60_000);
+    await onWorkerReport();
+
+    expect(sent("bulkSyncComplete").at(-1)).toMatchObject({ totalCount: 1, failedCount: 1 });
   });
 });

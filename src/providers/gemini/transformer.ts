@@ -44,6 +44,24 @@ function isLinkOnly(url: string): boolean {
   return !(parsed.protocol === "https:" && parsed.hostname === "lh3.googleusercontent.com");
 }
 
+/**
+ * Logs a link kept on a Google content host other than lh3 (HVN-169), so an upload that lands on
+ * another host shows in the log. The host only: a signed link's path and query are private.
+ */
+function logOtherGoogleHost(url: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return;
+  }
+  if (host === "lh3.googleusercontent.com") return;
+  if (host !== "googleusercontent.com" && !host.endsWith(".googleusercontent.com")) return;
+  log.info(
+    `[Gemini Transformer] Kept a link on ${host} as a link: only lh3.googleusercontent.com is fetched`,
+  );
+}
+
 export async function transformGeminiToHaevn(
   geminiData: GeminiConversationData,
   _tabId?: number,
@@ -74,12 +92,16 @@ export async function transformGeminiToHaevn(
     }
 
     // Map platform-specific file info to generic UrlAsset
-    const assets: UrlAsset[] = msg.files.map((file) => ({
-      url: fullSizeUrl(file.url),
-      type: file.type,
-      name: file.name,
-      linkOnly: isLinkOnly(file.url),
-    }));
+    const assets: UrlAsset[] = msg.files.map((file) => {
+      const linkOnly = isLinkOnly(file.url);
+      if (linkOnly) logOtherGoogleHost(file.url);
+      return {
+        url: fullSizeUrl(file.url),
+        type: file.type,
+        name: file.name,
+        linkOnly,
+      };
+    });
 
     log.info(
       `[Gemini Transformer] Downloading ${assets.length} files for message ${i + 1}/${geminiData.messages.length}`,

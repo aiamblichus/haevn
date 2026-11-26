@@ -11,6 +11,9 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ADD_LISTENER = "chrome.runtime.onMessage.addListener";
+// The content script registers through this helper (HVN-161), so its listener argument is one too.
+const REPLACE_LISTENER = "replaceMessageListener";
+const LISTENER_CALLS = [ADD_LISTENER, REPLACE_LISTENER];
 // The service-worker router is the one listener that may answer asynchronously through the channel.
 const ROUTER = join(ROOT, "src/background/background.ts");
 
@@ -28,7 +31,7 @@ function listenerSources(): Map<string, string> {
   for (const file of sourceFiles(join(ROOT, "src"))) {
     if (file === ROUTER) continue;
     const text = readFileSync(file, "utf8");
-    if (text.includes(ADD_LISTENER)) sources.set(file, text);
+    if (LISTENER_CALLS.some((call) => text.includes(call))) sources.set(file, text);
   }
   return sources;
 }
@@ -43,9 +46,9 @@ function returnsPromise(checker: ts.TypeChecker, listener: ts.Expression): boole
 }
 
 /**
- * The `file:line` of each `chrome.runtime.onMessage.addListener` in `sources` whose listener
- * returns a Promise. `sources` maps absolute paths to their text; everything they import, and
- * Chrome's types, is read from disk.
+ * The `file:line` of each `chrome.runtime.onMessage.addListener` or `replaceMessageListener` call
+ * in `sources` whose listener (its first argument) returns a Promise. `sources` maps absolute paths
+ * to their text; everything they import, and Chrome's types, is read from disk.
  */
 function promiseListeners(sources: Map<string, string>): string[] {
   const configPath = join(ROOT, "tsconfig.json");
@@ -76,7 +79,7 @@ function promiseListeners(sources: Map<string, string>): string[] {
     const visit = (node: ts.Node): void => {
       if (
         ts.isCallExpression(node) &&
-        node.expression.getText(file) === ADD_LISTENER &&
+        LISTENER_CALLS.includes(node.expression.getText(file)) &&
         node.arguments[0] &&
         returnsPromise(checker, node.arguments[0])
       ) {
@@ -128,6 +131,20 @@ describe("message channel guard", () => {
         ),
       ),
     ).toEqual(["tests/fixtures/listener.ts:4"]);
+  }, 120_000);
+
+  it("flags an async listener passed to replaceMessageListener (HVN-169)", () => {
+    expect(
+      promiseListeners(
+        fixture(
+          [
+            "replaceMessageListener(async (message) => {",
+            "  return { ok: message !== undefined };",
+            "});",
+          ].join("\n"),
+        ),
+      ),
+    ).toEqual(["tests/fixtures/listener.ts:1"]);
   }, 120_000);
 
   it("passes a listener that answers through sendResponse and returns true", () => {

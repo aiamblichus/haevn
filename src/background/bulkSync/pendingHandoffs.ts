@@ -106,6 +106,8 @@ async function settleNow(chatId: string, unstoredMedia: number): Promise<void> {
   });
 }
 
+// `keepUnstoredMedia` is set only by the resume's take-over: the chats settled before the restart
+// stay settled, so their count stays too.
 async function clearNow(keepUnstoredMedia: boolean): Promise<void> {
   const kept = keepUnstoredMedia ? ((await getPendingHandoffs()).unstoredMedia ?? 0) : 0;
   if (kept > 0) {
@@ -156,8 +158,12 @@ export function settleWorkerReport(report: {
 /**
  * A resume takes the run over in one step of the queue (HVN-160). It reads the stored run, which
  * must still be `startedAt`'s and running or paused, and the pending set; `build` plans the resumed
- * run from both; the hand-offs are forgotten, keeping the count of media not stored, and the planned
- * run is written. Returns null, and writes nothing, when the stored run can no longer be resumed.
+ * run from both; the planned run is written, and then the hand-offs are forgotten, keeping the count
+ * of media not stored. The order matters (HVN-169): a service worker that stops between the two
+ * writes leaves the old hand-offs beside the planned run, and the next resume fetches their chats
+ * again. Written the other way round, it would leave the old run with no hand-offs, and those chats
+ * would count as settled. Returns null, and writes nothing, when the stored run can no longer be
+ * resumed.
  */
 export function takeOverRun<T extends { next: BulkSyncState }>(
   startedAt: number,
@@ -173,17 +179,17 @@ export function takeOverRun<T extends { next: BulkSyncState }>(
       return null;
     }
     const built = build(current, (await getPendingHandoffs()).chatIds);
-    await clearNow(true);
     await setBulkSyncState(built.next);
+    await clearNow(true);
     return built;
   });
 }
 
 /**
- * Forgets the hand-offs. `keepUnstoredMedia` is for a resume: the chats settled before the restart
- * stay settled, so their count stays too. The run's end reads the count first (`getPendingHandoffs`)
- * and then clears it all.
+ * Forgets the hand-offs and the count of media not stored with them. The run's end reads the count
+ * first (`getPendingHandoffs`) and then calls this. A resume keeps the count instead: it does not
+ * come here (`takeOverRun`).
  */
-export function clearPendingHandoffs(options?: { keepUnstoredMedia?: boolean }): Promise<void> {
-  return exclusive(() => clearNow(options?.keepUnstoredMedia === true));
+export function clearPendingHandoffs(): Promise<void> {
+  return exclusive(() => clearNow(false));
 }
