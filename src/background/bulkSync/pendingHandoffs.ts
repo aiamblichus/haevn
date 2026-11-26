@@ -106,6 +106,8 @@ async function settleNow(chatId: string, unstoredMedia: number): Promise<void> {
   });
 }
 
+// `keepUnstoredMedia` is set only by the resume's take-over: the chats settled before the restart
+// stay settled, so their count stays too.
 async function clearNow(keepUnstoredMedia: boolean): Promise<void> {
   const kept = keepUnstoredMedia ? ((await getPendingHandoffs()).unstoredMedia ?? 0) : 0;
   if (kept > 0) {
@@ -184,10 +186,10 @@ export function takeOverRun<T extends { next: BulkSyncState }>(
 }
 
 /**
- * Forgets the hand-offs. `keepUnstoredMedia` is for a resume: the chats settled before the restart
- * stay settled, so their count stays too. The run's end reads the count first (`getPendingHandoffs`)
- * and then clears it all.
+ * Forgets the hand-offs and the count of media not stored with them. The run's end reads the count
+ * first (`getPendingHandoffs`) and then calls this. A resume keeps the count instead: it does not
+ * come here (`takeOverRun`).
  */
-export function clearPendingHandoffs(options?: { keepUnstoredMedia?: boolean }): Promise<void> {
-  return exclusive(() => clearNow(options?.keepUnstoredMedia === true));
+export function clearPendingHandoffs(): Promise<void> {
+  return exclusive(() => clearNow(false));
 }
