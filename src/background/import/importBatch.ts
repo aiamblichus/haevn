@@ -46,6 +46,11 @@ export interface ImportBatchOptions {
   overwrite: boolean;
   /** false saves without indexing; the next index rebuild or init picks the chats up */
   index: boolean;
+  /**
+   * Runs once the chats are saved, still under the operation lock and before they are queued for
+   * generation, with the ids that were saved. A throw is logged and costs only what it was to do.
+   */
+  afterSave?: (savedIds: string[]) => Promise<void>;
 }
 
 export interface ImportBatchResult {
@@ -110,6 +115,14 @@ export async function importChatBatch(
           file: fileNameShape(item.name),
           error: errorShape(err),
         });
+      }
+    }
+
+    if (options.afterSave) {
+      try {
+        await options.afterSave(savedIds);
+      } catch (err) {
+        log.warn("[ImportBatch] The step after saving failed", { error: errorShape(err) });
       }
     }
 

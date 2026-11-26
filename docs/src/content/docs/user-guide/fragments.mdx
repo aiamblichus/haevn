@@ -1,0 +1,181 @@
+---
+title: Fragments
+description: Keep the chats that no platform holds any more. A fragment is one Markdown file with a little YAML at the top, imported into your archive.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A **fragment** is a recovered chat: a conversation with a model that has been retired, a poem, a terminal session you copied out of a window, anything that exists now only as text you saved. HAEVN keeps it as an ordinary chat in your archive, so it is searchable, it opens in the viewer, and it is part of every backup. It has its own icon, so you can tell it from a chat that was synced.
+
+A fragment is **one Markdown file**. Fragments are imported from the terminal (`haevn import --format fragment`).
+
+<Aside>
+  Only files that end in `.md` are fragments. A `.txt` file is not read: a
+  fragment needs at least an id in its frontmatter, and frontmatter belongs to a
+  Markdown file. Rename the file.
+</Aside>
+
+## The smallest fragment
+
+```markdown
+---
+id: 7b0e6c1e-2f4a-4c58-9d0b-3a1f5e8c9a12
+---
+Whatever you recovered, as it was.
+```
+
+The text after the second `---` is the **body**. It is kept exactly as written: HAEVN never reflows it, trims inside it, or strips a `---` line from it. Everything else in the frontmatter is optional.
+
+## The id
+
+Every fragment needs an `id`, a UUID. The id is what makes importing again safe: a file with an id that is already in your archive **updates that chat** instead of adding a second one. Edit the file, run the import again, and the fragment is as the file says.
+
+You do not have to make the ids by hand. Run the import with `--assign-ids` and every file that has none gets a fresh one:
+
+```bash
+haevn import --format fragment --assign-ids ./recovered
+```
+
+`--assign-ids` **changes your files**, so it is opt-in. It writes one line, `id: <uuid>`, as the first line of the frontmatter (or a frontmatter block with only that line, in front of a file that has none), and nothing else in the file changes. With `--dry-run` it writes nothing and tells you which files it would change. Without `--assign-ids`, a file with no id is refused.
+
+An id is written only to a file that could then be imported. A file that would be refused for another reason (an empty body, a date that is not one) is left as it is, with the reason, and so is a file whose frontmatter does not begin with a `key: value` line at the left margin (a `{ title: x }` block, an indented one): add the `id:` line to those by hand. A dry run decides the same way, so what it says is what the real run does. The file keeps its permissions. A read-only file is left alone, and so is a file you save while the command is running: your edit stays, and the file is named as having no id. A symlink you name on the command line is written through, to the file it points to; a symlink found inside a folder is not read, and the summary counts them.
+
+Run `--assign-ids` once on a folder. Run it on a second copy of the same folder and every file gets a second identity: the dry run warns when a new file has the same text as a fragment that is already in the archive.
+
+## Frontmatter
+
+| Key | What it is |
+| --- | --- |
+| `id` | **Required.** A UUID. |
+| `title` | The chat's title. Without one the title is empty and the archive shows "(Untitled)" until metadata generation names the chat. The file name is never used as a title. |
+| `model` | A model name, or a list of them. Without one, the fragment names no model. Do not write `unknown`. |
+| `date` | When the chat happened. See [Dates](#dates). |
+| `platform` | Where it was held (`poe`, `claude.ai`, `together`). Also added to the tags. |
+| `tags` | A list of tags. |
+| `collection` | The name of a series the file belongs to. Also added to the tags. Nothing groups a collection yet. |
+| `part` | The file's place in its collection (`3`, `1-a`). Text; a number is kept as its text. |
+| `system` | A system prompt that is not in the body. |
+| `speakers` | How to find the turns in the body. See [Turns](#turns). |
+| `description`, `synopsis` | Written by you instead of generated. |
+| `categories`, `keywords` | Lists, written by you instead of generated. |
+| `generate` | `false` keeps this file out of metadata generation. |
+
+Any other key is kept in the stored copy of the frontmatter and not read. A YAML comment (`# a guess`) is kept too.
+
+### Your metadata, or generated
+
+If the frontmatter gives a `title`, `description`, `synopsis`, `categories` or `keywords`, that metadata is yours: it is saved as written and nothing is generated for the chat. If it gives none, the chat is queued for [AI metadata](/user-guide/metadata/) like any import, when automatic generation is on. Writing a title therefore also turns off a generated description. `generate: false` keeps a file out of automatic generation altogether; a file with `generate: false` and no title will stay "(Untitled)".
+
+When a file changes and you import it again, the metadata fields the file gives are written over the chat's record. A field the file does not give is left as it is.
+
+If you take `generate: false` out of a file (and the file gives no metadata of its own), the next import hands the chat back to generation: the record that `generate: false` made, which holds nothing but the title, is removed, and the chat is queued like any import. A record you added to or retitled in the archive is yours and is kept; for such a chat, ask for generation in the metadata editor.
+
+## Dates
+
+A chat can have no date, or only a rough one. `date:` takes these forms:
+
+| You write | It means |
+| --- | --- |
+| `2024` | some time in 2024 |
+| `2024-03` | some time in March 2024 |
+| `2024-03-15` | that day |
+| `2024-03-15T14:30:00Z` | that moment (a time with no offset is read as UTC) |
+| `2023-11..2024-02` | between the two; each end may be a year, a month or a day |
+| `2024-03..` | not before March 2024 |
+| `~2024-03` | about then (`~` changes the label, not the range) |
+| left out, empty, or `unknown` | not known |
+
+The archive shows the date as you wrote it: "2024", "Mar 2024", "15 Mar 2024", "Nov 2023 to Feb 2024", "Mar 2024 or later", "c. Mar 2024", or "undated". A chat with no date sorts after every dated chat under the Modified Time sort, and a search that has an `after` date does not find it.
+
+**A date is your claim about when the chat happened.** HAEVN does not read it from the text, and it need not agree with it: a chat can be set in 1999. "Not before March 2024" is often all you honestly know ("this model was released in March 2024"), and that is what `2024-03..` is for. A date that is none of the forms above refuses the file: importing it as undated would lose your claim without a word.
+
+For sorting and for the date filter of a search, a rough date counts as the middle of its range, and `2024-03..` as its start. So a search "after September 2024" does not find a fragment dated `2024`, whose middle is in July.
+
+## Turns
+
+The body is one block of text unless you mark the turns. HAEVN does not guess who is speaking from a name that looks like a label: a rule that guesses is wrong silently. A fragment with no marks is one message, and that is right for a poem. Three ways to mark turns, tried in this order; the first that finds a mark decides.
+
+**1. HAEVN's own marker**, the one the Markdown export writes, on a line of its own:
+
+```markdown
+<!-- HAEVN: role="user" -->
+Tell me about the keeper.
+
+<!-- HAEVN: role="assistant" -->
+He kept the light for forty years.
+```
+
+**2. A heading typed by hand**: a line that is exactly `## User`, `## Assistant` or `## System`, in any case, with one to three `#`.
+
+**3. Speakers declared in the frontmatter**, for a text that already has its own marks. The body is not edited.
+
+```yaml
+speakers:
+  user: [TB]
+  assistant: [Claude-3-Opus]
+```
+
+A line is a label when, trimmed, it is the label, or the label and a colon, or it starts with the label, a colon and a space (the rest of the line is then the start of the text). The match is exact and case-sensitive, so a name inside a sentence does not split it. The keys:
+
+| Key | A matching line |
+| --- | --- |
+| `user`, `assistant`, `system` | starts a turn of that speaker (a label, or a list of labels) |
+| `prompt` | a prefix (`">"`, `"$"`, or a list of them): the line **is** the person's turn, and what follows it, up to the next mark, is the reply |
+
+A `system` turn becomes the chat's system prompt. Text before the first mark is a block of its own, with nobody named. An unknown key under `speakers` is kept and never refuses the file; the plan names it (`speakers.asistant is not read`), so a misspelling does not pass in silence. So does a label that sits under two keys, a key of the wrong type, and a declaration that matches no line (the file is then one block).
+
+If the labels you declare cover only one side, every turn is that side's, and the plan says so ("24 turns, all the user's").
+
+## Import
+
+```bash
+# What would each file do? Writes nothing.
+haevn import --format fragment --dry-run ./recovered
+
+# Import a folder, or one file
+haevn import --format fragment ./recovered
+haevn import --format fragment ./recovered/lighthouse.md
+
+# Give every file that has no id one, then import
+haevn import --format fragment --assign-ids ./recovered
+```
+
+A folder is read flat: its `.md` files and nothing else (no subfolders, no dot-files). The plan counts the other files in one line so that a folder of `.txt` files does not import as nothing without a word. A file named on the command line that does not end in `.md` is refused with a sentence that says to rename it.
+
+Every file gets one state in the plan:
+
+| State | Meaning |
+| --- | --- |
+| `new` | a valid id that is not in the archive: it is saved |
+| `changed` | the id is in the archive and the file is not the one that was imported: it is saved over the old chat |
+| `unchanged` | the id is in the archive and the file is the same: nothing is written |
+| `no-id` | no frontmatter, or none with an `id`: refused, unless `--assign-ids` |
+| `bad-id` | `id` is not a UUID: refused |
+| `bad-date` | `date` is in none of the forms: refused |
+| `unreadable` | the YAML does not parse, the file is not UTF-8, or the body is empty: refused |
+| `duplicate-id` | two files share an id and differ: both refused |
+| `same-file` | two files share an id and are the same: the first is imported |
+
+**A refused file does not stop the others.** The exit status is 1 when any file was refused, and running the import again after you fix them leaves the ones that are in as `unchanged`. A file that is `unchanged` is not touched, so a title you edited in the archive is still there. `--no-overwrite` leaves a `changed` file as it is. `--skip-index` saves without indexing for search.
+
+The last lines of the plan count the files by state and the warnings by kind, and say how many files have no title.
+
+## Find a fragment
+
+A fragment is found like any chat, by a word of its text or title. Its model, tags, platform and collection are found with `model:` and `tag:`:
+
+```text
+model:claude-3-opus
+tag:poem
+tag:poe
+tag:"conversations with a ghost"
+tag:ghost
+```
+
+**A plain word does not match a label.** Typing `poe` or the name of a collection as plain words finds the fragments whose text says it, not the ones tagged with it. Use `tag:`. `--platform fragment` (and the archive's Provider filter) narrows a search to fragments.
+
+## Backup
+
+A fragment is a chat like another: a backup keeps it, and a restore gives back its text as you wrote it: the body byte for byte, and the frontmatter as text, comments included, with its date as you gave it. The line endings of the two fences and a byte-order mark at the top of the file are not kept.
+
+A fragment you deleted in the archive comes back when you import its file again, whether the file changed or not.

@@ -4,6 +4,7 @@ import { claudeProvider } from "./claude/provider";
 import { claudeCodeProvider } from "./claudecode/provider";
 import { codexProvider } from "./codex/provider";
 import { deepseekProvider } from "./deepseek/provider";
+import { fragmentProvider } from "./fragment/provider";
 import { geminiProvider } from "./gemini/provider";
 import { grokProvider } from "./grok/provider";
 import { openrouterProvider } from "./openrouter/provider";
@@ -31,4 +32,5 @@ export function registerAllProviders(): void {
   registerProvider(codexProvider);
   registerProvider(piProvider);
   registerProvider(openrouterProvider);
+  registerProvider(fragmentProvider);
 }

@@ -128,3 +128,39 @@ describe("getStarmapData and the size of what reaches the page (HVN-93)", () => 
     expect(json.length).toBeLessThan(CHATS * BYTES_PER_CHAT);
   });
 });
+
+describe("getStarmapData and a chat with a rough date (HVN-163)", () => {
+  const roughDate = {
+    text: "2024",
+    precision: "year",
+    approximate: false,
+    from: Date.UTC(2024, 0, 1),
+    to: Date.UTC(2025, 0, 1),
+  };
+
+  it("carries the rough date of any source to the hover card, and none of the rest of params", async () => {
+    await getDB().chats.bulkPut([
+      buildChat("dated", {
+        source: "gemini",
+        params: { roughDate, bulky: "x".repeat(5000) },
+      }),
+      buildChat("plain", { params: { bulky: "y".repeat(5000) } }),
+    ]);
+    computeStarmapLayoutFromEmbeddings.mockResolvedValue({
+      points: [
+        { chatId: "dated", x: 0, y: 0 },
+        { chatId: "plain", x: 1, y: 1 },
+      ],
+      bounds: { minX: 0, maxX: 1, minY: 0, maxY: 1 },
+      stats: {},
+    });
+
+    const { points } = await getStarmapData();
+
+    const dated = points.find((p) => p.chatId === "dated");
+    const plain = points.find((p) => p.chatId === "plain");
+    expect(dated?.params).toEqual({ roughDate });
+    expect(plain).not.toHaveProperty("params");
+    expect(JSON.stringify(points)).not.toContain("xxxx");
+  });
+});

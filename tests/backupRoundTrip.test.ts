@@ -67,10 +67,13 @@ import { beginRestore, finishRestore } from "../src/background/backup/restoreSes
 import { setActiveOperation } from "../src/background/state";
 import { applyWsBridgeSettings, resetWsBridge } from "../src/background/wsBridge";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
+import { roughDateOf } from "../src/model/roughDate";
+import { reassembleFragment, transformFragmentToHaevnChat } from "../src/providers/fragment";
 import type { ChatEmbeddingRecord, ChatMetadataRecord } from "../src/services/db";
 import { getDB } from "../src/services/db";
 import { mediaFolderName } from "../src/services/mediaStorage";
 import { FakeOpfs } from "./helpers/fakeOpfs";
+import { ID_A, ID_B, parsed, withId } from "./helpers/fragmentFile";
 
 // ─── The archive ──────────────────────────────────────────────────────────────
 
@@ -156,6 +159,33 @@ function putMedia(chatId: string, name: string, data: Uint8Array | string): void
   opfs.put(`media/${mediaFolderName(chatId)}/${name}`, data);
 }
 
+/** The bodies of the two fragments of the archive, which a restore must give back byte for byte. */
+const FRAGMENT_BODIES = {
+  dated:
+    '<!-- HAEVN: role="system" -->\nBe brief.\n\n<!-- HAEVN: role="user" -->\nünï 日本語\n\n<!-- HAEVN: role="assistant" -->\nHo\n',
+  undated: "\n\n  one block, as written \r\n---\n  \n",
+};
+const DATED_FRAGMENT = `fragment:${ID_A}`;
+const UNDATED_FRAGMENT = `fragment:${ID_B}`;
+
+/** A fragment as the real transformer makes it, stored the way the archive stores a chat. */
+async function putFragment(
+  front: string,
+  body: string,
+  id: string,
+  options: { metadata?: ChatMetadataRecord } = {},
+): Promise<void> {
+  const chat = transformFragmentToHaevnChat(await parsed(withId(front, body, id)), 5_000);
+  await putChat({ ...chat, messages: {} }, Object.values(chat.messages), options);
+}
+
+async function storedChat(id: string): Promise<Chat> {
+  const db = getDB();
+  const row = (await db.chats.get(id)) as Chat;
+  const rows = await db.chatMessages.where("chatId").equals(id).toArray();
+  return { ...row, messages: Object.fromEntries(rows.map((m) => [m.id, m])) };
+}
+
 const NON_LATIN_ID = "claude:ünï-日本語";
 const NON_LATIN_NAME = "café_日本語_😀.png";
 const SOFT_DELETED = "claude:soft-deleted";
@@ -195,9 +225,25 @@ async function seedArchive(): Promise<void> {
     message(SOFT_DELETED, "m1", "deleted"),
   ]);
   putMedia(SOFT_DELETED, "gone.png", "gone");
+
+  // two fragments (HVN-163): one with a rough date and a metadata record, one undated
+  await putFragment(
+    "title: A fragment\nmodel: claude-3-opus\ndate: ~2024-03\nplatform: poe\ntags: [poem]",
+    FRAGMENT_BODIES.dated,
+    ID_A,
+    { metadata: metadataOf(DATED_FRAGMENT, "A fragment") },
+  );
+  await putFragment("", FRAGMENT_BODIES.undated, ID_B);
 }
 
-const BACKED_UP = ["claude:one", "chatgpt:two", NON_LATIN_ID, "gemini:big"];
+const BACKED_UP = [
+  "claude:one",
+  "chatgpt:two",
+  NON_LATIN_ID,
+  "gemini:big",
+  DATED_FRAGMENT,
+  UNDATED_FRAGMENT,
+];
 
 // ─── Dumps ────────────────────────────────────────────────────────────────────
 
@@ -381,7 +427,7 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
 
     // Everything but the chat that was deleted when the backup was taken
     expect(await dump()).toEqual(exceptChats(before, [SOFT_DELETED]));
-    expect(result).toMatchObject({ replaced: 0, added: 4, mediaFiles: 4 });
+    expect(result).toMatchObject({ replaced: 0, added: 6, mediaFiles: 4 });
     // The restored chats are in the search index one by one, and the provider counts are recalculated
     expect(spies.addOrUpdateChatInIndex.mock.calls.map(([id]) => id).sort()).toEqual(
       [...BACKED_UP].sort(),
@@ -390,8 +436,18 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
     expect(spies.recalculateProviderStats.mock.calls.map(([p]) => p).sort()).toEqual([
       "chatgpt",
       "claude",
+      "fragment",
       "gemini",
     ]);
+
+    // A fragment is a chat like another, and comes back as one: its file as written, its date as given
+    const restored = await storedChat(DATED_FRAGMENT);
+    expect(reassembleFragment(restored)).toBe(FRAGMENT_BODIES.dated);
+    expect(reassembleFragment(await storedChat(UNDATED_FRAGMENT))).toBe(FRAGMENT_BODIES.undated);
+    expect(roughDateOf(restored)).toMatchObject({ text: "~2024-03", precision: "month" });
+    expect(roughDateOf(await storedChat(UNDATED_FRAGMENT))).toMatchObject({ precision: "unknown" });
+    expect(restored.providerLastModifiedTimestamp).toBe(restored.timestamp);
+    expect((await storedChat(UNDATED_FRAGMENT)).providerLastModifiedTimestamp).toBe(0);
   }, 60_000);
 
   it("keeps the three rules in an archive that moved on: replaces by id, adds what is missing, touches nothing else", async () => {
@@ -424,7 +480,7 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
 
     // A dry run says what a restore would do, and does it to nothing
     const dry = await restoreFrom(port, dir, { dryRun: true });
-    expect(dry.plan).toMatchObject({ chats: 4, replaced: 2, changed: 1, added: 2 });
+    expect(dry.plan).toMatchObject({ chats: 6, replaced: 4, changed: 1, added: 2 });
     expect(await dump()).toEqual(moved);
 
     const result = await restoreFrom(port, dir);
@@ -443,7 +499,7 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
     );
     expect(after.files[`media/${mediaFolderName("claude:bystander")}/keep.png`]).toBeDefined();
     // the soft-deleted chat is a row that exists, and still an addition: it was not live
-    expect(result).toMatchObject({ replaced: 2, added: 2 });
+    expect(result).toMatchObject({ replaced: 4, added: 2 });
     // the chat soft-deleted since is live again
     expect((await db.chats.get(NON_LATIN_ID))?.deleted).toBe(0);
     expect((await db.chats.get(NON_LATIN_ID))?.deletedAt).toBeUndefined();
@@ -581,6 +637,6 @@ describe("backup, then restore, through the real daemon and the real bridge", ()
     expect((err as ExitError).message).toMatch(/every chat is restored/);
     expect(await dump()).toEqual(exceptChats(before, [SOFT_DELETED]));
     // the lock is back, and the same command run again finishes
-    expect(await restoreFrom(port, dir)).toMatchObject({ replaced: 4, added: 0 });
+    expect(await restoreFrom(port, dir)).toMatchObject({ replaced: 6, added: 0 });
   }, 60_000);
 });

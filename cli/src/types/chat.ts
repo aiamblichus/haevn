@@ -287,6 +287,8 @@ export interface SearchResult {
   /** Set when the hit is one of the chat's models or tags, not a message of it. */
   label?: "model" | "tag";
   messageTimestamp?: number;
+  /** Set for a chat with a rough date ("c. Mar 2024", "undated"); it then has no messageTimestamp. */
+  dateLabel?: string;
   model?: string;
   params?: Record<string, unknown>;
 }

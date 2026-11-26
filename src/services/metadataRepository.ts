@@ -99,6 +99,23 @@ export async function remove(chatId: string): Promise<void> {
   await getDB().chatMetadata.delete(chatId);
 }
 
+/**
+ * Deletes the record only if it is still the one `since` read (same `updatedAt`), in one
+ * transaction, so an edit saved meanwhile is kept. Returns whether it deleted.
+ */
+export async function removeIfUnchanged(
+  chatId: string,
+  since: ChatMetadataRecord,
+): Promise<boolean> {
+  const db = getDB();
+  return db.transaction("rw", db.chatMetadata, async () => {
+    const current = await db.chatMetadata.get(chatId);
+    if (!current || current.updatedAt !== since.updatedAt) return false;
+    await db.chatMetadata.delete(chatId);
+    return true;
+  });
+}
+
 export async function removeMany(chatIds: string[]): Promise<void> {
   if (chatIds.length === 0) return;
   try {

@@ -237,6 +237,8 @@ export async function handleGetStarmapData(
           metadataUpdatedAt: meta?.updatedAt,
           lastSyncedTimestamp: chat.lastSyncedTimestamp,
           providerLastModifiedTimestamp: chat.providerLastModifiedTimestamp,
+          // Only the rough date, not the rest of `params` (a fragment's holds its whole text)
+          ...(chat.params?.roughDate ? { params: { roughDate: chat.params.roughDate } } : {}),
         };
       })
       .filter((n): n is NonNullable<typeof n> => n !== null);

@@ -1,5 +1,6 @@
 // Search Worker: the full-text index (SQLite FTS5 behind `SearchIndex`), its rebuilds and its queries
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
+import { whenOf } from "../model/roughDate";
 import type {
   SearchFilters,
   SearchIndexIncompleteStatus,
@@ -621,7 +622,7 @@ function resultsOf(chat: Chat, found: MarkedPassage[], radius: number): SearchRe
       messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
       messageRole: passage.role,
       ...(label ? { label } : {}),
-      messageTimestamp: passage.timestamp ?? chat.timestamp,
+      ...whenOf(chat, passage.timestamp ?? chat.timestamp),
       model: passage.model,
       params: chat.params,
     };

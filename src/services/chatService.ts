@@ -21,6 +21,7 @@ export function extractProviderName(source: string): string | null {
     "codex",
     "pi",
     "openrouter",
+    "fragment",
     "poe",
     "chatgpt",
     "openwebui",

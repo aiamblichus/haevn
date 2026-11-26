@@ -407,6 +407,23 @@ export namespace ChatRepository {
     }
   }
 
+  /**
+   * Every live chat of one source, without messages. Soft-deleted chats are left out, as in
+   * `getChat`. For a provider that is small and whose rows carry what an import must compare
+   * (the fragments: `params.fragment` holds the hashes of the file a chat came from).
+   */
+  export async function getChatsBySource(source: string): Promise<Chat[]> {
+    try {
+      const rows = await getDB().chats.where("source").equals(source).toArray();
+      return rows.filter((row) => !row.deletedAt).map(cloneWithoutMessages);
+    } catch (error) {
+      log.error(`Failed to list the chats of '${source}'`, error);
+      throw new Error(
+        `Failed to list chats of a source: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   /** A chat's messages, from the chatMessages table; a row's own `messages` is never read (HVN-31). */
   export async function getChatMessages(chatId: string): Promise<Record<string, ChatMessage>> {
     const rows = await getDB().chatMessages.where("chatId").equals(chatId).toArray();

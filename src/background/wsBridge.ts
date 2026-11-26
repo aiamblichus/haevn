@@ -40,6 +40,7 @@ import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
 import { transformToHaevnChat } from "../providers/claudecode/transformer";
 import { parseCodexJsonl } from "../providers/codex/importer";
 import { transformCodexToHaevnChat } from "../providers/codex/transformer";
+import type { FragmentPlanEntry } from "../providers/fragment";
 import { isImportableRoom, parseOpenRouterExport } from "../providers/openrouter/importer";
 import { transformOpenRouterRoomToHaevnChat } from "../providers/openrouter/transformer";
 import { parsePiJsonl } from "../providers/pi/importer";
@@ -89,6 +90,7 @@ import {
   runProviderHealth,
 } from "./health/providerHealth";
 import { type ImportBatchItem, ImportBusyError, importChatBatch } from "./import/importBatch";
+import { importFragments } from "./import/importFragments";
 import {
   isKeyRejected,
   rejectedRetryDelayMs,
@@ -207,7 +209,14 @@ interface WsExportOptions {
     | "pi_session_jsonl";
 }
 
-type WsImportFormat = "claude_code" | "codex" | "pi" | "openrouter" | "haevn_json" | "markdown";
+type WsImportFormat =
+  | "claude_code"
+  | "codex"
+  | "pi"
+  | "openrouter"
+  | "haevn_json"
+  | "markdown"
+  | "fragment";
 
 interface WsImportFilePayload {
   name: string;
@@ -217,6 +226,8 @@ interface WsImportFilePayload {
 interface WsImportOptions {
   overwrite?: boolean;
   skipIndex?: boolean;
+  /** Fragments only: plan the files and answer the plan, write nothing */
+  dryRun?: boolean;
 }
 
 interface WsMetadataUpdate {
@@ -236,6 +247,10 @@ interface WsImportResult {
   errors: number;
   /** Set when the chats were saved but the search index could not be brought up to date. */
   indexError?: string;
+  /** Fragments only: one entry per file, with its state and warnings (the dry run's answer) */
+  plan?: FragmentPlanEntry[];
+  /** Fragments only: the request was a dry run, and nothing was written */
+  dryRun?: boolean;
 }
 
 type WsResponse<T = unknown> =
@@ -1365,6 +1380,7 @@ async function handleImport(
     "openrouter",
     "haevn_json",
     "markdown",
+    "fragment",
   ];
   if (!SUPPORTED_FORMATS.includes(format)) {
     return {
@@ -1373,6 +1389,52 @@ async function handleImport(
       error: `Unsupported import format: ${format}. Expected one of: ${SUPPORTED_FORMATS.join(", ")}`,
       code: "BAD_REQUEST",
     };
+  }
+
+  // A request for a dry run must not be answered with an import: only fragments have a plan
+  if (options?.dryRun && format !== "fragment") {
+    return {
+      id,
+      success: false,
+      error: `A dry run is only offered for the fragment format, not "${format}"`,
+      code: "BAD_REQUEST",
+    };
+  }
+
+  if (format === "fragment") {
+    // The plan is the answer: a refused file is in it, and does not stop the others
+    const fragmentFiles = files.map((file) => ({
+      name: String(file.name),
+      content: typeof file.content === "string" ? file.content : "",
+    }));
+    try {
+      const outcome = await importFragments(fragmentFiles, {
+        dryRun: options?.dryRun ?? false,
+        overwrite,
+        index: !skipIndex,
+      });
+      const batch = outcome.imported;
+      return {
+        id,
+        success: true,
+        data: {
+          format,
+          total: fragmentFiles.length,
+          processed: batch?.processed ?? 0,
+          saved: batch?.saved ?? 0,
+          skipped: batch?.skipped ?? 0,
+          errors: batch?.errors ?? 0,
+          ...(batch?.indexError ? { indexError: batch.indexError } : {}),
+          plan: outcome.plan,
+          dryRun: options?.dryRun ?? false,
+        },
+      };
+    } catch (err) {
+      if (err instanceof ImportBusyError) {
+        return { id, success: false, error: err.message, code: "BUSY" };
+      }
+      throw err;
+    }
   }
 
   // An OpenRouter export file holds many chats (one per room): each room that has a message is an

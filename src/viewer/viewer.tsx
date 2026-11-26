@@ -2,6 +2,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { roughDateLabelOf } from "../model/roughDate";
 import { log } from "../utils/logger";
 import { openingBranch } from "../utils/messageBranches";
 import { highlightTerms, stripEventHandlers } from "./messageHtml";
@@ -261,7 +262,7 @@ const CheckIcon = () => (
 
 import { ExportModal } from "../components/ExportModal";
 
-const Header = ({
+export const Header = ({
   chat,
   displayTitle,
   markdownEnabled,
@@ -298,10 +299,13 @@ const Header = ({
     if (s.includes("grok")) return "icons/grok.png";
     if (s.includes("codex")) return "icons/codex.png";
     if (s.includes("openrouter")) return "icons/openrouter.png";
+    if (s.includes("fragment")) return "icons/fragment.png";
     if (s === "pi" || s.startsWith("pi")) return "icons/pi.png";
     return null;
   };
   const iconPath = getIconPath(chat.source);
+  // A chat dated only roughly shows its date here, once; its messages carry no time (HVN-163).
+  const dateLabel = roughDateLabelOf(chat);
 
   return (
     <header
@@ -332,6 +336,7 @@ const Header = ({
             </h1>
             <p className="text-xs text-[hsl(var(--muted-foreground))] truncate font-mono">
               {chat.source || ""}
+              {dateLabel ? ` · ${dateLabel}` : ""}
             </p>
           </div>
         </div>
@@ -893,11 +898,14 @@ const MessageView = ({
   query,
   markdownEnabled,
   onImageClick,
+  showTimes = true,
 }: {
   msg: ChatMessage;
   query?: string;
   markdownEnabled: boolean;
   onImageClick?: (src: string, filename?: string) => void;
+  /** False for a chat with a rough date: its message times are made up to keep the order. */
+  showTimes?: boolean;
 }) => {
   const data = useMemo(() => flattenMessage(msg), [msg]);
   return (
@@ -910,7 +918,7 @@ const MessageView = ({
       {(data.user.text || data.user.attachments.length > 0) && (
         <Bubble
           label="User"
-          ts={data.timestamps.user}
+          ts={showTimes ? data.timestamps.user : undefined}
           text={data.user.text}
           attachments={data.user.attachments}
           role="user"
@@ -924,7 +932,7 @@ const MessageView = ({
         data.assistant.attachments.length > 0) && (
         <Bubble
           label="Assistant"
-          ts={data.timestamps.assistant}
+          ts={showTimes ? data.timestamps.assistant : undefined}
           text={data.assistant.text}
           attachments={data.assistant.attachments}
           role="assistant"
@@ -976,7 +984,7 @@ const BranchNav = ({
   </div>
 );
 
-const Thread = ({
+export const Thread = ({
   start,
   map,
   query,
@@ -988,6 +996,7 @@ const Thread = ({
   rootIndex = 0,
   totalRoots = 1,
   onRootChange,
+  showTimes = true,
 }: {
   start: ChatMessage;
   map: { [k: string]: ChatMessage };
@@ -1000,6 +1009,7 @@ const Thread = ({
   rootIndex?: number;
   totalRoots?: number;
   onRootChange?: (newIndex: number) => void;
+  showTimes?: boolean;
 }) => {
   // Build a list of nodes to render from root to leaf based on current selections
   const chain = useMemo(() => {
@@ -1036,6 +1046,7 @@ const Thread = ({
               query={query}
               markdownEnabled={markdownEnabled}
               onImageClick={onImageClick}
+              showTimes={showTimes}
             />
             {/* Child branch navigation AFTER message */}
             {children.length > 1 && (
@@ -1580,6 +1591,7 @@ const App = () => {
               rootIndex={selectedRootIndex}
               totalRoots={sortedRoots.length}
               onRootChange={setSelectedRootIndex}
+              showTimes={!roughDateLabelOf(chat)}
             />
           )}
         </div>

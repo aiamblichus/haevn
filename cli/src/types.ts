@@ -280,6 +280,7 @@ export type ImportFormat =
   | "openrouter"
   | "haevn_json"
   | "markdown"
+  | "fragment"
   | "image"
   | "video";
 
@@ -291,6 +292,30 @@ export interface ImportFilePayload {
 export interface ImportOptions {
   overwrite?: boolean;
   skipIndex?: boolean;
+  /** Fragments only: plan the files and answer the plan, write nothing */
+  dryRun?: boolean;
+}
+
+/** What the extension says of one fragment file (the plan in /project/haevn/architecture/fragments). */
+export interface FragmentPlanEntry {
+  name: string;
+  state:
+    | "new"
+    | "changed"
+    | "unchanged"
+    | "same-file"
+    | "duplicate-id"
+    | "no-id"
+    | "bad-id"
+    | "bad-date"
+    | "unreadable";
+  id?: string;
+  title?: string;
+  /** The date as the archive will show it */
+  date?: string;
+  turns?: number;
+  warnings: { code: string; message: string }[];
+  message?: string;
 }
 
 export interface MetadataUpdate {
@@ -323,6 +348,9 @@ export interface ImportResult {
   errors: number;
   /** Set when the chats were saved but the search index could not be brought up to date. */
   indexError?: string;
+  /** Fragments only: one entry per file, in the order sent */
+  plan?: FragmentPlanEntry[];
+  dryRun?: boolean;
 }
 
 /**

@@ -214,7 +214,7 @@ export function formatSearchResultsText(
     const snippet = renderSnippet(
       safeText(result.messageSnippet ?? result.messageContent.slice(0, 150)),
     );
-    const time = formatRelativeTime(result.messageTimestamp);
+    const time = result.dateLabel ?? formatRelativeTime(result.messageTimestamp);
     const platform = formatPlatform(safeText(result.source));
     const modelSuffix = result.model ? ` · ${pc.dim(truncate(safeText(result.model), 24))}` : "";
 

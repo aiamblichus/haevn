@@ -1,5 +1,6 @@
 import { parseEntities } from "parse-entities";
 import React from "react";
+import { formatChatDate, roughDateOf } from "../../../model/roughDate";
 import type { ChatMetadataRecord } from "../../../services/db";
 import type { ChatMeta } from "../../types";
 import { formatTime, getPlatformIcon } from "../../utils";
@@ -111,10 +112,19 @@ export function ChatPreviewCard({ chat, data, isLoading }: ChatPreviewCardProps)
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-2">
         {data !== null && <StatItem label="Messages" value={String(data.messageCount)} />}
-        {data?.createdAt ? <StatItem label="Created" value={formatTime(data.createdAt)} /> : null}
-        {chat.providerLastModifiedTimestamp ? (
-          <StatItem label="Updated" value={formatTime(chat.providerLastModifiedTimestamp)} />
-        ) : null}
+        {roughDateOf(chat) ? (
+          // The times of a chat with a rough date are only where it sorts; the date is the claim
+          <StatItem label="Date" value={formatChatDate(chat)} />
+        ) : (
+          <>
+            {data?.createdAt ? (
+              <StatItem label="Created" value={formatTime(data.createdAt)} />
+            ) : null}
+            {chat.providerLastModifiedTimestamp ? (
+              <StatItem label="Updated" value={formatTime(chat.providerLastModifiedTimestamp)} />
+            ) : null}
+          </>
+        )}
         {chat.lastSyncedTimestamp ? (
           <StatItem label="Synced" value={formatTime(chat.lastSyncedTimestamp)} />
         ) : null}

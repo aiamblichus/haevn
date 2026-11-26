@@ -2,9 +2,10 @@ import { parseEntities } from "parse-entities";
 import type React from "react";
 import { Button } from "../../../components/ui/button";
 import { Checkbox } from "../../../components/ui/checkbox";
+import { formatChatDate } from "../../../model/roughDate";
 import { isImportOnlyProvider } from "../../../providers/provider";
 import type { ChatMeta } from "../../types";
-import { escapeHtml, formatTime, getPlatformIcon, ICONS, Icon } from "../../utils";
+import { escapeHtml, getPlatformIcon, ICONS, Icon } from "../../utils";
 import { ChatPreviewPopover } from "./ChatPreviewPopover";
 
 interface ChatTableRowProps {
@@ -67,7 +68,7 @@ export const ChatTableRow = ({
 
       {/* Last Modified column */}
       <div className="text-sm text-muted-foreground w-56 flex-shrink-0 whitespace-nowrap py-1 px-2 flex items-center">
-        {formatTime(chat.providerLastModifiedTimestamp ?? chat.lastSyncedTimestamp)}
+        {formatChatDate(chat)}
       </div>
 
       {/* Actions column */}

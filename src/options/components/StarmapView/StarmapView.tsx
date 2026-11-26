@@ -44,6 +44,8 @@ type StarmapNode = {
   metadataUpdatedAt?: number;
   lastSyncedTimestamp?: number;
   providerLastModifiedTimestamp?: number;
+  /** `{ roughDate }` for a chat dated only roughly: the card shows that date, not the times */
+  params?: Record<string, unknown>;
 };
 
 type StarmapPayload = {
@@ -769,6 +771,7 @@ export function StarmapView({ onOpenChatInViewer }: StarmapViewProps) {
                   metaTitle: hovered.metaTitle,
                   lastSyncedTimestamp: hovered.lastSyncedTimestamp,
                   providerLastModifiedTimestamp: hovered.providerLastModifiedTimestamp,
+                  params: hovered.params,
                 } as ChatMeta
               }
               data={

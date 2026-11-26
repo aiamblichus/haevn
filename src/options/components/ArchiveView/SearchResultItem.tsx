@@ -37,7 +37,11 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
         : result.messageRole === "user"
           ? "User"
           : "Assistant";
-  const when = result.label ? undefined : result.messageTimestamp;
+  // A chat with a rough date shows it as given, in the place of a time its messages do not have.
+  const when = result.label
+    ? undefined
+    : (result.dateLabel ??
+      (result.messageTimestamp ? formatTime(result.messageTimestamp) : undefined));
 
   return (
     <div
@@ -68,7 +72,7 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
                 {when && (
                   <>
                     <span>•</span>
-                    <span>{formatTime(when)}</span>
+                    <span>{when}</span>
                   </>
                 )}
               </div>
@@ -80,7 +84,7 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
               {when && (
                 <>
                   <span>•</span>
-                  <span>{formatTime(when)}</span>
+                  <span>{when}</span>
                 </>
               )}
             </div>

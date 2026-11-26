@@ -53,6 +53,8 @@ Options:
 - `--after <date>` - Only messages after date (YYYY-MM-DD)
 - `--before <date>` - Only messages before date
 
+A chat that has only a rough date (a fragment dated `2024` or `~2024-03`, or one with no date) has no time for its messages. Its hits show the date as it was given, or `undated`, where the time would be, and `--format json` gives `dateLabel` and no `messageTimestamp` for them. A script that reads `messageTimestamp` gets nothing for such a chat.
+
 While the extension rebuilds its search index (after a bulk sync, or an import of more than 20 chats, including `haevn import`), `search` exits 1 with "Search index is rebuilding (N%). Try again shortly." rather than returning no results.
 
 #### Search Syntax
@@ -402,12 +404,20 @@ haevn import --format claude_code ./sessions/*.jsonl
 # Skip existing chat IDs, don't overwrite
 haevn import --format claude_code --no-overwrite ./sessions/*.jsonl
 
+# Fragments: recovered chats, one .md file each (a folder is read flat). What would each file do?
+haevn import --format fragment --dry-run ./recovered
+
+# Fragments: give each file that has no id one (this changes your files), then import
+haevn import --format fragment --assign-ids ./recovered
+
 # Save without indexing for search
 haevn import --format claude_code --skip-index ./sessions/*.jsonl
 ```
 
 Options:
-- `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`, `openrouter`, `haevn_json`, `markdown`, `image`, `video`)
+- `--format <fmt>` - Input format (`claude_code`, `codex`, `pi`, `openrouter`, `haevn_json`, `markdown`, `fragment`, `image`, `video`)
+- `--dry-run` - `fragment` only: say what each file would do (its state, turns, date and warnings), write nothing. Any other format refuses it, so a dry run never imports
+- `--assign-ids` - `fragment` only: write `id: <uuid>` into each file that has none, as the first line of its frontmatter (or a block holding only that line, in front of a file with none), and change nothing else; with `--dry-run` it changes no file and says which it would. This rewrites your files, so it is opt-in. An id goes only to a file the import would then accept, and a dry run decides the same: a file with an empty body or a bad date, a frontmatter that does not begin with a `key: value` line at the left margin, a read-only file, or a file saved while the command ran is left as it is, stays `no-id` in the plan, and says why. The file keeps its permissions. A symlink named on the command line is written through to its target; a symlink inside a folder is not read, and is counted
 - `--no-overwrite` - Skip chats that already exist (default: overwrite existing IDs)
 - `--skip-index` - Save the chats without indexing them for search; they are not searchable until the extension next rebuilds its index (default: index them as they are saved; more than 20 files rebuild the index once at the end)
 
@@ -417,6 +427,7 @@ Notes:
 - `claude_code`, `codex`, `pi`, and `openrouter` are import-only providers (no live sync).
 - An OpenRouter export file holds many chatrooms and gives one chat each, named after the chatroom's first message, so importing the same export again replaces the chats instead of duplicating them. `processed` and `total` count chats, not files. A file with no chat (every chatroom empty) prints "No chats found in the input" and exits 1.
 - Codex reasoning blocks are encrypted in source logs and are skipped during import.
+- `fragment` reads `.md` files with YAML frontmatter (the page is [Fragments](https://github.com/aiamblichus/haevn/blob/main/docs/src/content/docs/user-guide/fragments.mdx)). A directory is read flat: its `.md` files, no descent, dot-files skipped, and the other files are counted in one line; a file named outright that is not `.md` is refused. Every file gets one state in the plan (`new`, `changed`, `unchanged`, `same-file`, or refused: `no-id`, `bad-id`, `bad-date`, `unreadable`, `duplicate-id`); the last lines count the files by state and the warnings by kind. A refused file does not stop the others, and the exit status is 1 when any was refused, a chat failed to save, or the index could not be updated. A file that is `unchanged` writes nothing.
 
 ## Setup
 
