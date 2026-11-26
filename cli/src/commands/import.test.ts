@@ -50,6 +50,35 @@ describe("summarizeImport (HVN-11)", () => {
     );
   });
 
+  it("names each file that was not saved, with its reason, after the counts (HVN-163)", () => {
+    const summary = summarizeImport(
+      {
+        ...savedResult,
+        saved: 0,
+        errors: 2,
+        failed: [
+          { name: "a.jsonl", message: "not a session file" },
+          { name: "b.jsonl", message: "disk full" },
+        ],
+      },
+      { format: "pi", skipIndex: false },
+    );
+
+    const text = summary.lines.join("\n");
+    expect(text).toContain("failed       a.jsonl · not a session file");
+    expect(text).toContain("failed       b.jsonl · disk full");
+    expect(text.indexOf("errors=2")).toBeLessThan(text.indexOf("a.jsonl"));
+  });
+
+  it("prints no failed line for an extension that does not say which files failed", () => {
+    const summary = summarizeImport(
+      { ...savedResult, errors: 1 },
+      { format: "pi", skipIndex: false },
+    );
+
+    expect(summary.lines.join("\n")).not.toContain("failed ");
+  });
+
   it("says no chats were found, and exits 1, when the files held none", () => {
     const summary = summarizeImport(
       { ...savedResult, total: 0, processed: 0, saved: 0 },

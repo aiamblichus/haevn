@@ -332,7 +332,15 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     expect(reply).toEqual({
       id: expect.any(String),
       success: true,
-      data: { format: "haevn_json", total: 2, processed: 2, saved: 2, skipped: 0, errors: 0 },
+      data: {
+        format: "haevn_json",
+        total: 2,
+        processed: 2,
+        saved: 2,
+        skipped: 0,
+        errors: 0,
+        failed: [],
+      },
     });
   });
 
@@ -427,7 +435,21 @@ describe("import over the bridge goes through the archive's import sequence (HVN
     expect(reply).toEqual({
       id: expect.any(String),
       success: true,
-      data: { format: "openrouter", total: 3, processed: 3, saved: 2, skipped: 0, errors: 1 },
+      data: {
+        format: "openrouter",
+        total: 3,
+        processed: 3,
+        saved: 2,
+        skipped: 0,
+        errors: 1,
+        // The CLI says which file, and why (HVN-163)
+        failed: [
+          {
+            name: "broken.json",
+            message: "Not an OpenRouter chatroom export: the file is not valid JSON",
+          },
+        ],
+      },
     });
     expect(saveImportedChat.mock.calls.map(([chat]) => [chat.title, chat.source])).toEqual([
       ["One", "openrouter"],

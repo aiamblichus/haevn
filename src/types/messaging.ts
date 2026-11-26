@@ -254,6 +254,14 @@ export type BackgroundRequest =
     }
   | { action: "startBulkIndexing" }
   | { action: "finishBulkIndexing" }
+  // Fragments (HVN-163): the archive's Import dialog. `dryRun` answers the plan and writes nothing;
+  // the reply's `data` is an ImportFragmentsResult. `overwrite: false` leaves a changed file's chat.
+  | {
+      action: "importFragmentFiles";
+      files: { name: string; content: string }[];
+      dryRun: boolean;
+      overwrite: boolean;
+    }
   | {
       action: "startImportJob";
       importType: ImportSourceType;
@@ -419,6 +427,8 @@ export type BackgroundResponse =
       errorCode: "INCOMPLETE_SYNC_FOUND";
     }
   // Error responses
+  // Another long operation holds the lock (importFragmentFiles); nothing was written
+  | { success: false; error: string; errorCode: "BUSY"; activeOperation: string }
   | { success: false; error: string; errorCode?: string };
 
 // ======================

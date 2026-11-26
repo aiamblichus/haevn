@@ -246,6 +246,8 @@ interface WsImportResult {
   saved: number;
   skipped: number;
   errors: number;
+  /** The files that were not saved, and why (`errors` counts them) */
+  failed: { name: string; message: string }[];
   /** Set when the chats were saved but the search index could not be brought up to date. */
   indexError?: string;
   /** Fragments only: one entry per file, with its state and warnings (the dry run's answer) */
@@ -1435,6 +1437,7 @@ async function handleImport(
           saved: batch?.saved ?? 0,
           skipped: batch?.skipped ?? 0,
           errors: batch?.errors ?? 0,
+          failed: batch?.failed ?? [],
           ...(batch?.indexError ? { indexError: batch.indexError } : {}),
           plan: outcome.plan,
           dryRun: options?.dryRun ?? false,

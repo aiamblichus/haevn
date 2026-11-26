@@ -83,6 +83,10 @@ const App = () => {
   const [isImportModalOpen, setImportModalOpen] = useState(false);
   const [isGoToChatModalOpen, setGoToChatModalOpen] = useState(false);
   const [importProviderFilter, setImportProviderFilter] = useState<string | null>(null);
+  // What opened the Import dialog, and where focus goes when it closes (HVN-163): the opener, or
+  // the Provider filter after "Show fragments"
+  const importOpenerRef = React.useRef<HTMLElement | null>(null);
+  const importFocusTarget = React.useRef<"opener" | "providerFilter">("opener");
   const [openableById, setOpenableById] = useState<Record<string, boolean>>({});
   const [chatPage, setChatPage] = useState(1);
   const [chatPageSize, setChatPageSize] = useState(25);
@@ -888,6 +892,20 @@ const App = () => {
     setSelectedIds(new Set());
   }, [selectedIds, deleteChatsFromArchive]);
 
+  // "Show fragments" after an import: every fragment, the newest sync first, from the first page.
+  // The import just set the sync time of the chats it wrote, so they are at the top.
+  const showFragments = useCallback(() => {
+    importFocusTarget.current = "providerFilter";
+    setActiveView("archive");
+    setFilterProvider("fragment");
+    setFilterCategory("all");
+    setSortBy("lastSyncedTimestamp");
+    setSortDirection("desc");
+    setSearchQuery("");
+    setChatPage(1);
+    setImportModalOpen(false);
+  }, []);
+
   const handleGoToChat = useCallback(
     async (chatId: string) => {
       await openChatInViewer(chatId);
@@ -909,6 +927,8 @@ const App = () => {
                 onRefreshChats={loadChats}
                 onOpenImportModal={(format) => {
                   // One write: a reset here would undo the provider's format (HVN-101)
+                  importOpenerRef.current = document.activeElement as HTMLElement | null;
+                  importFocusTarget.current = "opener";
                   setImportProviderFilter(format);
                   setImportModalOpen(true);
                 }}
@@ -953,6 +973,8 @@ const App = () => {
                 setSearchPageSize={setSearchPageSize}
                 openableById={openableById}
                 onImportClick={() => {
+                  importOpenerRef.current = document.activeElement as HTMLElement | null;
+                  importFocusTarget.current = "opener";
                   setImportModalOpen(true);
                   setImportProviderFilter(null);
                 }}
@@ -1001,6 +1023,17 @@ const App = () => {
         onOpenChange={setImportModalOpen}
         importProviderFilter={importProviderFilter}
         onLoadChats={loadChats}
+        onShowFragments={showFragments}
+        onCloseAutoFocus={(event) => {
+          // Radix has no trigger to return to: say where focus goes (the opener, else the filter)
+          event.preventDefault();
+          const target =
+            importFocusTarget.current === "providerFilter"
+              ? document.getElementById("filterProvider")
+              : importOpenerRef.current;
+          importFocusTarget.current = "opener";
+          if (target?.isConnected) target.focus();
+        }}
       />
       <GoToChatModal
         open={isGoToChatModalOpen}

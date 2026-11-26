@@ -351,6 +351,8 @@ export interface ImportResult {
   saved: number;
   skipped: number;
   errors: number;
+  /** The files that were not saved, and why (`errors` counts them). Absent from an older extension. */
+  failed?: { name: string; message: string }[];
   /** Set when the chats were saved but the search index could not be brought up to date. */
   indexError?: string;
   /** Fragments only: one entry per file, in the order sent */

@@ -55,6 +55,7 @@ const handlers: Partial<Record<BackgroundRequest["action"], HandlerFunction>> = 
   cancelSearchStreaming: searchHandlers.handleCancelSearchStreaming as HandlerFunction,
   getAllMatchesForChat: searchHandlers.handleGetAllMatchesForChat as HandlerFunction,
   saveImportedChat: importHandlers.handleSaveImportedChat as HandlerFunction,
+  importFragmentFiles: importHandlers.handleImportFragmentFiles as HandlerFunction,
   startBulkIndexing: importHandlers.handleStartBulkIndexing as HandlerFunction,
   finishBulkIndexing: importHandlers.handleFinishBulkIndexing as HandlerFunction,
   startImportJob: importHandlers.handleStartImportJob as HandlerFunction,

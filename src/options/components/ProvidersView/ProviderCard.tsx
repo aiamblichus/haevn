@@ -84,10 +84,12 @@ export const ProviderCard = ({
             )}
             {!onStartSync && (
               <div className="text-xs text-muted-foreground text-center py-2">
-                Sync from popup when on provider page
+                {provider.importOnly
+                  ? "Imported from files"
+                  : "Sync from popup when on provider page"}
               </div>
             )}
-            {provider.importer && onImport && (
+            {onImport && (
               <Button variant="outline" size="sm" className="w-full" onClick={onImport}>
                 Import
               </Button>

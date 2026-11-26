@@ -7,13 +7,28 @@ import { Aside } from "@astrojs/starlight/components";
 
 A **fragment** is a recovered chat: a conversation with a model that has been retired, a poem, a terminal session you copied out of a window, anything that exists now only as text you saved. HAEVN keeps it as an ordinary chat in your archive, so it is searchable, it opens in the viewer, and it is part of every backup. It has its own icon, so you can tell it from a chat that was synced.
 
-A fragment is **one Markdown file**. Fragments are imported from the terminal (`haevn import --format fragment`).
+A fragment is **one Markdown file**. Fragments are imported from the archive's Import dialog, or from the terminal (`haevn import --format fragment`). The Import dialog shows you a plan and waits for you to confirm. The terminal imports at once, and `--dry-run` shows the plan without writing. Both read a file the same way: a file you import from one and then from the other is unchanged, not changed.
 
 <Aside>
   Only files that end in `.md` are fragments. A `.txt` file is not read: a
   fragment needs at least an id in its frontmatter, and frontmatter belongs to a
   Markdown file. Rename the file.
 </Aside>
+
+## Import from the archive
+
+Open **Archive → Import** and choose the format **Fragments (.md files or a folder)**, or press **Import** on the Fragment card in **Providers**. Drop `.md` files or a folder anywhere on the dialog, or choose them with **Choose files…** or **Choose a folder…**.
+
+HAEVN reads the files and checks them against your archive, and shows the plan before it writes anything. The plan is grouped by what you have to do:
+
+- **Refused** comes first. A refused file is left out, and the other files do not wait for it. Each refusal says why: no id, an id that is not a UUID, a date that is none of the [forms below](#dates), text that is not UTF-8, or an id that two different files share. For a file with no id the page cannot write one into your file, so it gives you two ways: the `haevn import --format fragment --assign-ids` command to copy and run in a terminal, and **Copy an id line**, a fresh `id: <uuid>` line you paste into the file's frontmatter yourself. A file with no frontmatter at all has **Copy an id block** instead: the whole `---` block, with the id in it, to paste at the top. Use each one once: the same id in two files is refused as a duplicate.
+- **New** files are added. A warning under a file (a copy of another fragment, only one side of a conversation named) does not stop it.
+- **Changed** files are ones whose text differs from what was imported from them. Their chats are replaced. Untick **Replace these chats** to leave them as they are.
+- **Unchanged** files are already in your archive as they are: nothing is written. **Same file** is a copy, byte for byte, of another file in the same import.
+
+**Import** then writes what the plan says, and the result says what was done, which files could not be saved and why, and whether the search index is up to date. **Show fragments** takes you to the archive, filtered to Fragment with the newest first.
+
+A folder is read flat: its `.md` files, not the folders inside it. Dot-files are skipped. Files that are not `.md` are not read, and the plan says how many were left out. One import takes at most 16 MB of text; choose fewer files at a time if you have more.
 
 ## The smallest fragment
 
@@ -30,7 +45,7 @@ The text after the second `---` is the **body**. It is kept exactly as written: 
 
 Every fragment needs an `id`, a UUID. The id is what makes importing again safe: a file with an id that is already in your archive **updates that chat** instead of adding a second one. Edit the file, run the import again, and the fragment is as the file says.
 
-You do not have to make the ids by hand. Run the import with `--assign-ids` and every file that has none gets a fresh one:
+You do not have to make the ids by hand. In a terminal, run the import with `--assign-ids` and every file that has none gets a fresh one:
 
 ```bash
 haevn import --format fragment --assign-ids ./recovered

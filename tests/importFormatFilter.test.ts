@@ -14,6 +14,7 @@ const DIALOG_FORMATS = [
   "claudecode_jsonl",
   "codex_jsonl",
   "pi_jsonl",
+  "fragment_md",
   "openrouter_json",
   "openwebui_json",
   "openwebui_zip",
@@ -30,6 +31,10 @@ describe("Import dialog format filter (HVN-111)", () => {
 
   it("lists only the Claude Code format under the Claude Code filter", () => {
     expect(listedUnder("claudecode_jsonl")).toEqual(["claudecode_jsonl"]);
+  });
+
+  it("lists only the fragment format under the fragment filter (HVN-163)", () => {
+    expect(listedUnder("fragment_md")).toEqual(["fragment_md"]);
   });
 
   it("lists only the Claude backup under the Claude filter", () => {

@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "../../../components/ui/dialog";
 import { Progress } from "../../../components/ui/progress";
+import { cn } from "../../../lib/utils";
 import type { BackgroundEvent } from "../../../types/messaging";
 import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
@@ -16,6 +17,7 @@ import { fileNameShape } from "../../../utils/logShape";
 import { buildImportStagingPath, deleteFileFromOpfs, writeFileToOpfs } from "../../../utils/opfs";
 import { useStatus } from "../../context/StatusContext";
 import { handleImport } from "../../import/importHandlers";
+import { FragmentImportPanel } from "./FragmentImportPanel";
 import { formatListedUnder } from "./importFormats";
 
 type ImportProviderType =
@@ -28,7 +30,8 @@ type ImportProviderType =
   | "openwebui_zip"
   | "haevn_export_zip"
   | "haevn_markdown"
-  | "claudecode_jsonl";
+  | "claudecode_jsonl"
+  | "fragment_md";
 
 interface ImportProgress {
   total: number;
@@ -43,11 +46,25 @@ interface ImportProgress {
   totalBytes?: number;
 }
 
+/** The drop zone of the formats that take one file: the archive's tokens, no fixed colours */
+const dropZoneClass = (active: boolean) =>
+  cn(
+    "border-2 border-dashed rounded-md p-4 text-center text-xs",
+    active ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground",
+  );
+
+const FILE_INPUT_CLASS =
+  "text-xs text-muted-foreground file:mr-3 file:cursor-pointer file:border-2 file:border-border file:bg-card file:px-3 file:py-1.5 file:text-xs file:font-bold file:uppercase file:tracking-wider file:text-foreground hover:file:border-primary";
+
 interface ImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   importProviderFilter: string | null;
-  onLoadChats: () => void;
+  onLoadChats: () => void | Promise<void>;
+  /** Closes the dialog and shows the archive filtered to fragments (HVN-163) */
+  onShowFragments: () => void;
+  /** Where focus goes when the dialog closes: the page decides (the opener, or the Provider filter) */
+  onCloseAutoFocus: (event: Event) => void;
 }
 
 export const ImportModal = ({
@@ -55,6 +72,8 @@ export const ImportModal = ({
   onOpenChange,
   importProviderFilter,
   onLoadChats,
+  onShowFragments,
+  onCloseAutoFocus,
 }: ImportModalProps) => {
   const { setStatus } = useStatus();
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -79,6 +98,7 @@ export const ImportModal = ({
           "haevn_export_zip",
           "haevn_markdown",
           "claudecode_jsonl",
+          "fragment_md",
         ];
         if (validTypes.includes(importProviderFilter as ImportProviderType)) {
           setImportProvider(importProviderFilter as ImportProviderType);
@@ -106,6 +126,9 @@ export const ImportModal = ({
   const [isDragActive, setDragActive] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const stagedFilePathRef = useRef<string | null>(null);
+  // An import of fragments is running: the dialog is held until it ends
+  const [fragmentBusy, setFragmentBusy] = useState(false);
+  const isFragment = importProvider === "fragment_md";
 
   const cleanupStagedFile = useCallback(async () => {
     if (!stagedFilePathRef.current) {
@@ -326,21 +349,45 @@ export const ImportModal = ({
     return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
   };
 
+  // Esc, the close button and a click outside all end here: none of them ends a running import
+  const handleOpenChange = (next: boolean) => {
+    if (!next && fragmentBusy) return;
+    onOpenChange(next);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className={cn(
+          "max-w-lg",
+          // The plan of hundreds of files needs the room; the list scrolls, the rest stays put
+          isFragment &&
+            "flex max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col overflow-y-auto",
+        )}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <DialogHeader>
           <DialogTitle>Import Archive</DialogTitle>
           <DialogDescription>
-            Import provider backups (ChatGPT, Claude, Open WebUI, OpenRouter) or generic HAEVN
-            formats (JSON, Markdown).
+            {isFragment
+              ? "Recovered chats: .md files with an id in their frontmatter. Nothing is written until you confirm."
+              : "Import provider backups (ChatGPT, Claude, Open WebUI, OpenRouter) or generic HAEVN formats (JSON, Markdown)."}
           </DialogDescription>
         </DialogHeader>
-        <div className="mt-4 space-y-3">
+        <div
+          className={cn(
+            "mt-4 space-y-3",
+            isFragment && "flex min-h-0 flex-1 flex-col gap-3 space-y-0",
+          )}
+        >
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-foreground">Provider:</label>
+            <label htmlFor="importFormat" className="text-sm font-medium text-foreground">
+              Format:
+            </label>
             <select
-              className="p-2 border border-slate-300 rounded-md text-sm text-slate-900 bg-white"
+              id="importFormat"
+              disabled={fragmentBusy}
+              className="min-w-[16rem] rounded-md border border-border bg-input p-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               value={importProvider}
               onChange={(e) =>
                 setImportProvider((e.target as HTMLSelectElement).value as ImportProviderType)
@@ -361,6 +408,9 @@ export const ImportModal = ({
               {formatListedUnder(importProviderFilter, "pi_jsonl") && (
                 <option value="pi_jsonl">PI Session (.jsonl)</option>
               )}
+              {formatListedUnder(importProviderFilter, "fragment_md") && (
+                <option value="fragment_md">Fragments (.md files or a folder)</option>
+              )}
               {formatListedUnder(importProviderFilter, "openrouter_json") && (
                 <option value="openrouter_json">OpenRouter Chats (.json)</option>
               )}
@@ -378,15 +428,20 @@ export const ImportModal = ({
               )}
             </select>
           </div>
+          {isFragment && (
+            <FragmentImportPanel
+              focusFirst={importProviderFilter === "fragment_md"}
+              onBusyChange={setFragmentBusy}
+              onClose={handleClose}
+              onShowFragments={onShowFragments}
+              onImported={onLoadChats}
+            />
+          )}
           {importProvider === "chatgpt_zip" && (
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium text-foreground">Archive (.zip):</label>
               <div
-                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
-                  isDragActive
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-slate-300 text-slate-500"
-                }`}
+                className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragActive(true);
@@ -418,11 +473,12 @@ export const ImportModal = ({
               </div>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".zip"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
@@ -440,11 +496,7 @@ export const ImportModal = ({
                       : "ZIP archive:"}
               </label>
               <div
-                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
-                  isDragActive
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-slate-300 text-slate-500"
-                }`}
+                className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragActive(true);
@@ -475,11 +527,12 @@ export const ImportModal = ({
               </div>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".zip"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
@@ -495,11 +548,7 @@ export const ImportModal = ({
                     : "PI Session (.jsonl):"}
               </label>
               <div
-                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
-                  isDragActive
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-slate-300 text-slate-500"
-                }`}
+                className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragActive(true);
@@ -530,11 +579,12 @@ export const ImportModal = ({
               </div>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".jsonl,application/x-ndjson"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
@@ -544,11 +594,7 @@ export const ImportModal = ({
                 OpenRouter chatroom export (.json):
               </label>
               <div
-                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
-                  isDragActive
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-slate-300 text-slate-500"
-                }`}
+                className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragActive(true);
@@ -580,11 +626,12 @@ export const ImportModal = ({
               </div>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".json,application/json"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
@@ -594,11 +641,7 @@ export const ImportModal = ({
                 Open WebUI conversations.json:
               </label>
               <div
-                className={`border-2 border-dashed rounded-md p-4 text-center text-xs ${
-                  isDragActive
-                    ? "border-indigo-500 bg-indigo-50"
-                    : "border-slate-300 text-slate-500"
-                }`}
+                className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragActive(true);
@@ -633,11 +676,12 @@ export const ImportModal = ({
               </div>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".json,application/json"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
@@ -646,32 +690,35 @@ export const ImportModal = ({
               <label className="text-sm font-medium text-foreground">HAEVN Markdown file:</label>
               <input
                 type="file"
+                className={FILE_INPUT_CLASS}
                 accept=".md,.markdown,text/markdown"
                 onChange={(e) => setImportFile((e.target as HTMLInputElement).files?.[0] || null)}
               />
               {importFile && (
-                <div className="text-xs text-slate-600">Selected: {importFile.name}</div>
+                <div className="text-xs text-muted-foreground">Selected: {importFile.name}</div>
               )}
             </div>
           )}
-          <div className="flex items-center gap-2 text-sm">
-            <input
-              id="overwrite"
-              type="checkbox"
-              checked={importOverwrite}
-              onChange={(e) => setImportOverwrite((e.target as HTMLInputElement).checked)}
-            />
-            <label htmlFor="overwrite" className="text-foreground">
-              Overwrite existing chats with the same ID
-            </label>
-          </div>
-          {importError && (
+          {!isFragment && (
+            <div className="flex items-center gap-2 text-sm">
+              <input
+                id="overwrite"
+                type="checkbox"
+                checked={importOverwrite}
+                onChange={(e) => setImportOverwrite((e.target as HTMLInputElement).checked)}
+              />
+              <label htmlFor="overwrite" className="text-foreground">
+                Overwrite existing chats with the same ID
+              </label>
+            </div>
+          )}
+          {!isFragment && importError && (
             <div className="mt-2 p-3 bg-destructive/10 border border-destructive/50 rounded-md">
               <div className="text-sm text-destructive font-medium">Error</div>
               <div className="text-xs text-foreground mt-1">{importError}</div>
             </div>
           )}
-          {importRunning && (
+          {!isFragment && importRunning && (
             <div className="mt-2 space-y-2">
               <Progress
                 value={
@@ -696,31 +743,33 @@ export const ImportModal = ({
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" disabled={importRunning} onClick={handleClose}>
-            Close
-          </Button>
-          <Button
-            disabled={
-              ((importProvider === "chatgpt_zip" ||
-                importProvider === "openwebui_json" ||
-                importProvider === "openwebui_zip" ||
-                importProvider === "claude_zip" ||
-                importProvider === "codex_jsonl" ||
-                importProvider === "pi_jsonl" ||
-                importProvider === "openrouter_json" ||
-                importProvider === "haevn_export_zip" ||
-                importProvider === "haevn_markdown" ||
-                importProvider === "claudecode_jsonl") &&
-                !importFile) ||
-              importRunning ||
-              !!importError
-            }
-            onClick={handleStartImport}
-          >
-            Start Import
-          </Button>
-        </DialogFooter>
+        {!isFragment && (
+          <DialogFooter>
+            <Button variant="outline" disabled={importRunning} onClick={handleClose}>
+              Close
+            </Button>
+            <Button
+              disabled={
+                ((importProvider === "chatgpt_zip" ||
+                  importProvider === "openwebui_json" ||
+                  importProvider === "openwebui_zip" ||
+                  importProvider === "claude_zip" ||
+                  importProvider === "codex_jsonl" ||
+                  importProvider === "pi_jsonl" ||
+                  importProvider === "openrouter_json" ||
+                  importProvider === "haevn_export_zip" ||
+                  importProvider === "haevn_markdown" ||
+                  importProvider === "claudecode_jsonl") &&
+                  !importFile) ||
+                importRunning ||
+                !!importError
+              }
+              onClick={handleStartImport}
+            >
+              Start Import
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

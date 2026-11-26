@@ -26,6 +26,12 @@ describe("Providers view import format (HVN-101)", () => {
     expect(importFormatFor("openrouter")).toBe("openrouter_json");
   });
 
+  it("names the fragment format for the provider that has no importer (HVN-163)", () => {
+    const fragment = getAllProviders().find((provider) => provider.name === "fragment");
+    expect(fragment?.importer).toBeUndefined();
+    expect(importFormatFor("fragment")).toBe("fragment_md");
+  });
+
   it("a web-only provider with no import format has none of its own", () => {
     expect(importFormatFor("grok")).toBeUndefined();
     expect(importFormatFor("no-such-provider")).toBeUndefined();

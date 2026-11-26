@@ -14,17 +14,10 @@ import { ImportService } from "../../services/importService";
 import { queueGenerationForImportedChats } from "../../services/metadataService";
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../../utils/importLimits";
 import { log } from "../../utils/logger";
 import { errorShape, fileNameShape } from "../../utils/logShape";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
-
-/**
- * Up to this many chats are indexed one by one as they are saved, so search keeps answering.
- * A bigger batch switches the index to bulk mode: the chats are indexed once, in one pass at the
- * end, and search keeps answering from the index as it was. One incremental add is one small
- * transaction, so the limit now only bounds how much work a save does before it returns.
- */
-export const INCREMENTAL_INDEX_MAX_CHATS = 20;
 
 /** Another long operation (bulk sync, import, bulk export) holds the operation lock. */
 export class ImportBusyError extends Error {
@@ -58,6 +51,8 @@ export interface ImportBatchResult {
   saved: number;
   skipped: number;
   errors: number;
+  /** The items that were not saved because loading or saving them threw, and why (`errors` counts them) */
+  failed: { name: string; message: string }[];
   /**
    * Set when the index could not be brought up to date (bulk mode would not start or the
    * rebuild would not start). The chats are saved all the same; the next index init finds them.
@@ -77,7 +72,7 @@ export async function importChatBatch(
     throw new ImportBusyError(await getActiveOperation());
   }
 
-  const result: ImportBatchResult = { processed: 0, saved: 0, skipped: 0, errors: 0 };
+  const result: ImportBatchResult = { processed: 0, saved: 0, skipped: 0, errors: 0, failed: [] };
   const savedIds: string[] = [];
   const bulk = options.index && items.length > INCREMENTAL_INDEX_MAX_CHATS;
   let bulkStarted = false;
@@ -111,6 +106,7 @@ export async function importChatBatch(
         savedIds.push(chat.id);
       } catch (err) {
         result.errors++;
+        result.failed.push({ name: item.name, message: errorMessage(err) });
         log.warn("[ImportBatch] Import skipped due to parsing/transformation error", {
           file: fileNameShape(item.name),
           error: errorShape(err),
