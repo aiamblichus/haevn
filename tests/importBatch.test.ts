@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ImportBatchItem,
   ImportBusyError,
-  importChatBatch,
   INCREMENTAL_INDEX_MAX_CHATS,
+  importChatBatch,
 } from "../src/background/import/importBatch";
 import { acquireOperationLock, getActiveOperation } from "../src/background/state";
 import type { Chat } from "../src/model/haevn_model";
@@ -239,5 +239,42 @@ describe("importing a batch of chats (HVN-38)", () => {
     // c1 was skipped (already there) and c2 failed: neither is queued.
     expect(calls).toEqual(["save c0", "save c2", "save c3", "queue c0,c3"]);
     expect(queueGenerationForImportedChats).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs afterSave under the lock, with the saved ids, after the last save and before the queue (HVN-163)", async () => {
+    queueGenerationForImportedChats.mockImplementation(async (chatIds: string[]) => {
+      calls.push(`queue ${chatIds.join(",")}`);
+    });
+    saveImportedChat.mockImplementation(async (chat: Chat) => {
+      calls.push(`save ${chat.id}`);
+      if (chat.id === "c1") throw new Error("disk full");
+    });
+    const held: string[] = [];
+
+    await importChatBatch(items(3), {
+      overwrite: true,
+      index: true,
+      afterSave: async (savedIds) => {
+        held.push(await getActiveOperation());
+        calls.push(`after ${savedIds.join(",")}`);
+      },
+    });
+
+    expect(held).toEqual(["import"]);
+    expect(calls).toEqual(["save c0", "save c1", "save c2", "after c0,c2", "queue c0,c2"]);
+  });
+
+  it("goes on, and frees the lock, when afterSave throws", async () => {
+    const result = await importChatBatch(items(2), {
+      overwrite: true,
+      index: true,
+      afterSave: async () => {
+        throw new Error("no metadata");
+      },
+    });
+
+    expect(result).toMatchObject({ saved: 2, errors: 0 });
+    expect(queueGenerationForImportedChats).toHaveBeenCalledWith(["c0", "c1"]);
+    expect(await getActiveOperation()).toBe("idle");
   });
 });

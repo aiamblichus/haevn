@@ -157,7 +157,7 @@ describe("importing fragments (HVN-163)", () => {
     expect((await SyncService.getChat(chatId(ID_A)))?.params.fragment).toMatchObject({ v: 1 });
   });
 
-  it("restores a fragment that was deleted, which the person's edit of the file asks for", async () => {
+  it("brings a fragment back that was deleted in the app: importing its file again does, changed or not", async () => {
     await importFragments([withId("", "words\n")], RUN);
     await SyncService.deleteChats([chatId(ID_A)]);
     expect(await SyncService.getChat(chatId(ID_A))).toBeUndefined();
@@ -244,6 +244,39 @@ describe("the metadata a file gives, and the file as the source of truth", () =>
     });
     expect(await getDB().metadataQueue.count()).toBe(0);
     expect(await enqueueAllMissing()).toBe(0);
+    expect(await getDB().metadataQueue.count()).toBe(0);
+  });
+
+  it("hands a chat back to generation when its file stops saying generate: false", async () => {
+    await importFragments([withId("generate: false", "words\n")], RUN);
+    expect(await getDB().metadataQueue.count()).toBe(0);
+
+    const result = await importFragments([withId("", "more words\n")], RUN);
+
+    expect(states(result.plan)).toEqual(["changed"]);
+    expect(await MetadataRepository.get(chatId(ID_A))).toBeNull();
+    expect((await getDB().metadataQueue.toArray()).map((q) => q.chatId)).toEqual([chatId(ID_A)]);
+  });
+
+  it("keeps a record the person made out of it, when the file stops saying generate: false", async () => {
+    await importFragments([withId("generate: false", "words\n")], RUN);
+    await MetadataRepository.set(chatId(ID_A), { description: "Written in the app" });
+
+    await importFragments([withId("", "more words\n")], RUN);
+
+    expect(await MetadataRepository.get(chatId(ID_A))).toMatchObject({
+      description: "Written in the app",
+      source: "manual",
+    });
+    expect(await getDB().metadataQueue.count()).toBe(0);
+  });
+
+  it("does not hand a chat back to generation while its file still says generate: false", async () => {
+    await importFragments([withId("generate: false", "words\n")], RUN);
+
+    await importFragments([withId("generate: false", "more words\n")], RUN);
+
+    expect(await MetadataRepository.get(chatId(ID_A))).toMatchObject({ source: "manual" });
     expect(await getDB().metadataQueue.count()).toBe(0);
   });
 

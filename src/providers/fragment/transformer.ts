@@ -13,6 +13,7 @@ import type {
   ModelRequest,
   ModelResponse,
 } from "../../model/haevn_model";
+import { sha256Hex } from "../../utils/jsonImporter";
 import { FRAGMENT_PARSER_VERSION, type FragmentParams, type HashedFragment } from "./model";
 
 export const FRAGMENT_SOURCE = "fragment";
@@ -198,4 +199,19 @@ export function reassembleFragment(chat: Pick<Chat, "params" | "messages">): str
     body += params.seams[at] + (system.get(at) ?? spoken[next++] ?? "");
   }
   return body + params.tail;
+}
+
+/**
+ * Throws when the chat does not give back the body its file had: the hash of the reassembled body
+ * must be the hash of the body that was read. Held by the parser's tests; checked once more on
+ * every import, before the chat is saved, so that a change to the parser that the tests miss
+ * fails that file loudly and does not store a text that is not the person's.
+ */
+export async function assertReassembles(
+  chat: Pick<Chat, "params" | "messages">,
+  fragment: Pick<HashedFragment, "bodySha256" | "name">,
+): Promise<void> {
+  if ((await sha256Hex(reassembleFragment(chat))) !== fragment.bodySha256) {
+    throw new Error(`${fragment.name}: the stored turns do not give back the text of the file`);
+  }
 }

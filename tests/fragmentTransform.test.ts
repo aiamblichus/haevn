@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { roughDateOf } from "../src/model/roughDate";
 import {
+  assertReassembles,
   FRAGMENT_PARSER_VERSION,
   type FragmentLookup,
   type FragmentParams,
@@ -404,5 +405,31 @@ describe("the plan", () => {
       turns: 2,
       warnings: [{ code: "speakers-unknown-key" }],
     });
+  });
+});
+
+describe("assertReassembles", () => {
+  it("passes a chat that gives back the body of its file", async () => {
+    const fragment = await parsed(withId("", "## User\nhello\n## Assistant\nworld\n"));
+    const chat = transformFragmentToHaevnChat(fragment, NOW);
+
+    await expect(assertReassembles(chat, fragment)).resolves.toBeUndefined();
+  });
+
+  it("throws when a turn is no longer what the file had, naming the file and no text", async () => {
+    const fragment = await parsed(withId("", "## User\nhello\n## Assistant\nworld\n"));
+    const chat = transformFragmentToHaevnChat(fragment, NOW);
+    const [first] = Object.values(chat.messages);
+    const request = first.message[0];
+    if (request.kind !== "request") throw new Error("the first turn is a request");
+    const part = request.parts[0];
+    if (part.part_kind !== "user-prompt") throw new Error("the first part is a prompt");
+    part.content = "hello, altered";
+
+    const failure = await assertReassembles(chat, fragment).catch((err: Error) => err);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("fragment.md");
+    expect((failure as Error).message).not.toContain("altered");
   });
 });

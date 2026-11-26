@@ -10,15 +10,18 @@
 
 import type { Chat } from "../../model/haevn_model";
 import {
+  assertReassembles,
   type FragmentFile,
   type FragmentLookup,
   type FragmentParams,
   type FragmentPlanEntry,
   fragmentChatId,
+  givesMetadata,
   type HashedFragment,
   planFragmentImport,
   transformFragmentToHaevnChat,
 } from "../../providers/fragment";
+import * as MetadataRepository from "../../services/metadataRepository";
 import { setManualMetadata } from "../../services/metadataService";
 import { SyncService } from "../../services/syncService";
 import { log } from "../../utils/logger";
@@ -73,6 +76,64 @@ function archiveLookup(): FragmentLookup {
   };
 }
 
+/** What a `changed` fragment was before the import replaced it. */
+interface Before {
+  title: string;
+  /** The file said `generate: false` */
+  exempt: boolean;
+}
+
+async function beforeImport(changed: HashedFragment[]): Promise<Map<string, Before>> {
+  const before = new Map<string, Before>();
+  for (const fragment of changed) {
+    const chatId = fragmentChatId(fragment.id);
+    const row = await SyncService.getChat(chatId);
+    if (row) {
+      before.set(chatId, {
+        title: row.title ?? "",
+        exempt: fragmentParamsOf(row)?.generate === false,
+      });
+    }
+  }
+  return before;
+}
+
+/**
+ * A file that no longer says `generate: false` (and gives no metadata of its own) puts the chat
+ * back among those that can be generated. The record the old file made, the title it gave and
+ * nothing else, is taken away for it: the queue passes over any record that is not `unset`, so
+ * without this the chat would keep a stale title and never be generated. A record that holds
+ * more than the old file gave is the person's, and stays.
+ */
+async function releaseGeneration(
+  changed: HashedFragment[],
+  before: Map<string, Before>,
+): Promise<void> {
+  for (const fragment of changed) {
+    if (fragment.fields.generate === false || givesMetadata(fragment)) continue;
+    const chatId = fragmentChatId(fragment.id);
+    const previous = before.get(chatId);
+    if (!previous?.exempt) continue;
+    try {
+      const record = await MetadataRepository.get(chatId);
+      if (
+        record?.source === "manual" &&
+        !record.description &&
+        !record.synopsis &&
+        record.categories.length === 0 &&
+        record.keywords.length === 0 &&
+        (record.title === "" || record.title === previous.title)
+      ) {
+        await MetadataRepository.remove(chatId);
+      }
+    } catch (err) {
+      log.warn("[ImportFragments] Failed to hand a fragment back to metadata generation", {
+        error: errorShape(err),
+      });
+    }
+  }
+}
+
 /**
  * A `changed` fragment writes the metadata fields its file gives over the record: the file is the
  * source of truth, and `seedFromChat` never writes over a record, which is right for a HAEVN export
@@ -112,17 +173,26 @@ export async function importFragments(
 
   const items: ImportBatchItem[] = importable.map(({ entry, fragment }) => ({
     name: entry.name,
-    load: async () => ({ chat: transformFragmentToHaevnChat(fragment) }),
+    load: async () => {
+      const chat = transformFragmentToHaevnChat(fragment);
+      await assertReassembles(chat, fragment);
+      return { chat };
+    },
   }));
+  const changed = options.overwrite
+    ? importable.filter(({ entry }) => entry.state === "changed").map(({ fragment }) => fragment)
+    : [];
+  const before = await beforeImport(changed);
   const imported = await importChatBatch(items, {
     overwrite: options.overwrite,
     index: options.index,
+    // Under the batch's operation lock, and before the saved chats are queued for generation
+    afterSave: async (savedIds) => {
+      const saved = new Set(savedIds);
+      const kept = changed.filter((fragment) => saved.has(fragmentChatId(fragment.id)));
+      await releaseGeneration(kept, before);
+      await writeGivenMetadata(kept);
+    },
   });
-
-  if (options.overwrite) {
-    await writeGivenMetadata(
-      importable.filter(({ entry }) => entry.state === "changed").map(({ fragment }) => fragment),
-    );
-  }
   return { plan: entries, imported };
 }
