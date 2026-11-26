@@ -168,12 +168,22 @@ async function countLiveChats(): Promise<number> {
   return all - deleted;
 }
 
+/** The check in flight, so that `init` and a message that finds no finished file share one. */
+let checking: Promise<void> | undefined;
+
 /**
  * Checks that the index can answer: it has a finished file, and it holds as many chats as the
  * database has. If not, it triggers a rebuild; an archive with no chats needs none, only an empty
  * index.
  */
-async function checkIndexConsistency(): Promise<void> {
+function checkIndexConsistency(): Promise<void> {
+  checking ??= runConsistencyCheck().finally(() => {
+    checking = undefined;
+  });
+  return checking;
+}
+
+async function runConsistencyCheck(): Promise<void> {
   // A rebuild running is the cure this check would start.
   if (rebuildRun) return;
   if (!index) {
@@ -223,7 +233,55 @@ async function checkIndexConsistency(): Promise<void> {
   }
 }
 
+/** The preparation in flight, so that messages that arrive together wait for one. */
+let preparing: Promise<void> | undefined;
+
+/**
+ * Make the index usable by a message that may be the first this worker gets. `init` runs only when
+ * the service worker starts, and the offscreen document makes a new worker (empty, with no index
+ * open) whenever the old one dies, so a search, an add or a remove can be that first message
+ * (HVN-98). It opens the index, and when the file it opens is not a finished one, starts the
+ * rebuild that `init` would have started: the chats it is given are read by that pass from the
+ * database. A failed open stays failed until the next `init`, as for search; a failed rebuild is
+ * not started again here either.
+ */
+function prepareIndex(): Promise<void> {
+  preparing ??= (async () => {
+    if (!index && !openFailure) await openIndex();
+    if (index && !hasLiveIndex && !rebuildRun && rebuildFailure === null) {
+      await checkIndexConsistency();
+    }
+  })().finally(() => {
+    preparing = undefined;
+  });
+  return preparing;
+}
+
 // --- Writing to the index ---
+
+/**
+ * Whether a write to the index cannot be made now. It says so in the log when the write is lost
+ * for now: without an open index it waits for the next open and rebuild; with no finished file
+ * and no rebuild running (the last one failed) the next rebuild reads the chats from the
+ * database. While a rebuild runs the chats are noted for it, and there is nothing to say.
+ */
+function cannotWrite(what: string): boolean {
+  if (!index) {
+    log.warn(
+      `[SearchWorker] ${what} was not applied to the search index: it could not be opened (${openFailure ?? "not open"}). The index stays behind the archive until it is opened again and rebuilt.`,
+    );
+    return true;
+  }
+  if (!hasLiveIndex) {
+    if (!rebuildRun) {
+      log.warn(
+        `[SearchWorker] ${what} was not applied to the search index: it has no finished file and no rebuild is running. The next rebuild reads it from the database.`,
+      );
+    }
+    return true;
+  }
+  return false;
+}
 
 /**
  * Index one chat, read from the database as it is now. The caller has written the row before it
@@ -233,8 +291,9 @@ async function checkIndexConsistency(): Promise<void> {
  * which the pass brings up to date before it ends (HVN-54).
  */
 async function addToIndex(chatId: string): Promise<void> {
+  await prepareIndex();
   if (rebuildRun) touchedDuringRebuild.add(chatId);
-  if (!index || !hasLiveIndex) return;
+  if (cannotWrite(`Adding chat ${chatId}`)) return;
   const chat = await loadChatWithMessages(chatId);
   // A rebuild that began while the chat was read reads this chat from the database itself, but
   // may already have gone past it.
@@ -245,9 +304,10 @@ async function addToIndex(chatId: string): Promise<void> {
   else index.remove(chatId);
 }
 
-function removeFromIndex(chatIds: string[]): void {
+async function removeFromIndex(chatIds: string[]): Promise<void> {
+  await prepareIndex();
   if (rebuildRun) for (const id of chatIds) touchedDuringRebuild.add(id);
-  if (!index || !hasLiveIndex) return;
+  if (cannotWrite(`Removing ${chatIds.length} chat(s)`) || !index) return;
   const live = index;
   live.transaction(() => {
     for (const id of chatIds) live.remove(id);
@@ -560,11 +620,11 @@ function currentRebuildStatus(): SearchIndexRebuildStatus | undefined {
 }
 
 /**
- * The index is open and has no finished file, and nothing has failed: a rebuild is about to start
- * (the start of the worker has not got as far as counting the chats yet), so the search cannot be
- * answered and must not say "no results". Without this, a search in that gap, which the first
- * start after an update that changes the index format is sure to have, got an empty list as if
- * the archive had been searched (HVN-164).
+ * The index is open and has no finished file, and nothing has failed, and no rebuild runs: the
+ * check that starts one has not finished (or could not count the chats), so the search cannot be
+ * answered and must not say "no results". Without this, a search in that gap got an empty list as
+ * if the archive had been searched (HVN-164). A search waits for `prepareIndex`, which starts the
+ * rebuild first, so this is the answer only when that check itself failed.
  */
 function awaitingRebuildStatus(): SearchIndexRebuildStatus | undefined {
   if (!index || hasLiveIndex || rebuildFailure !== null || openFailure !== null) return undefined;
@@ -657,8 +717,9 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     if (msg.type === "search") {
       let rebuilding = currentRebuildStatus();
       if (!rebuilding) {
-        // Open the file first, so that it is known whether there is one to answer from.
-        if (!index && !openFailure) await openIndex();
+        // Open the file first, so that it is known whether there is one to answer from, and
+        // start the rebuild when there is not and nothing else has (this may be the first message).
+        await prepareIndex();
         rebuilding = currentRebuildStatus() ?? awaitingRebuildStatus();
       }
       if (rebuilding) {
@@ -843,7 +904,7 @@ self.onmessage = async (event: MessageEvent<SearchWorkerMessage>) => {
     }
 
     if (msg.type === "remove" || msg.type === "removeMany") {
-      removeFromIndex(msg.type === "remove" ? [msg.chatId] : msg.chatIds);
+      await removeFromIndex(msg.type === "remove" ? [msg.chatId] : msg.chatIds);
       self.postMessage({ type: "removeComplete", success: true });
     }
   } catch (e) {

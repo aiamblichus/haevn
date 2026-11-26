@@ -2536,23 +2536,24 @@ hi there
       expect(chatsOf(await passages("tag:kept-tag"))).toEqual(["old"]);
     });
 
-    it("says it is rebuilding to a search that arrives before init has got as far as the rebuild, never that nothing was found", async () => {
+    it("starts the rebuild itself when a search is the first message, and says it is rebuilding, never that nothing was found (HVN-98)", async () => {
       await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
       await kit.seedFormat(BEFORE_LABELS);
       await loadWorker();
 
-      // No init yet: the file of the old format is wiped when the search opens it, and nothing
-      // has started the rebuild. This is the window the first start after an update is in.
+      // No init: the file of the old format is wiped when the search opens it. This is the
+      // window the first start after an update is in, and a worker that restarted on its own is
+      // in it for good unless the search starts the rebuild.
       const [hydrated] = await search("pineapple", true);
       const [ids] = await search("pineapple", false);
 
       for (const chunk of [hydrated, ids]) {
         expect(chunk.results).toEqual([]);
-        expect(chunk.indexRebuilding).toEqual({ processed: 0, total: 0, percentage: 0 });
+        expect(chunk.indexRebuilding).toBeDefined();
       }
-      await send({ type: "init" });
       await waitUntilIndexReady("pineapple");
       expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
     });
 
     it("says it too to a search sent while init is still counting the chats", async () => {
@@ -2673,6 +2674,136 @@ hi there
 
       expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(0);
       expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
+    });
+  });
+});
+
+describe("search worker: a worker that no init has come to (HVN-98)", () => {
+  // The offscreen document makes a new worker when the old one dies, and `init` is sent only when
+  // the service worker starts: the first message a worker gets can be an add, a remove or a search.
+  const lastChunk = (chunks: Posted[]) => chunks[chunks.length - 1];
+  const rebuilds = () => posted.filter((m) => m.type === "indexRebuildComplete").length;
+
+  /** An archive with one chat, indexed, and a new worker on it that has had no init. */
+  async function restartedWorker(): Promise<void> {
+    await seedChats([buildChat("old", "an old pineapple")]);
+    await send({ type: "init" });
+    await waitUntilIndexReady();
+    await loadWorker();
+  }
+
+  it("indexes a chat added as the first message", async () => {
+    await restartedWorker();
+    await seedChats([buildChat("fresh", "a quokka")]);
+
+    await send({ type: "add", chatId: "fresh" });
+
+    expect(hitIds(await search("quokka", false))).toEqual(["fresh"]);
+    expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+    expect(rebuilds()).toBe(0); // the index was whole: nothing to rebuild
+  });
+
+  it("takes a chat out of the index when the remove is the first message", async () => {
+    await restartedWorker();
+
+    await send({ type: "remove", chatId: "old" });
+
+    expect(hitIds(await search("pineapple", false))).toEqual([]);
+  });
+
+  it("takes several chats out when removeMany is the first message", async () => {
+    await restartedWorker();
+
+    await send({ type: "removeMany", chatIds: ["old", "never-indexed"] });
+
+    expect(hitIds(await search("pineapple", false))).toEqual([]);
+  });
+
+  it("waits for one open when messages arrive together", async () => {
+    await restartedWorker();
+    await seedChats([buildChat("one", "a quokka"), buildChat("two", "a quokka")]);
+    const opensBefore = opens.count;
+
+    await Promise.all([
+      send({ type: "add", chatId: "one" }),
+      send({ type: "add", chatId: "two" }),
+      send({ type: "init" }),
+    ]);
+
+    expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["one", "two"]));
+    expect(opens.count - opensBefore).toBe(1);
+  });
+
+  describe("with no finished file to write to", () => {
+    const BEFORE_LABELS = 3;
+
+    async function workerOnOldFile(): Promise<void> {
+      await seedChats([buildChat("old", "an old pineapple")]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+    }
+
+    it("starts the rebuild when an add is the first message, and the chat is in the new file", async () => {
+      await workerOnOldFile();
+      await seedChats([buildChat("fresh", "a quokka")]);
+
+      await send({ type: "add", chatId: "fresh" });
+      await waitUntilIndexReady();
+
+      expect(hitIds(await search("quokka", false))).toEqual(["fresh"]);
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+      expect(rebuilds()).toBe(1);
+    });
+
+    it("starts one rebuild, not a second pass, for an add, a search and an init that arrive together", async () => {
+      const { log } = await import("../src/utils/logger");
+      vi.mocked(log.warn).mockClear();
+      await workerOnOldFile();
+      await seedChats([buildChat("fresh", "a quokka")]);
+
+      await Promise.all([
+        send({ type: "add", chatId: "fresh" }),
+        search("quokka", false),
+        send({ type: "init" }),
+      ]);
+      await waitUntilIndexReady();
+
+      expect(new Set(hitIds(await search("quokka", false)))).toEqual(new Set(["fresh"]));
+      expect(rebuilds()).toBe(1);
+      // A second request that joined the run would have made it go once more.
+      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
+      expect(said.filter((line) => line.includes("Rebuild already in progress"))).toEqual([]);
+    });
+  });
+
+  describe("when a write cannot be applied", () => {
+    const REASON = "Access Handles cannot be created: another worker holds the file";
+
+    it("says so in the log when the index cannot be opened, for an add and for a remove", async () => {
+      const { log } = await import("../src/utils/logger");
+      vi.mocked(log.warn).mockClear();
+      await seedChats([buildChat("fresh", "a quokka")]);
+      faults.open = new Error(REASON);
+      faults.openFailures = 5;
+
+      await send({ type: "add", chatId: "fresh" });
+      await send({ type: "remove", chatId: "fresh" });
+
+      const said = vi.mocked(log.warn).mock.calls.map((call) => String(call[0]));
+      expect(
+        said.filter((line) => line.includes("Adding chat fresh was not applied")),
+      ).toHaveLength(1);
+      expect(
+        said.filter((line) => line.includes("Removing 1 chat(s) was not applied")),
+      ).toHaveLength(1);
+      expect(
+        said.every((line) => !line.includes(REASON) || line.includes("could not be opened")),
+      ).toBe(true);
+      // And the worker still answers, so the caller is not left waiting.
+      expect(
+        posted.filter((m) => m.type === "addComplete" || m.type === "removeComplete"),
+      ).toHaveLength(2);
+      expect(lastChunk(await search("quokka", false)).indexIncomplete).toEqual({ error: REASON });
     });
   });
 });
