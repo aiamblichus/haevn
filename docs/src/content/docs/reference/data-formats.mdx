@@ -110,6 +110,8 @@ Assistant message text
 - `system` (optional): system prompt/context
 - `models_used` (optional): list of model names; defaults to `unknown` when omitted
 
+A chat with a rough date (a fragment dated `2024` or `~2024-03`) has made-up times for its messages, so its Markdown export writes its date as `date:`, holding the label the archive shows (`c. Mar 2024`), and writes neither `created_at` nor `modified_at`. An undated chat has no `date:` line. The importer does not read `date:`, so a file exported this way imports with the time of the import.
+
 ### Message section rules
 
 - Each section starts with exactly one role marker:

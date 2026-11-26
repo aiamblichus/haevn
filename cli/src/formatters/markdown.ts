@@ -214,10 +214,12 @@ function formatMessageForMarkdown(message: ChatMessage, options: GetMessageTextO
  * Format metadata line for header.
  */
 function formatMetadata(chat: Chat): string {
+  // A chat with a rough date shows its label where a time would be (HVN-171); its stored time is made
+  // up (HVN-163).
   const parts = [
     `Chat ID: \`${chat.id}\``,
     `Platform: ${chat.source}`,
-    formatTimestamp(chat.timestamp),
+    chat.dateLabel ?? formatTimestamp(chat.timestamp),
   ];
 
   return parts.join(" | ");

@@ -144,7 +144,7 @@ Options:
 - `--all-branches` - Get the whole chat, every branch once, instead of one branch (see below; not with `-m`, `--head` or `--tail`, which pick one branch and are refused)
 - `-f, --format <fmt>` - Output format (markdown, json)
 - `-o, --output <file>` - Write to file
-- `--include-metadata` - Include timestamps/model info (default: true)
+- `--include-metadata` - Include timestamps/model info (default: true). For a chat with a rough date, the header gives its label (`c. Mar 2024`, `undated`) in place of a time
 - `--include-media` - Save the images, videos, audio and files of what is shown (see below; default: false)
 - `--include-thinking` - Include full thinking blocks (default: false, otherwise truncated preview)
 - `--skip-system` - Skip system instructions in output (default: false)
@@ -162,7 +162,7 @@ With `--all-branches`, the media of every branch go in the one `chat-media` fold
 **Every branch.** A chat that was edited or regenerated is a tree. `get` writes one branch of it; `--all-branches` writes all of it, each message once:
 
 - Markdown: the trunk (the messages every branch shares), then at each fork one section per branch, in the order `haevn branches` lists them, headed `### Branch 2 of 3`. The branch that holds the chat's current message says `(current)`. A fork inside a branch numbers its own branches under it (`### Branch 2.1 of 2`), so every heading stays at one level and the messages stay `##`. Several roots (alternative beginnings) are the first branches, oldest first. A branch that holds only tool calls and results says so under its heading. `export --all-branches` writes the other shape on purpose for now: flat sections, `## Branch N: at message M`, the current branch first. The two are not the same document.
-- JSON: the tree as stored. Top level: `chatId`, `title`, `platform`, `timestamp`, `system`, `currentRef` (`null` when the chat's current message is not in it), `branchCount`, `messageCount`, and `messages`, a list in reading order. Each message has what a branch's messages have (`ref`, `role`, `content`, `timestamp`, and `media` with `--include-media`) and `parentRef` (`null` for a root) and `childRefs`, in the order the chat stores them. The refs are the short refs `haevn branches` shows, so `get -m` takes them. Tool calls and results are listed here, so the links stay whole; with `--skip-system`, a skipped system message is not listed and the links to it stay.
+- JSON: the tree as stored. Top level: `chatId`, `title`, `platform`, `timestamp`, `system`, `currentRef` (`null` when the chat's current message is not in it), `branchCount`, `messageCount`, and `messages`, a list in reading order. For a chat with a rough date, `dateLabel` (`c. Mar 2024`, `undated`) takes the place of `timestamp` at the top and on each message, since its stored times are made up. Each message has what a branch's messages have (`ref`, `role`, `content`, `timestamp`, and `media` with `--include-media`) and `parentRef` (`null` for a root) and `childRefs`, in the order the chat stores them. The refs are the short refs `haevn branches` shows, so `get -m` takes them. Tool calls and results are listed here, so the links stay whole; with `--skip-system`, a skipped system message is not listed and the links to it stay.
 - Tool calls and tool results (ChatGPT's `browser` and `python` returns and the like) are not conversation, so the Markdown leaves them out, as it does for one branch.
 
 ### `list` - Browse chats

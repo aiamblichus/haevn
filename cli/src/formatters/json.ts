@@ -2,7 +2,7 @@
  * JSON formatter for structured output.
  */
 
-import type { Chat } from "../types/chat";
+import type { Chat, ChatMessage } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
 import {
   buildChatTree,
@@ -12,6 +12,21 @@ import {
   treeMessageIds,
   windowMessages,
 } from "../utils/tree";
+
+/**
+ * The time of a chat in its JSON. A chat with a rough date gives its label as `dateLabel` and no
+ * `timestamp`, here and on each message: its stored times are made up (HVN-163, HVN-171).
+ */
+function chatTimeFields(chat: Chat): { timestamp?: number; dateLabel?: string } {
+  return chat.dateLabel === undefined
+    ? { timestamp: chat.timestamp }
+    : { dateLabel: chat.dateLabel };
+}
+
+/** A message's time in its JSON: none for a chat with a rough date (see chatTimeFields). */
+function messageTimeFields(chat: Chat, message: ChatMessage): { timestamp?: number } {
+  return chat.dateLabel === undefined ? { timestamp: message.timestamp } : {};
+}
 
 export interface BranchJsonOptions {
   includeThinking?: boolean;
@@ -48,7 +63,7 @@ export function formatBranchAsJson(
     chatId: chat.id,
     title: chat.title,
     platform: chat.source,
-    timestamp: chat.timestamp,
+    ...chatTimeFields(chat),
     system: !skipSystem ? chat.system : undefined,
     branch: {
       path: branchPath.map((id) => getMessageRef(refs, id)),
@@ -57,7 +72,7 @@ export function formatBranchAsJson(
         ref: getMessageRef(refs, msg.id),
         role: getMessageRole(msg),
         content: getMessageText(msg, { includeThinking, skipSystem }),
-        timestamp: msg.timestamp,
+        ...messageTimeFields(chat, msg),
         ...(media?.has(msg.id) ? { media: media.get(msg.id) } : {}),
       })),
     },
@@ -91,7 +106,7 @@ export function formatChatAsJson(chat: Chat, options: ChatJsonOptions = {}): obj
     chatId: chat.id,
     title: chat.title,
     platform: chat.source,
-    timestamp: chat.timestamp,
+    ...chatTimeFields(chat),
     system: !skipSystem ? chat.system : undefined,
     currentRef: chat.messages[chat.currentId] ? ref(chat.currentId) : null,
     branchCount: Object.values(chat.messages).filter((msg) => msg.childrenIds.length === 0).length,
@@ -102,7 +117,7 @@ export function formatChatAsJson(chat: Chat, options: ChatJsonOptions = {}): obj
       childRefs: msg.childrenIds.filter((id) => chat.messages[id]).map(ref),
       role: getMessageRole(msg),
       content: getMessageText(msg, { includeThinking, skipSystem }),
-      timestamp: msg.timestamp,
+      ...messageTimeFields(chat, msg),
       ...(media?.has(msg.id) ? { media: media.get(msg.id) } : {}),
     })),
   };
