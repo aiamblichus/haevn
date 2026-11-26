@@ -384,12 +384,14 @@ describe("a link kept on purpose (linkOnly)", () => {
 });
 
 describe("the manifest", () => {
-  it("lets the extension reach both hops of Gemini's image links", () => {
+  it("lets the extension reach both hops of Gemini's image links, and no other googleusercontent host (HVN-160)", () => {
     const manifest = JSON.parse(readFileSync("src/manifest.json", "utf8"));
 
     expect(manifest.host_permissions).toEqual(
-      expect.arrayContaining(["*://*.googleusercontent.com/*", "*://lh3.google.com/*"]),
+      expect.arrayContaining(["*://lh3.googleusercontent.com/*", "*://lh3.google.com/*"]),
     );
+    // the wide pattern granted every googleusercontent subdomain to the extension's fetches
+    expect(manifest.host_permissions).not.toContain("*://*.googleusercontent.com/*");
   });
 });
 
