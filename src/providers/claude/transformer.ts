@@ -375,7 +375,8 @@ export async function convertClaudeTranscriptToHaevn(
       parentId: node.parentId,
       childrenIds: [],
       message: [modelMessage],
-      model: modelName,
+      // A question names no model, as ChatGPT and Grok do; the answer carries the conversation's.
+      model: isUserMessage(claudeMsg) ? "" : modelName,
       done: claudeMsg.stop_reason === "stop_sequence",
       // Milliseconds since epoch
       timestamp: new Date(claudeMsg.created_at).getTime(),

@@ -43,7 +43,13 @@ const SELECTORS = {
   // Other
   image: "img",
   videoSource: "video source",
-  modelName: 'ms-model-selector-v3 [data-test-id="model-name"]',
+  // The model picker, tried in order; the first with a name wins. The first selector is from a
+  // live page read on 2026-11-26, whose value was not seen rendered (the prompt had not drawn).
+  // The second is the older structure, which a live page no longer has.
+  modelNames: [
+    'ms-model-selector [data-test-id="model-name"]',
+    'ms-model-selector-v3 [data-test-id="model-name"]',
+  ],
   authorLabel: ".author-label",
   searchEntryPoint: "ms-search-entry-point",
   promptRunSettings: "ms-prompt-run-settings",
@@ -109,8 +115,12 @@ export function extractAIStudioConversationTitle(): string {
 // Model Name Extraction
 export function extractAIStudioModelName(): string | undefined {
   try {
-    const modelElement = document.querySelector(SELECTORS.modelName) as HTMLElement | null;
-    return modelElement?.textContent?.trim() || undefined;
+    for (const selector of SELECTORS.modelNames) {
+      const modelElement = document.querySelector(selector) as HTMLElement | null;
+      const name = modelElement?.textContent?.trim();
+      if (name) return name;
+    }
+    return undefined;
   } catch (error) {
     log.error("Error extracting AI Studio model name:", error);
     return undefined;

@@ -93,10 +93,11 @@ describe("the model a Claude chat names (HVN-168)", () => {
     } as unknown as ChatTranscript;
   }
 
-  it("writes the conversation's model into the chat, its messages and the answer's model_name", async () => {
+  it("writes the conversation's model into the chat and the answer, and none into the question", async () => {
     const chat = await convertClaudeTranscriptToHaevn(transcriptWith(" claude-sonnet-4-5 "));
 
     expect(chat.models).toEqual(["claude-sonnet-4-5"]);
+    expect(chat.messages.m1.model).toBe("");
     expect(chat.messages.m2.model).toBe("claude-sonnet-4-5");
     const response = chat.messages.m2.message.find((m) => m.kind === "response");
     expect(response).toMatchObject({ model_name: "claude-sonnet-4-5" });
@@ -112,6 +113,7 @@ describe("the model a Claude chat names (HVN-168)", () => {
     const chat = await convertClaudeTranscriptToHaevn(transcriptWith(model));
 
     expect(chat.models).toEqual(["Claude"]);
+    expect(chat.messages.m1.model).toBe("");
     expect(chat.messages.m2.model).toBe("Claude");
   });
 });
