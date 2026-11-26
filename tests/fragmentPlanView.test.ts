@@ -371,14 +371,12 @@ describe("an error message in a sentence, and a read that failed (HVN-163, slice
     expect(inSentence("")).toBe("");
   });
 
-  it("says the files could not be read, with the reason, and that nothing was written", () => {
-    expect(
-      readFailedNotice(new Error("A requested file or directory could not be found.")),
-    ).toEqual({
-      title: "The files could not be read.",
-      body: "a requested file or directory could not be found. Nothing was written.",
-    });
-    expect(readFailedNotice("gone").body).toBe("gone. Nothing was written.");
+  it("says the files could not be read and that nothing was written, without Chrome's words", () => {
+    const notice = readFailedNotice();
+    expect(notice.title).toBe("The files could not be read.");
+    expect(notice.body).toMatch(/^Chrome could not open a file or folder you chose/);
+    expect(notice.body).toMatch(/Nothing was written\.$/);
+    expect(notice.body).not.toMatch(/write to a file/);
   });
 });
 

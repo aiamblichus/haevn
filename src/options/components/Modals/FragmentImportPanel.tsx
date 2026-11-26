@@ -12,6 +12,7 @@ import { Checkbox } from "../../../components/ui/checkbox";
 import { cn } from "../../../lib/utils";
 import { type FragmentPlanEntry, REFUSED_STATES } from "../../../providers/fragment/model";
 import { fireAndForget } from "../../../utils/error_utils";
+import { log } from "../../../utils/logger";
 import { useStatus } from "../../context/StatusContext";
 import {
   type DroppedItem,
@@ -202,7 +203,8 @@ export const FragmentImportPanel = ({
         });
       } catch (err) {
         if (run !== runRef.current) return;
-        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice(err) } });
+        log.warn("[FragmentImport] Could not read the chosen files", err);
+        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice() } });
         return;
       }
       if (!read || run !== runRef.current) return;
@@ -231,7 +233,8 @@ export const FragmentImportPanel = ({
         sources = await sourcesFromDrop(items);
       } catch (err) {
         if (run !== runRef.current) return;
-        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice(err) } });
+        log.warn("[FragmentImport] Could not read the chosen files", err);
+        setView({ kind: "empty", notice: { tone: "bad", ...readFailedNotice() } });
         return;
       }
       if (run !== runRef.current) return;
@@ -513,7 +516,7 @@ export const FragmentImportPanel = ({
         aria-labelledby={`fragment-g-${group.key}`}
         className="border-t border-border first:border-t-0"
       >
-        <div className="sticky top-0 z-[1] flex flex-wrap items-baseline gap-x-2.5 gap-y-1 bg-card px-3 py-2">
+        <div className="sticky top-0 z-[1] flex flex-wrap items-baseline gap-x-2.5 gap-y-1 bg-popover px-3 py-2">
           <h4
             id={`fragment-g-${group.key}`}
             className={cn(

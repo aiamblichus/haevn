@@ -266,11 +266,14 @@ export function noMarkdownNotice(gathered: GatheredFragments): Notice {
 }
 
 /** A read that threw (a folder that could not be listed, a file that vanished) */
-export function readFailedNotice(error: unknown): Notice {
-  const message = error instanceof Error ? error.message : String(error);
+/**
+ * Chrome's own reason is not shown: its words for a file it may not open ("an attempt was made to
+ * write to a file or directory…") contradict "Nothing was written". The caller logs it.
+ */
+export function readFailedNotice(): Notice {
   return {
     title: "The files could not be read.",
-    body: `${inSentence(message)}. Nothing was written.`,
+    body: "Chrome could not open a file or folder you chose: check that you can open it, then choose it again. Nothing was written.",
   };
 }
 
