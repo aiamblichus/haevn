@@ -449,7 +449,11 @@ export const ProvidersView = ({
                 baseUrl={provider.name === "openwebui" ? openwebuiBaseUrl || undefined : undefined}
                 stats={stats}
                 syncState={syncState}
-                onImport={provider.importer ? () => handleProviderImport(provider.name) : undefined}
+                onImport={
+                  provider.importer || importFormatFor(provider.name)
+                    ? () => handleProviderImport(provider.name)
+                    : undefined
+                }
                 onStartSync={
                   !canSync || isSyncingThisProvider
                     ? undefined
