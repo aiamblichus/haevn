@@ -136,7 +136,10 @@ haevn branches 68937df7-e198-8325-973e-ed9528104e0c
 haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 -t 6
 haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 --include-thinking
 haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 --skip-system
+haevn get 68937df7-e198-8325-973e-ed9528104e0c -m 80a6c24e0af9 --include-media -o thread.md
 ```
+
+Without `--include-media`, an image, video, audio clip or file shows as `[image]`, `[video]`, `[audio]` or `[file]`. With `--include-media -o thread.md`, each one is saved as `thread-media/01.png`, `02.mp4` and so on, in message order, and `thread.md` links it where the stand-in was (`![image](thread-media/01.png)` for an image, `[video](thread-media/02.mp4)` for the others). The extension comes from the media type (`.bin` when it is unknown). A medium the archive holds only as a web link is linked, not downloaded. If `thread-media` already exists, the command stops before it writes anything, so a run never mixes its files with an earlier one's. Without `-o`, no file is written: the stand-ins stay, and one note on stderr says to add `-o`. With `--format json`, each message that has media gets a `media` array whose items carry the file as base64 in `data` (or a `url` for a link); an item over 32 MiB is left out with an `error`, and the command exits 1. `export` and `branches` do not carry media.
 
 Sample `branches` output:
 

@@ -242,6 +242,11 @@ export interface SearchOptions {
 export interface GetOptions {
   messageId?: string;
   includeMetadata?: boolean;
+  /**
+   * Keep each binary item's `data`, which is the path of its file in the extension's store
+   * (`media/<chat>/<name>`), where otherwise it is "[binary omitted]". The bytes are not in the
+   * reply: `get` fetches each file by `backupMedia`, over the pipe.
+   */
   includeMedia?: boolean;
 }
 
