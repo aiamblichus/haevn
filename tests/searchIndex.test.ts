@@ -5,6 +5,7 @@ import {
   type IndexFilters,
   type MarkedPassage,
   openSqliteHost,
+  SqliteSearchIndex,
   type SearchIndex,
 } from "../src/services/searchIndex";
 import { parseSearchQuery } from "../src/services/searchQuery";
@@ -786,13 +787,22 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
     index?.close();
   });
 
-  it("finds a chat by a model or a tag typed as a plain word, as it finds a word of its text", async () => {
+  it("does not find a chat by its model or its tag typed as a plain word: that is about the text", async () => {
     await openWith(a, b, c);
 
-    expect(ids("poetry")).toEqual(["a", "b"]); // a's tag, b's message
-    expect(ids("sonnet")).toEqual(["b"]);
-    expect(ids("4o")).toEqual(["a"]);
-    expect(ids("creative writing")).toEqual(["a"]);
+    expect(ids("poetry")).toEqual(["b"]); // b's message, not a's tag
+    expect(ids("sonnet")).toEqual([]);
+    expect(ids("4o")).toEqual([]);
+    expect(ids("creative writing")).toEqual([]);
+    expect(ids("poet*")).toEqual(["b"]);
+  });
+
+  it("does not let a plain word be relaxed onto a label either", async () => {
+    await openWith(a, b, c);
+
+    const relaxed = buildRelaxedPlan(parseSearchQuery("sonnet gpt"));
+
+    expect(relaxed && index.search(relaxed).map((r) => r.chatId)).toEqual([]);
   });
 
   it("finds a chat by its label only, with model: and tag:", async () => {
@@ -852,14 +862,28 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
     expect(ids("tag:code mentioned")).toEqual(["b"]);
   });
 
-  it("leaves out a chat that has the label, in either way of typing it", async () => {
+  it("leaves out a chat that has the label with -tag: and -model:, and never with a plain -word", async () => {
+    // Synced chats carry the provider's own name as their model, so `-claude` must not drop them.
+    await openWith(
+      chat("synced", ["a python question"], { models: ["Claude"], tags: ["chatgpt"] }),
+      chat("typed", ["a python question about claude"], { models: ["gpt-4o"] }),
+    );
+
+    expect(ids("python -claude")).toEqual(["synced"]); // only the chat that says claude is left out
+    expect(ids("python -chatgpt")).toEqual(["synced", "typed"]);
+    expect(ids("python -model:claude")).toEqual(["typed"]);
+    expect(ids("python -tag:chatgpt")).toEqual(["typed"]);
+
+    index.close();
+    kit.reset();
     await openWith(a, b, c);
 
-    expect(ids("poetry -tag:code")).toEqual(["a"]);
-    expect(ids("poetry -code")).toEqual(["a"]); // a plain word sees the labels too
+    expect(ids("tag:poetry -tag:code")).toEqual(["a"]);
+    expect(ids("poetry -tag:code")).toEqual([]); // b is the only chat that says poetry, and has the tag
+    expect(ids("poetry -code")).toEqual(["b"]); // b's tag is not a word it said; a has no poetry text
     expect(ids("tag:poetry -model:gpt-4o")).toEqual([]);
-    expect(ids("poetry -model:gpt-4")).toEqual(["a"]);
-    expect(ids("poetry -tag:cats")).toEqual(["a", "b"]); // cats is not a tag
+    expect(ids("poetry -model:gpt-4")).toEqual([]); // b says poetry, and has the model gpt-4
+    expect(ids("poetry -tag:cats")).toEqual(["b"]); // cats is not a tag
   });
 
   it("folds case and accents in a label, as it does in text", async () => {
@@ -926,13 +950,14 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
       expect(marked(model)).toEqual(["claude-3"]); // the phrase, as one mark
     });
 
-    it("shows a plain word's hit in a label as it shows one in a message", async () => {
+    it("shows no label for a plain word, even when the chat has the word as a tag", async () => {
       await openWith(a, b, c);
 
-      const found = passagesOf("poetry", "a");
-
-      expect(found.map((p) => p.messageId)).toEqual([LABEL_IDS.tag]);
+      expect(passagesOf("poetry", "a")).toEqual([]);
       expect(passagesOf("poetry", "b").map((p) => p.messageId)).toEqual(["b-m1"]);
+      // Said in a message and held as a tag: the message is the passage.
+      index.put(chat("e", ["poetry again"], { tags: ["poetry"] }));
+      expect(passagesOf("poetry", "e").map((p) => p.messageId)).toEqual(["e-m1"]);
     });
 
     it("shows the messages first and the labels last, and a label of each kind once", async () => {
@@ -943,7 +968,8 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
         }),
       );
 
-      const found = passagesOf("gpt code", "d");
+      const query = "gpt code model:gpt tag:code";
+      const found = passagesOf(query, "d");
 
       expect(found.map((p) => p.messageId)).toEqual([
         "d-m1",
@@ -951,7 +977,7 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
         LABEL_IDS.model,
         LABEL_IDS.tag,
       ]);
-      expect(passagesOf("gpt code", "d", 3).map((p) => p.messageId)).toEqual([
+      expect(passagesOf(query, "d", 3).map((p) => p.messageId)).toEqual([
         "d-m1",
         "d-m2",
         LABEL_IDS.model,
@@ -1022,5 +1048,53 @@ describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: In
       expect(ranked.map((r) => r.chatId)).toEqual(["p", "q"]);
       expect(ranked.every((r) => Number.isFinite(r.score) && r.score > 0)).toBe(true);
     });
+  });
+});
+
+describe("a chat that runs out of rowids keeps its labels in its own range (HVN-164)", () => {
+  it("stops the messages early enough for the labels, so none lands in the next chat", async () => {
+    sqliteKit.reset();
+    // Eight bits are 256 rows to a chat, so a chat can run out of them with a few hundred
+    // messages instead of a million; the room kept for the labels is 100 of those rows.
+    const index = new SqliteSearchIndex(8);
+    await index.open();
+    const build = index.beginRebuild();
+    const said = (id: string, text: string): IndexedMessage => ({ id, role: "user", text });
+    build.transaction(() => {
+      build.put({
+        id: "big",
+        title: "",
+        source: "test",
+        timestamp: 1,
+        models: ["bigmodel"],
+        tags: ["bigtag"],
+        messages: Array.from({ length: 300 }, (_, i) => said(`m${i}`, `word${i}`)),
+      });
+      build.put({
+        id: "next",
+        title: "",
+        source: "test",
+        timestamp: 1,
+        models: [],
+        tags: ["nexttag"],
+        messages: [said("n1", "nexttext")],
+      });
+    });
+    build.commit();
+    const ids = (query: string) =>
+      index
+        .search(plan(query))
+        .map((r) => r.chatId)
+        .sort();
+
+    // The big chat's own labels are its own; the next chat has only its own.
+    expect(ids("tag:bigtag")).toEqual(["big"]);
+    expect(ids("model:bigmodel")).toEqual(["big"]);
+    expect(ids("tag:nexttag")).toEqual(["next"]);
+    expect(ids("nexttext")).toEqual(["next"]);
+    // The messages that fit (256 less the 100 kept) are searchable, and the rest are not.
+    expect(ids("word155")).toEqual(["big"]);
+    expect(ids("word156")).toEqual([]);
+    index.close();
   });
 });

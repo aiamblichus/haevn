@@ -133,8 +133,9 @@ function vocabulary(file: File): Map<string, number> {
 function matcherFor(clause: QueryClause, file: File): Matcher {
   const matches = unscopedMatcherFor(clause, file);
   const { scope } = clause;
-  // A clause confined to the models or the tags sees no other row.
-  return scope ? (row) => (row.label === scope ? matches(row) : []) : matches;
+  // A clause confined to the models or the tags sees no other row, and any other clause sees no
+  // label.
+  return (row) => (row.label === scope ? matches(row) : []);
 }
 
 function unscopedMatcherFor(clause: QueryClause, file: File): Matcher {

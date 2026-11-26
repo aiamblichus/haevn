@@ -14,8 +14,8 @@ export type QueryClause = {
   editDistance?: number;
   /**
    * Look only among the chat's models or its tags (`model:`, `tag:`), where each model and each
-   * tag is a row of its own, so a phrase stands for one label. A clause with none looks at the
-   * whole chat: its title, its messages and its labels alike.
+   * tag is a row of its own, so a phrase stands for one label. A clause with none looks at what
+   * was said, the title and the messages, and never at a label.
    */
   scope?: LabelKind;
 };

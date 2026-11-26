@@ -209,11 +209,11 @@ This keeps daemon requests small and avoids long-running payload transfers from 
 Use `--format json` and pipe to `jq`:
 
 ```bash
-haevn search "emergence" --format json | jq '.results[0] | {chatId, messageRef, source}'
+haevn search "emergence" --format json | jq '[.results[] | select(.label | not)][0] | {chatId, messageRef, source}'
 ```
 
 Useful fields:
-- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`
+- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`. A hit on a model or a tag (from `model:` or `tag:`) has `label` set and no `messageRef`; skip it with `select(.label | not)` before you pass a ref to `haevn get`
 - `branches`: `tree`, `branches[].leafMessageRef`, `branches[].path`
 - `get`: branch content suitable for markdown or structured JSON workflows
 

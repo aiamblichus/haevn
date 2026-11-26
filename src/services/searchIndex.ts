@@ -290,7 +290,6 @@ const SLOT_FILES = ["/haevn-search-a.db", "/haevn-search-b.db"] as const;
 export const TOKENIZER = "unicode61 remove_diacritics 2 categories 'L* N* Co So M*' tokenchars '_'";
 /** A chat's rows are the rowids from `chat << ORDINAL_BITS` up. */
 const ORDINAL_BITS = 20;
-const ORDINAL_SPAN = 2 ** ORDINAL_BITS;
 /** The title counts ten times what the body does, as it did in the Lunr index. */
 const TITLE_WEIGHT = 10;
 const VARIANTS_LIMIT = 64;
@@ -314,10 +313,6 @@ function isNotAnIndex(error: unknown): boolean {
   if (typeof code !== "number") return false;
   const primary = code & 0xff;
   return primary === SQLITE_ERROR || primary === SQLITE_CORRUPT || primary === SQLITE_NOTADB;
-}
-
-function firstRowid(chat: number): number {
-  return chat * ORDINAL_SPAN;
 }
 
 /** A marked text as its plain text and the spans that were marked. */
@@ -361,15 +356,30 @@ interface ShownRow {
   source: number;
 }
 
-/** The binding of a source's MATCH, and of the `mid = ?` that confines it to one kind of label. */
+/**
+ * The rows a MATCH looks at, as a condition on `mid`: the rows of one kind of label for a clause
+ * confined to it, and for every other clause the title and the messages, never a label. A word
+ * typed plain is about what was said, and the labels of a synced chat are often the provider's own
+ * name, so `-claude` must not drop every chat of Claude's (HVN-164).
+ */
+function rowsOf(scope: LabelKind | undefined): string {
+  return scope ? " AND mid = ?" : " AND mid NOT IN (?, ?)";
+}
+
+/** The binding of `rowsOf`. */
+function scopeBinding(scope: LabelKind | undefined): Binding {
+  return scope ? [LABEL_IDS[scope]] : [LABEL_IDS.model, LABEL_IDS.tag];
+}
+
+/** The binding of a source's MATCH and of its `rowsOf`. */
 function matchBinding(source: Source): Binding {
-  return source.scope ? [source.match, LABEL_IDS[source.scope]] : [source.match];
+  return [source.match, ...scopeBinding(source.scope)];
 }
 
 /**
  * What a plan is looked for by: every word that is not confined as one MATCH (it looks at the
- * title, the messages and the labels alike), then the words confined to the models, then the ones
- * confined to the tags. A passage is a row that one of them matches.
+ * title and the messages), then the words confined to the models, then the ones confined to the
+ * tags. A passage is a row that one of them matches.
  */
 function passageSources(matches: PlanMatches): Source[] {
   const sources: Source[] = [];
@@ -389,10 +399,21 @@ class Slot implements IndexWriter {
   /** `variants` answers since the last write; a write can add a word. */
   private nearSpellings = new Map<string, string[]>();
 
+  /** How many rowids a chat's rows have between them: 2^bits (only a test makes it smaller). */
+  private readonly span: number;
+
   constructor(
     readonly name: string,
     readonly db: Database,
-  ) {}
+    private readonly bits: number,
+  ) {
+    this.span = 2 ** bits;
+  }
+
+  /** The first rowid of the chat with this key. */
+  private firstRowid(chat: number): number {
+    return chat * this.span;
+  }
 
   /** Whether the file already has this index's tables (a file just made does not). */
   hasSchema(): boolean {
@@ -468,7 +489,7 @@ class Slot implements IndexWriter {
   private clearRows(key: number): void {
     this.db.exec({
       sql: "DELETE FROM msgs WHERE rowid BETWEEN ? AND ?",
-      bind: [firstRowid(key), firstRowid(key + 1) - 1],
+      bind: [this.firstRowid(key), this.firstRowid(key + 1) - 1],
     });
   }
 
@@ -502,13 +523,13 @@ class Slot implements IndexWriter {
       try {
         let ordinal = 0;
         const add = (...values: Binding) => {
-          insert.bind([firstRowid(key) + ordinal++, ...values]).stepReset();
+          insert.bind([this.firstRowid(key) + ordinal++, ...values]).stepReset();
         };
         if (chat.title) add(chat.title, "", "title", "user", null, null);
         // The labels come last, with room kept for them, so that a chat of a million messages
         // still has its models and tags.
         for (const message of chat.messages) {
-          if (ordinal >= ORDINAL_SPAN - 2 * MAX_LABELS) break;
+          if (ordinal >= this.span - 2 * MAX_LABELS) break;
           add(
             "",
             message.text,
@@ -582,13 +603,12 @@ class Slot implements IndexWriter {
     if (sources.length === 0) return [];
 
     // The chats that satisfy every required clause (or any optional one), less the excluded ones.
-    // A clause confined to the models or the tags looks only at those rows.
+    // A clause confined to the models or the tags looks only at those rows; any other looks only
+    // at the title and the messages.
     const bind: Binding = [];
     const chatsOf = (match: Match): string => {
-      bind.push(match.text);
-      if (!match.scope) return "SELECT rowid >> 20 AS c FROM msgs WHERE msgs MATCH ?";
-      bind.push(LABEL_IDS[match.scope]);
-      return "SELECT rowid >> 20 AS c FROM msgs WHERE msgs MATCH ? AND mid = ?";
+      bind.push(match.text, ...scopeBinding(match.scope));
+      return `SELECT rowid >> ${this.bits} AS c FROM msgs WHERE msgs MATCH ?${rowsOf(match.scope)}`;
     };
     let sets =
       required.length > 0
@@ -633,9 +653,9 @@ class Slot implements IndexWriter {
     // One scale for every chat: bm25 over the whole index, summed over a chat's rows.
     for (const source of sources) {
       this.db.exec({
-        sql: `SELECT rowid >> 20, bm25(msgs, ${TITLE_WEIGHT}.0, 1.0) FROM msgs WHERE msgs MATCH ?${
-          source.scope ? " AND mid = ?" : ""
-        }`,
+        sql: `SELECT rowid >> ${this.bits}, bm25(msgs, ${TITLE_WEIGHT}.0, 1.0) FROM msgs WHERE msgs MATCH ?${rowsOf(
+          source.scope,
+        )}`,
         bind: matchBinding(source),
         rowMode: "array",
         callback: (row: unknown[]) => {
@@ -672,14 +692,14 @@ class Slot implements IndexWriter {
       // A source's own first `limit` messages of a chat are all it can add to what is shown.
       const taken = new Map<number, Set<string>>();
       this.db.exec({
-        sql: `SELECT rowid, mid FROM msgs WHERE msgs MATCH ?${source.scope ? " AND mid = ?" : ""}${
+        sql: `SELECT rowid, mid FROM msgs WHERE msgs MATCH ?${rowsOf(source.scope)}${
           range ? " AND rowid BETWEEN ? AND ? ORDER BY rowid" : ""
         }`,
         bind: [...matchBinding(source), ...(range ?? [])],
         rowMode: "array",
         callback: (row: unknown[]) => {
           const rowid = Number(row[0]);
-          const key = Math.floor(rowid / ORDINAL_SPAN);
+          const key = Math.floor(rowid / this.span);
           if (!wanted.has(key)) return;
           const message = String(row[1]);
           let messages = taken.get(key);
@@ -732,7 +752,7 @@ class Slot implements IndexWriter {
           sql: `SELECT rowid, mid, role, ts, model,
                   highlight(msgs, 0, ?, ?), highlight(msgs, 1, ?, ?)
                 FROM msgs
-                WHERE msgs MATCH ?${source.scope ? " AND mid = ?" : ""} AND ${
+                WHERE msgs MATCH ?${rowsOf(source.scope)} AND ${
                   range ? `rowid BETWEEN ? AND ? AND rowid IN (${list})` : `+rowid IN (${list})`
                 }`,
           bind: [
@@ -784,7 +804,7 @@ class Slot implements IndexWriter {
     const key = this.chatKey(chatId);
     if (key === undefined) return [];
     // The rows are found first, and only the ones that are shown are marked.
-    const range = [firstRowid(key), firstRowid(key + 1) - 1];
+    const range = [this.firstRowid(key), this.firstRowid(key + 1) - 1];
     const found = this.readPassages(this.sourcesOf(plan), new Map([[key, chatId]]), limit, range);
     return found.get(chatId) ?? [];
   }
@@ -814,6 +834,9 @@ export class SqliteSearchIndex implements SearchIndex {
   private host: SqliteHost | undefined;
   private live: Slot | undefined;
   private building: Slot | undefined;
+
+  /** `ordinalBits` is for a test that needs a chat to run out of rowids without a million rows. */
+  constructor(private readonly ordinalBits = ORDINAL_BITS) {}
 
   describe(): string {
     return this.host ? `SQLite ${this.host.version}, ${this.host.kind}` : "SQLite, not opened";
@@ -865,7 +888,7 @@ export class SqliteSearchIndex implements SearchIndex {
   }
 
   private openSlot(name: string): Slot {
-    return new Slot(name, this.requireHost().open(name));
+    return new Slot(name, this.requireHost().open(name), this.ordinalBits);
   }
 
   /** The generation of a finished index in the current format, or undefined for any other file. */

@@ -2416,12 +2416,13 @@ hi there
     expect(chatsOf(await passages("model:claude-sonnet-4-6"))).toEqual(["pi-imported"]);
   });
 
-  it("finds them by a model typed as a plain word, and says which label it was", async () => {
+  it("says which label a hit was, and does not find a chat by its label typed as a plain word", async () => {
     const chats = await archive();
     await seedChats(Object.values(chats));
     await send({ type: "rebuild" });
 
-    const found = await passages("starred");
+    const found = await passages("tag:starred");
+    expect(await passages("starred")).toEqual([]);
 
     expect(chatsOf(found)).toEqual(["json-imported"]);
     expect(found).toHaveLength(1);
@@ -2509,6 +2510,39 @@ hi there
 
       expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(0);
       expect(chatsOf(await passages("tag:kept-tag"))).toEqual(["old"]);
+    });
+
+    it("says it is rebuilding to a search that arrives before init has got as far as the rebuild, never that nothing was found", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+
+      // No init yet: the file of the old format is wiped when the search opens it, and nothing
+      // has started the rebuild. This is the window the first start after an update is in.
+      const [hydrated] = await search("pineapple", true);
+      const [ids] = await search("pineapple", false);
+
+      for (const chunk of [hydrated, ids]) {
+        expect(chunk.results).toEqual([]);
+        expect(chunk.indexRebuilding).toEqual({ processed: 0, total: 0, percentage: 0 });
+      }
+      await send({ type: "init" });
+      await waitUntilIndexReady("pineapple");
+      expect(hitIds(await search("pineapple", false))).toEqual(["old"]);
+    });
+
+    it("says it too to a search sent while init is still counting the chats", async () => {
+      await seedChats([{ ...buildChat("old", "pineapple"), tags: ["kept-tag"] }]);
+      await kit.seedFormat(BEFORE_LABELS);
+      await loadWorker();
+
+      const init = send({ type: "init" });
+      const [chunk] = await search("pineapple", false);
+      await init;
+
+      expect(chunk.indexRebuilding).toBeDefined();
+      expect(chunk.results).toEqual([]);
+      await waitUntilIndexReady("pineapple");
     });
   });
 });

@@ -81,7 +81,7 @@ HAEVN reads these operators itself (it does not pass the query to the search ind
 | `model:` | `model:gpt-4o` | The chat has a model with these words. `model:sonnet` finds `claude-3-5-sonnet`; the words of `model:gpt-4` must be next to each other, in that order, so it finds `gpt-4` and not `gpt-4o` (write `model:gpt-4*` for both) |
 | `tag:` | `tag:poetry`, `tag:"creative writing"` | The chat has a tag with these words. `-tag:draft` leaves out the chats that have it |
 
-A model or a tag is also found as a plain word (`haevn search poetry` finds a chat tagged `poetry` as well as one that says it); `model:` and `tag:` look only at the labels. A hit on one is shown as `model` or `tag` instead of a message, and has no `messageRef` in JSON (it has a `label` field instead). A chat's models are the ones it names and the ones its messages name; its tags are the ones its provider or its file gave it.
+A plain word, and `-word`, are about what was said: they never look at a chat's models or tags (`haevn search poetry` does not find a chat only because it is tagged `poetry`, and `python -claude` does not drop the chats whose model is called `Claude`). Only `model:` and `tag:` look at the labels, and `-model:` and `-tag:` leave chats out by them. A hit on a label is shown as `model` or `tag` instead of a message. In JSON it has `label` set (`"model"` or `"tag"`) and no `messageRef`: its `messageId` is a name the index makes up (`haevn:model`, `haevn:tag`), not a message of the chat, so do not pass it to `haevn get`. A chat's models are the ones it names and the ones its messages name; its tags are the ones its provider or its file gave it. A chat has at most 50 models and 50 tags in the index (the first 50 of each); a later one is not found by `model:` or `tag:`.
 
 **Examples:**
 
@@ -448,7 +448,7 @@ Human-readable output with colors and formatting:
 Structured output for piping to other tools:
 
 ```bash
-haevn search "query" --format json | jq '.results[0].messageRef'
+haevn search "query" --format json | jq '[.results[] | select(.label | not)][0].messageRef'
 ```
 
 ## Development
