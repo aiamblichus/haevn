@@ -16,7 +16,8 @@ This file holds what is true of this repository. Who you are, the studio's metho
 | Architecture | `gnomon read /project/haevn/architecture/index` |
 | Product: who it is for, what is in and out | `gnomon read /project/haevn/product/index` |
 | Run, drive and debug the extension | `skills/dev-guide/SKILL.md` (Chrome MCP + `haevnDebug`) |
-| See a change run in a real browser: the dev profile (DevTools MCP) and αιamblichus's Chrome (`surf`, with the house rules), fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
+| **Browsers, before any browser command.** Run `scripts/browsers.sh check`. Test profile (dummy data): `SURF_SOCKET=/tmp/surf-dev.sock surf …`, plus the DevTools MCP for `chrome-extension://` pages. αιamblichus's Chrome: `SURF_SOCKET=/tmp/surf-prod.sock surf …`, read-only, with his say-so. A bare `surf` reaches neither. A brief that names no browser means the test profile. Unreachable: stop and report, never fall back to the other | `scripts/browsers.sh`; rules in `skills/browser-check/SKILL.md` |
+| See a change run in a real browser: the test profile and αιamblichus's Chrome, setup, fixtures, traps | `skills/browser-check/SKILL.md` (KB: `/project/haevn/skills/browser-check`) |
 | Check every provider still works before a release (the runbook: import formats in the dev profile, web providers in αιamblichus's Chrome) | `skills/provider-runbook/SKILL.md` (KB: `/project/haevn/skills/provider-runbook`) |
 | The CLI | `skills/haevn-cli/SKILL.md`, `cli/README.md` |
 | Current work | `gnomon ticket view working --namespace HVN`, `gnomon ticket view active --namespace HVN` |

@@ -1,6 +1,6 @@
 ---
 name: browser-check
-description: "How to drive HAEVN in a real Chrome: the dev profile with its DevTools MCP server, αιamblichus's Chrome with surf and its house rules, setting up, the check loop, fixtures, the traps we have hit, and CLI checks."
+description: "How to drive HAEVN in a real Chrome: each Chrome on its own surf socket (test /tmp/surf-dev.sock with the DevTools MCP for extension pages; αιamblichus's /tmp/surf-prod.sock, read-only), scripts/browsers.sh check, setting up, the check loop, fixtures, the traps, and CLI checks."
 ---
 
 <!-- generated from /project/haevn/skills/browser-check by pnpm run skills:sync; edit the KB note, not this file -->
@@ -10,19 +10,26 @@ How to drive HAEVN in a real Chrome, check a change there, and record the verdic
 
 ## Two browsers, two tools
 
-| | Dev (test) profile | Prod: αιamblichus's Chrome |
-| --- | --- | --- |
-| What | A throwaway Chrome profile with HAEVN loaded unpacked from this repo's `dist/` | His own Chrome: his tabs, logins and real archive |
-| Tool | the `chrome-devtools-haevn` MCP server | `surf` (a shell command, so every seat has it) |
-| How it connects | `--browserUrl=http://127.0.0.1:9223 --categoryExtensions` | the surf extension in his Chrome |
-| Use it for | Every check of the extension itself: its pages (`chrome-extension://…`), seed fixtures, delete, pause, cancel, break things | Provider pages and live diagnosis, read-only, with his say-so: the next section |
+> **Which browser, which command.** Both Chromes run surf, each on its own named socket, and a bare `surf` reaches neither. **Run `scripts/browsers.sh check` before your first browser command**: it says which browsers are reachable and exits 1 if any is not.
+> - **Test profile** (dummy data): `SURF_SOCKET=/tmp/surf-dev.sock surf …` for web pages, and the `chrome-devtools-haevn` MCP server for the extension's own `chrome-extension://` pages, which surf cannot control. Anything goes: seed, delete, reload, break.
+> - **Prod, αιamblichus's Chrome** (his logins and archive): `SURF_SOCKET=/tmp/surf-prod.sock surf …`. Read-only, with his say-so, in your own session: the rules below.
+> - **A brief that names no browser means the test profile.**
+> - **If the browser you were told to use is unreachable, stop and report. Never fall back to the other one.** A bare `surf` answering at all (`/tmp/surf.sock`) means a wrapper was reset by a surf install or update: stop and tell the Prior (DOT-90 manages the wrappers).
 
-If a brief does not name the browser, it is the dev profile. A subagent that may drive the dev profile is told: only `mcp__chrome-devtools-haevn__*`. There is no DevTools server for his Chrome any more (removed 2026-11-25, after the surf trial): surf replaced it there, and DevTools stays only because surf cannot control `chrome-extension://` pages ("Cannot control this page").
+| | Test profile | Prod: αιamblichus's Chrome |
+| --- | --- | --- |
+| What | A throwaway Chrome profile (`~/.local/share/haevn-dev-chrome`) with HAEVN loaded unpacked from this repo's `dist/` | His own Chrome: his tabs, logins and real archive |
+| Web pages | `SURF_SOCKET=/tmp/surf-dev.sock surf …` | `SURF_SOCKET=/tmp/surf-prod.sock surf …` |
+| Extension pages | `mcp__chrome-devtools-haevn__*` (`--browserUrl=http://127.0.0.1:9223 --categoryExtensions`) | none: read the extension through `haevn logs` and the CLI |
+| Use it for | Every check of the extension itself: its pages, seed fixtures, delete, pause, cancel, break things | Provider pages and live diagnosis, read-only, with his say-so: the next section |
+
+There is no DevTools server for his Chrome (removed 2026-11-25, after the surf trial). Why two sockets: surf's native host listens on `$SURF_SOCKET` (default `/tmp/surf.sock`), and a `--session` is only a window inside whichever Chrome owns that socket, so it cannot pick a profile. Each Chrome's host wrapper sets its own `SURF_SOCKET`: his in `~/Library/Application Support/surf-cli/host-wrapper.sh` (`/tmp/surf-prod.sock`), the test profile's from a manifest in its own `NativeMessagingHosts` folder (setup, step 3). By hand since 2026-11-26 (HVN-167); DOT-90 moves both into dotfiles (`make apply ONLY=surf`). After a reboot: start his Chrome, check that Surf is still in its extensions, `scripts/browsers.sh start-dev` if the test profile is needed, then `scripts/browsers.sh check`.
 
 ## His Chrome, with surf
 
 Read surf's own skill before the first command: `/opt/homebrew/lib/node_modules/surf-cli/skills/surf/SKILL.md` (surf 2.26; `surf --help`, `surf --help-topic <t>`). Its manual wins over anything here. The house rules on top of it, which every brief repeats:
 
+- **His socket first:** `export SURF_SOCKET=/tmp/surf-prod.sock`. Every `surf` command in this section assumes it.
 - **Your own session**, named for you and the ticket: `export SURF_SESSION=haevn-<you>-<ticket>`, then `surf session.ensure "$SURF_SESSION" about:blank`. It is a background window; never act in his tabs. Close it at the end (`surf session.close`) and check `surf session.list`.
 - **`--no-diff` from the first command** on any page of his: the diff prints page text into your transcript.
 - **Read-only.** No sync, import, restore, delete or settings change, in HAEVN or on a provider. Scrolling and reading are fine; a `click` has no write gate in surf, so the rule lives in the brief: only clicks that change nothing (open a menu, expand a section).
@@ -41,6 +48,7 @@ What we learned in the trial: `wait.element … visible` times out in a backgrou
    ```
    A non-default `--user-data-dir` is what allows `--remote-debugging-port` on current Chrome.
 2. In that window, open `chrome://extensions`, turn on developer mode, and choose "Load unpacked" → `~/Code/active/haevn/dist`. Current Chrome ignores `--load-extension`, so this is manual, but the profile remembers it.
+3. **surf on its own socket** (set up 2026-11-26). Load surf unpacked in that profile (`/opt/homebrew/lib/node_modules/surf-cli/dist`). Chrome looks for native hosts in `<user-data-dir>/NativeMessagingHosts`, not in the default profile's folder, so without step 3 the test profile's surf never connects. Write `~/.local/share/haevn-dev-chrome/surf-host-wrapper.sh`, a copy of `~/Library/Application Support/surf-cli/host-wrapper.sh` with `export SURF_SOCKET=/tmp/surf-dev.sock` added, and `NativeMessagingHosts/surf.browser.host.json` pointing at it (allowed origin `chrome-extension://oaclimdkkglbnpekeignmjenkodkaaka/`). Then reload surf in that profile. `ls /tmp/surf-dev.sock` should show the socket, and `ps -o ppid= -p <host pid>` should name the test Chrome. A `surf install` or update rewrites only the default manifest; re-check the wrapper's node and surf paths after one.
 3. The MCP entries live in `.mcp.json` at the repository root. It is local and gitignored, so write it on a new machine:
    ```json
    {
