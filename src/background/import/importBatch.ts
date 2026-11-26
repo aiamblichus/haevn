@@ -58,6 +58,8 @@ export interface ImportBatchResult {
   saved: number;
   skipped: number;
   errors: number;
+  /** The items that were not saved because loading or saving them threw, and why (`errors` counts them) */
+  failed: { name: string; message: string }[];
   /**
    * Set when the index could not be brought up to date (bulk mode would not start or the
    * rebuild would not start). The chats are saved all the same; the next index init finds them.
@@ -77,7 +79,7 @@ export async function importChatBatch(
     throw new ImportBusyError(await getActiveOperation());
   }
 
-  const result: ImportBatchResult = { processed: 0, saved: 0, skipped: 0, errors: 0 };
+  const result: ImportBatchResult = { processed: 0, saved: 0, skipped: 0, errors: 0, failed: [] };
   const savedIds: string[] = [];
   const bulk = options.index && items.length > INCREMENTAL_INDEX_MAX_CHATS;
   let bulkStarted = false;
@@ -111,6 +113,7 @@ export async function importChatBatch(
         savedIds.push(chat.id);
       } catch (err) {
         result.errors++;
+        result.failed.push({ name: item.name, message: errorMessage(err) });
         log.warn("[ImportBatch] Import skipped due to parsing/transformation error", {
           file: fileNameShape(item.name),
           error: errorShape(err),

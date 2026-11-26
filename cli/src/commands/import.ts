@@ -12,6 +12,7 @@ import { consola, pc } from "../utils/output";
 import {
   assignIds,
   collectFragmentFiles,
+  failedLines,
   type FragmentInput,
   summarizeFragmentImport,
 } from "./fragmentImport";
@@ -166,6 +167,7 @@ export function summarizeImport(
     `${pc.green("✓")} Imported ${pc.bold(String(result.saved))} chat${result.saved === 1 ? "" : "s"}`,
     `  format=${format} · processed=${result.processed}/${result.total}`,
     `  skipped=${result.skipped} · errors=${result.errors} · index=${indexState}`,
+    ...failedLines(result),
   ];
 
   return { lines, exitCode: result.indexError ? 1 : 0 };

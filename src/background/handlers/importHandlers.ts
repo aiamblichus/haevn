@@ -5,6 +5,9 @@ import { SyncService } from "../../services/syncService";
 import type { BackgroundRequest, BackgroundResponse } from "../../types/messaging";
 import type { ImportSourceType } from "../../types/workerMessages";
 import { log } from "../../utils/logger";
+import { errorShape } from "../../utils/logShape";
+import { ImportBusyError } from "../import/importBatch";
+import { importFragments } from "../import/importFragments";
 import * as ImportOrchestrator from "../import/importOrchestrator";
 
 export async function handleSaveImportedChat(
@@ -25,6 +28,48 @@ export async function handleSaveImportedChat(
     sendResponse({
       success: false,
       error: err instanceof Error ? err.message : "Save failed",
+    });
+  }
+}
+
+/**
+ * The archive's fragment import (HVN-163): the same operation as `haevn import --format fragment`.
+ * A dry run answers the plan and writes nothing; a real run answers the plan it made then and what
+ * the batch did with it. A refused file is in the plan and does not stop the others.
+ */
+export async function handleImportFragmentFiles(
+  message: Extract<BackgroundRequest, { action: "importFragmentFiles" }>,
+  sendResponse: (response: BackgroundResponse) => void,
+): Promise<void> {
+  try {
+    const { files, dryRun, overwrite } = message;
+    if (
+      !Array.isArray(files) ||
+      files.length === 0 ||
+      files.some((file) => typeof file?.name !== "string" || typeof file?.content !== "string")
+    ) {
+      throw new Error("At least one file with a name and its text is required");
+    }
+    const outcome = await importFragments(files, {
+      dryRun: dryRun === true,
+      overwrite: overwrite !== false,
+      index: true,
+    });
+    sendResponse({ success: true, data: outcome });
+  } catch (err: unknown) {
+    if (err instanceof ImportBusyError) {
+      sendResponse({
+        success: false,
+        error: err.message,
+        errorCode: "BUSY",
+        activeOperation: err.activeOperation,
+      });
+      return;
+    }
+    log.error("[importHandlers] Failed to import fragments", { error: errorShape(err) });
+    sendResponse({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to import fragments",
     });
   }
 }

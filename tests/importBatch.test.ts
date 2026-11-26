@@ -100,6 +100,7 @@ describe("importing a batch of chats (HVN-38)", () => {
       saved: INCREMENTAL_INDEX_MAX_CHATS,
       skipped: 0,
       errors: 0,
+      failed: [],
     });
     expect(startBulkSyncIndexing).not.toHaveBeenCalled();
     expect(finishBulkSyncIndexing).not.toHaveBeenCalled();
@@ -144,7 +145,16 @@ describe("importing a batch of chats (HVN-38)", () => {
 
     const result = await importChatBatch(batch, { overwrite: true, index: true });
 
-    expect(result).toEqual({ processed: 3, saved: 1, skipped: 0, errors: 2 });
+    expect(result).toEqual({
+      processed: 3,
+      saved: 1,
+      skipped: 0,
+      errors: 2,
+      failed: [
+        { name: "f0.jsonl", message: "not a session file" },
+        { name: "f1.jsonl", message: "disk full" },
+      ],
+    });
   });
 
   it("counts a chat without an id as an error", async () => {
@@ -161,7 +171,7 @@ describe("importing a batch of chats (HVN-38)", () => {
 
     const result = await importChatBatch(items(3), { overwrite: false, index: true });
 
-    expect(result).toEqual({ processed: 3, saved: 2, skipped: 1, errors: 0 });
+    expect(result).toEqual({ processed: 3, saved: 2, skipped: 1, errors: 0, failed: [] });
     expect(saveImportedChat).toHaveBeenCalledTimes(2);
   });
 

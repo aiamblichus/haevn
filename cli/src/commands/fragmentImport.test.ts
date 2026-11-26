@@ -500,6 +500,18 @@ describe("what the plan says", () => {
     expect(summary.exitCode).toBe(0);
   });
 
+  it("names the files that failed to save, with the reason (HVN-163)", () => {
+    const plan = [entry({ name: "a.md" }), entry({ name: "b.md" })];
+    const summary = summarizeFragmentImport(
+      resultOf(plan, { errors: 1, failed: [{ name: "b.md", message: "the disk is full" }] }),
+      none,
+      { dryRun: false, skipIndex: false },
+    );
+
+    expect(summary.lines.join("\n")).toContain("failed       b.md · the disk is full");
+    expect(summary.exitCode).toBe(1);
+  });
+
   it("exits 1 when a chat failed to save or the index could not be updated, on a real import only", () => {
     const plan = [entry({ name: "a.md" })];
     expect(

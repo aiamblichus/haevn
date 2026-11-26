@@ -345,6 +345,13 @@ const STATE_ORDER = [
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** One line for each file that was not saved, with the reason the extension gives (HVN-163) */
+export function failedLines(result: Pick<ImportResult, "failed">): string[] {
+  return (result.failed ?? []).map(
+    (file) => `  ${pc.red("✗")} ${"failed".padEnd(12)} ${file.name} · ${file.message}`,
+  );
+}
+
 function entryLine(entry: FragmentPlanEntry): string {
   if (REFUSED.has(entry.state)) {
     return `  ${pc.red("✗")} ${entry.state.padEnd(12)} ${entry.name}${entry.message ? ` · ${entry.message}` : ""}`;
@@ -387,6 +394,7 @@ export function summarizeFragmentImport(
         ? `${pc.green("✓")} Imported ${pc.bold(plural(result.saved, "fragment"))}`
         : `${pc.green("✓")} Nothing to import`,
       `  format=fragment · processed=${result.processed} · skipped=${result.skipped} · errors=${result.errors} · index=${indexState}`,
+      ...failedLines(result),
     );
   }
 
