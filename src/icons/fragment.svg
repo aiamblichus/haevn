@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!--
+    Fragment: a recovered chat (HVN-163, HVN-166). A speech bubble that broke
+    and was mended in gold, as kintsugi mends a bowl: what the archive keeps of
+    a conversation whose platform is gone. Violet is the brand's threshold
+    colour, gold its lighthouse. The dark rim is for light backgrounds.
+    Render the PNG beside it with: rsvg-convert -w 256 -h 256 fragment.svg -o fragment.png
+  -->
+  <defs>
+    <linearGradient id="glaze" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#9B78EC"/>
+      <stop offset="1" stop-color="#7C55D6"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE680"/>
+      <stop offset="1" stop-color="#FFC83A"/>
+    </linearGradient>
+    <path id="bubble" d="M60 28 H196 A40 40 0 0 1 236 68 V156 A40 40 0 0 1 196 196 H122 L50 240 L72 196 H60 A40 40 0 0 1 20 156 V68 A40 40 0 0 1 60 28 Z"/>
+    <clipPath id="inside"><use href="#bubble"/></clipPath>
+  </defs>
+  <use href="#bubble" fill="url(#glaze)" stroke="#14202E" stroke-width="12" stroke-linejoin="round" paint-order="stroke"/>
+  <g clip-path="url(#inside)" fill="none" stroke="url(#gold)" stroke-width="16" stroke-linejoin="round" stroke-linecap="round">
+    <polyline points="152,16 140,76 168,104 134,148 150,212"/>
+    <polyline points="168,104 206,120 250,108"/>
+    <polyline points="134,148 92,166 80,240"/>
+  </g>
+</svg>
