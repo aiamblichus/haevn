@@ -18,6 +18,18 @@ import {
   truncate,
 } from "../utils/output";
 
+/**
+ * The index holds rows that are no message of the chat: a model or a tag (a `label`), and the
+ * chat's title and system prompt (ids `title` and `system`, HVN-174). `get -m` can resolve none
+ * of them, so none is given a ref.
+ */
+const SYNTHETIC_IDS = new Set(["title", "system"]);
+
+function messageRefOf(result: SearchResult): string | undefined {
+  if (result.label || SYNTHETIC_IDS.has(result.messageId)) return undefined;
+  return createMessageRef(result.chatId, result.messageId);
+}
+
 export default defineCommand({
   meta: {
     name: "search",
@@ -136,11 +148,10 @@ export function searchJson(
     : results.map(({ metadata, metaTitle, ...rest }) => rest);
 
   return toJsonString({
-    results: jsonResults.map((result) => ({
-      ...result,
-      // A model or a tag is no message of the chat, so it has no ref to fetch it by.
-      ...(result.label ? {} : { messageRef: createMessageRef(result.chatId, result.messageId) }),
-    })),
+    results: jsonResults.map((result) => {
+      const messageRef = messageRefOf(result);
+      return messageRef === undefined ? result : { ...result, messageRef };
+    }),
     total: jsonResults.length,
     hasMore: options.hasMore,
     ...(options.hint ? { hint: options.hint } : {}),
@@ -219,9 +230,8 @@ export function formatSearchResultsText(
     const modelSuffix = result.model ? ` · ${pc.dim(truncate(safeText(result.model), 24))}` : "";
 
     // A model or a tag is no message of the chat: it has no ref to fetch it by, and no time.
-    const ref = result.label
-      ? ""
-      : ` ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`;
+    const messageRef = messageRefOf(result);
+    const ref = messageRef === undefined ? "" : ` ${pc.dim(`[${messageRef}]`)}`;
     const when = result.label ? "" : ` · ${pc.dim(time)}`;
 
     lines.push(`  ${pc.dim("┌─")}${ref}`);

@@ -218,11 +218,11 @@ This keeps daemon requests small and avoids long-running payload transfers from 
 Use `--format json` and pipe to `jq`:
 
 ```bash
-haevn search "emergence" --format json | jq '[.results[] | select(.label | not)][0] | {chatId, messageRef, source}'
+haevn search "emergence" --format json | jq '[.results[] | select(.messageRef)][0] | {chatId, messageRef, source}'
 ```
 
 Useful fields:
-- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`. A hit in a chat that has only a rough date has `dateLabel` (`"2024"`, `"c. Mar 2024"`, `"undated"`) and no `messageTimestamp`. A hit on a model or a tag (from `model:` or `tag:`) has `label` set and no `messageRef`; skip it with `select(.label | not)` before you pass a ref to `haevn get`
+- `search`: `chatId`, `messageRef`, `messageSnippet`, `source`. A hit in a chat that has only a rough date has `dateLabel` (`"2024"`, `"c. Mar 2024"`, `"undated"`) and no `messageTimestamp`. A hit on a model or a tag (from `model:` or `tag:`) has `label` set and no `messageRef`, and so does a hit on the chat's title or system prompt; keep only rows with a ref (`select(.messageRef)`) before you pass one to `haevn get -m`
 - `branches`: `tree`, `branches[].leafMessageRef`, `branches[].path`
 - `get`: branch content suitable for markdown or structured JSON workflows
 

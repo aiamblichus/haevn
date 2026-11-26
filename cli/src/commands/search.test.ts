@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequestWithMeta } from "../daemon/client.js";
 import { runAsTyped } from "../testing/runAsTyped";
-import type { SearchResult } from "../types/chat";
+import type { Chat, SearchResult } from "../types/chat";
+import { resolveMessageRef } from "../utils/messageRefs";
 import { consola } from "../utils/output";
 import searchCommand, { formatSearchResultsText, searchJson } from "./search";
 
@@ -178,5 +179,50 @@ describe("haevn search and a chat with a rough date (HVN-163)", () => {
     const out = formatSearchResultsText([hit({ messageTimestamp: Date.now() - 3 * 3600_000 })]);
 
     expect(out).toContain("3h ago");
+  });
+});
+
+describe("haevn search and the ids the index makes up (HVN-174)", () => {
+  // The index holds a row for the chat's title (`title`) and one for its system prompt
+  // (`system`) beside the rows of its messages. Neither is a message of the chat, so
+  // `get --message` has nothing to resolve them to.
+  const chat = {
+    id: "chat-A",
+    title: "Platform title",
+    messages: { m1: { id: "m1" }, m2: { id: "m2" } },
+  } as unknown as Chat;
+  const rows = [
+    hit({ messageId: "title", messageContent: "Platform title" }),
+    hit({ messageId: "system", messageContent: "Be brief." }),
+    hit({ messageId: "m1" }),
+    hit({ messageId: "m2", messageRole: "assistant" }),
+  ];
+
+  it("hands out only refs that `get --message` accepts", () => {
+    const parsed = JSON.parse(searchJson(rows, { includeMetadata: true, hasMore: false }));
+
+    const refs: string[] = parsed.results
+      .map((row: { messageRef?: string }) => row.messageRef)
+      .filter((ref: string | undefined): ref is string => ref !== undefined);
+
+    expect(refs.length).toBeGreaterThan(0);
+    for (const ref of refs) {
+      expect(resolveMessageRef(chat, ref).error).toBeUndefined();
+    }
+  });
+
+  it("gives the title and the system prompt no messageRef, and keeps the hit", () => {
+    const parsed = JSON.parse(searchJson(rows, { includeMetadata: true, hasMore: false }));
+
+    expect(parsed.results[0]).toMatchObject({ messageId: "title", messageContent: "Platform title" });
+    expect(parsed.results[0]).not.toHaveProperty("messageRef");
+    expect(parsed.results[1]).not.toHaveProperty("messageRef");
+    expect(parsed.results[2].messageRef).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("prints no bracketed ref for them in text", () => {
+    const out = formatSearchResultsText(rows.slice(0, 2));
+
+    expect(out).not.toMatch(/\[[0-9a-f]{12}\]/);
   });
 });
