@@ -246,6 +246,12 @@ export interface Chat {
   messages: { [key: string]: ChatMessage };
   tags: string[];
   timestamp: number;
+  /**
+   * Set by the bridge for a chat with a rough date: its label ("c. Mar 2024", "undated"), which the
+   * CLI shows where a time would be. Its stored times are made up (HVN-163, HVN-171). Absent from
+   * an older extension, and then the CLI shows the stored time as it always did.
+   */
+  dateLabel?: string;
   files?: Record<string, unknown>[];
   // Sync metadata
   lastSyncedTimestamp: number;

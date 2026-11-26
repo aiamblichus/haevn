@@ -4,7 +4,6 @@
 
 import type { Chat, ChatMessage } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
-import { roughDateLabelOf } from "../utils/roughDate";
 import {
   buildChatTree,
   getMessageRole,
@@ -15,17 +14,18 @@ import {
 } from "../utils/tree";
 
 /**
- * The time of a chat in its JSON. A chat with a rough date has made-up times (HVN-163), so it gives
- * its label as `dateLabel` and no `timestamp`, here and on each message (HVN-171).
+ * The time of a chat in its JSON. A chat with a rough date gives its label as `dateLabel` and no
+ * `timestamp`, here and on each message: its stored times are made up (HVN-163, HVN-171).
  */
 function chatTimeFields(chat: Chat): { timestamp?: number; dateLabel?: string } {
-  const dateLabel = roughDateLabelOf(chat);
-  return dateLabel === undefined ? { timestamp: chat.timestamp } : { dateLabel };
+  return chat.dateLabel === undefined
+    ? { timestamp: chat.timestamp }
+    : { dateLabel: chat.dateLabel };
 }
 
 /** A message's time in its JSON: none for a chat with a rough date (see chatTimeFields). */
 function messageTimeFields(chat: Chat, message: ChatMessage): { timestamp?: number } {
-  return roughDateLabelOf(chat) === undefined ? { timestamp: message.timestamp } : {};
+  return chat.dateLabel === undefined ? { timestamp: message.timestamp } : {};
 }
 
 export interface BranchJsonOptions {

@@ -4,7 +4,6 @@
 
 import type { Chat, ChatMessage } from "../types/chat";
 import { formatTimestamp } from "../utils/output";
-import { roughDateLabelOf } from "../utils/roughDate";
 import {
   buildChatTree,
   type GetMessageTextOptions,
@@ -215,12 +214,12 @@ function formatMessageForMarkdown(message: ChatMessage, options: GetMessageTextO
  * Format metadata line for header.
  */
 function formatMetadata(chat: Chat): string {
-  // A chat with a rough date shows its label where a time would be: its stored time is made up
-  // (HVN-163, HVN-171).
+  // A chat with a rough date shows its label where a time would be (HVN-171); its stored time is made
+  // up (HVN-163).
   const parts = [
     `Chat ID: \`${chat.id}\``,
     `Platform: ${chat.source}`,
-    roughDateLabelOf(chat) ?? formatTimestamp(chat.timestamp),
+    chat.dateLabel ?? formatTimestamp(chat.timestamp),
   ];
 
   return parts.join(" | ");

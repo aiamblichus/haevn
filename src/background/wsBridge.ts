@@ -36,6 +36,7 @@
  */
 
 import type { Chat, ChatMessage, SearchResult } from "../model/haevn_model";
+import { roughDateLabelOf } from "../model/roughDate";
 import { parseClaudeCodeJsonl } from "../providers/claudecode/importer";
 import { transformToHaevnChat } from "../providers/claudecode/transformer";
 import { parseCodexJsonl } from "../providers/codex/importer";
@@ -954,6 +955,16 @@ function pickListMetadata(
   return out;
 }
 
+/**
+ * A chat with a rough date gives its label as `dateLabel` (HVN-171), the one label the archive
+ * shows, so the CLI prints it where a time would be: the stored times of such a chat are made up
+ * (HVN-163). Any other chat is sent as it is, so an older CLI sees no new key.
+ */
+function withDateLabel(chat: Chat): Chat & { dateLabel?: string } {
+  const dateLabel = roughDateLabelOf(chat);
+  return dateLabel === undefined ? chat : { ...chat, dateLabel };
+}
+
 async function handleGet(
   id: string,
   req: Extract<WsRequest, { action: "get" }>,
@@ -983,7 +994,7 @@ async function handleGet(
     id,
     success: true,
     data: {
-      ...chat,
+      ...withDateLabel(chat),
       messages: toMessageDict(branchMessages),
     },
   };
@@ -999,7 +1010,7 @@ async function handleBranches(
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
-  return { id, success: true, data: chat };
+  return { id, success: true, data: withDateLabel(chat) };
 }
 
 function resolveWsExporterId(options?: WsExportOptions): WsExporterId {

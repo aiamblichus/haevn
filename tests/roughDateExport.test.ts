@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { roughDateLabelOf as cliLabelOf } from "../cli/src/utils/roughDate";
 import { generateExportContent } from "../src/formatters";
 import type { Chat } from "../src/model/haevn_model";
-import { formatRoughDate, type RoughDate } from "../src/model/roughDate";
 import { transformFragmentToHaevnChat } from "../src/providers/fragment";
 import { parsed, withId } from "./helpers/fragmentFile";
 
@@ -98,66 +96,3 @@ describe("a chat with no rough date is unchanged (HVN-171)", () => {
   });
 });
 
-describe("the CLI's rough-date labels agree with the extension's (HVN-171)", () => {
-  const CASES: Array<[string, RoughDate]> = [
-    [
-      "a year",
-      {
-        text: "2024",
-        precision: "year",
-        approximate: false,
-        from: Date.UTC(2024, 0, 1),
-        to: Date.UTC(2025, 0, 1),
-      },
-    ],
-    [
-      "an approximate month",
-      {
-        text: "~2024-03",
-        precision: "month",
-        approximate: true,
-        from: Date.UTC(2024, 2, 1),
-        to: Date.UTC(2024, 3, 1),
-      },
-    ],
-    [
-      "a day",
-      {
-        text: "2024-03-15",
-        precision: "day",
-        approximate: false,
-        from: Date.UTC(2024, 2, 15),
-        to: Date.UTC(2024, 2, 16),
-      },
-    ],
-    [
-      "a range",
-      {
-        text: "2023-11..2024-02",
-        precision: "range",
-        approximate: false,
-        from: Date.UTC(2023, 10, 1),
-        to: Date.UTC(2024, 2, 1),
-      },
-    ],
-    [
-      "a not-before date",
-      {
-        text: "2024-03..",
-        precision: "after",
-        approximate: false,
-        from: Date.UTC(2024, 2, 1),
-        to: null,
-      },
-    ],
-    ["no date", { text: "", precision: "unknown", approximate: false, from: 0, to: 0 }],
-  ];
-
-  it.each(CASES)("labels %s as the extension does", (_, rough) => {
-    expect(cliLabelOf({ params: { roughDate: rough } })).toBe(formatRoughDate(rough));
-  });
-
-  it("has no label for a chat without a rough date", () => {
-    expect(cliLabelOf({ params: {} })).toBeUndefined();
-  });
-});

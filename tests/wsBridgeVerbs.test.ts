@@ -15,6 +15,8 @@ const saveImportedChat = vi.hoisted(() => vi.fn());
 const getChatsMetadata = vi.hoisted(() => vi.fn());
 const getChatMessages = vi.hoisted(() => vi.fn());
 const unmovedRefusal = vi.hoisted(() => vi.fn());
+const getPrimaryBranchMessages = vi.hoisted(() => vi.fn());
+const getChatWithMessages = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/services/settingsService", () => ({
   getCliSettings,
@@ -28,6 +30,8 @@ vi.mock("../src/services/syncService", () => ({
     getChatsMetadata,
     getChatMessages,
     unmovedRefusal,
+    getPrimaryBranchMessages,
+    getChatWithMessages,
     startBulkSyncIndexing,
     finishBulkSyncIndexing,
   },
@@ -551,6 +555,75 @@ describe("get, branches and export refuse a chat whose messages have not moved (
     expect(reply).toMatchObject({ success: false, error: refusal });
     expect(unmovedRefusal).toHaveBeenCalledWith("old");
     expect(getChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("get and branches carry a rough date's label (HVN-171)", () => {
+  // A fragment dated ~2024-03: its stored times are made up for ordering (HVN-163).
+  const ROUGH = {
+    text: "~2024-03",
+    precision: "month",
+    approximate: true,
+    from: Date.UTC(2024, 2, 1),
+    to: Date.UTC(2024, 3, 1),
+  };
+  const TIMESTAMP = Date.UTC(2024, 2, 16, 12);
+  const chat = {
+    id: "c-rough",
+    source: "fragment",
+    sourceId: "7b0e6c1e-2f4a-4c58-9d0b-3a1f5e8c9a12",
+    title: "The lantern keeper",
+    models: ["made-up-model"],
+    params: { roughDate: ROUGH },
+    currentId: "t0002",
+    messages: {},
+    tags: [],
+    timestamp: TIMESTAMP,
+    lastSyncedTimestamp: TIMESTAMP,
+    checksum: "",
+    syncStatus: "synced",
+    deleted: 0,
+  };
+
+  beforeEach(() => {
+    getChat.mockResolvedValue(chat);
+    getChatWithMessages.mockResolvedValue({ ...chat, messages: {} });
+    getPrimaryBranchMessages.mockResolvedValue([]);
+  });
+
+  it("get gives the label, and keeps the stored times and params as they were", async () => {
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({ action: "get", chatId: "c-rough", options: {} });
+
+    expect(reply).toMatchObject({
+      success: true,
+      data: { dateLabel: "c. Mar 2024", timestamp: TIMESTAMP, params: { roughDate: ROUGH } },
+    });
+  });
+
+  it("branches gives the label too", async () => {
+    const { ask } = await connectedBridge();
+
+    const reply = await ask({ action: "branches", chatId: "c-rough" });
+
+    expect(reply).toMatchObject({
+      success: true,
+      data: { dateLabel: "c. Mar 2024", timestamp: TIMESTAMP },
+    });
+  });
+
+  it("a chat without a rough date gets no dateLabel, so an older CLI sees nothing new", async () => {
+    const plain = { ...chat, params: {} };
+    getChat.mockResolvedValue(plain);
+    getChatWithMessages.mockResolvedValue({ ...plain, messages: {} });
+    const { ask } = await connectedBridge();
+
+    const got = await ask({ action: "get", chatId: "c-rough", options: {} });
+    const branches = await ask({ action: "branches", chatId: "c-rough" });
+
+    expect(got.data).not.toHaveProperty("dateLabel");
+    expect(branches.data).not.toHaveProperty("dateLabel");
   });
 });
 
