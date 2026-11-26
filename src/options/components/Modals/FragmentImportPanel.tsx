@@ -45,6 +45,7 @@ import {
   type SessionState,
   type ToneNotice,
 } from "../../import/fragmentSession";
+import { hasFiles } from "../../import/windowDropGuard";
 import { FilesRegion } from "./FilesRegion";
 
 const DOCS = "https://haevn.pages.dev/user-guide/fragments/";
@@ -70,9 +71,6 @@ interface FragmentImportPanelProps {
   /** Focus "Choose files…" as the panel opens (the dialog was opened on this format alone) */
   focusFirst: boolean;
 }
-
-const hasFiles = (event: DragEvent) =>
-  event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files");
 
 export const FragmentImportPanel = ({
   onBusyChange,
@@ -137,19 +135,6 @@ export const FragmentImportPanel = ({
     return () => {
       importRunRef.current += 1;
       sessionRef.current?.dispose();
-    };
-  }, []);
-
-  // A file dropped beside the dialog must not take the tab away from the archive
-  useEffect(() => {
-    const keep = (event: DragEvent) => {
-      if (hasFiles(event)) event.preventDefault();
-    };
-    window.addEventListener("dragover", keep);
-    window.addEventListener("drop", keep);
-    return () => {
-      window.removeEventListener("dragover", keep);
-      window.removeEventListener("drop", keep);
     };
   }, []);
 
