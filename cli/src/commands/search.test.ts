@@ -214,7 +214,10 @@ describe("haevn search and the ids the index makes up (HVN-174)", () => {
   it("gives the title and the system prompt no messageRef, and keeps the hit", () => {
     const parsed = JSON.parse(searchJson(rows, { includeMetadata: true, hasMore: false }));
 
-    expect(parsed.results[0]).toMatchObject({ messageId: "title", messageContent: "Platform title" });
+    expect(parsed.results[0]).toMatchObject({
+      messageId: "title",
+      messageContent: "Platform title",
+    });
     expect(parsed.results[0]).not.toHaveProperty("messageRef");
     expect(parsed.results[1]).not.toHaveProperty("messageRef");
     expect(parsed.results[2].messageRef).toMatch(/^[0-9a-f]{12}$/);
