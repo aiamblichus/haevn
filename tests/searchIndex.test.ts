@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { IndexedChat, IndexedMessage } from "../src/services/searchDocument";
+import { type IndexedChat, type IndexedMessage, LABEL_IDS } from "../src/services/searchDocument";
 import {
   INDEX_FORMAT_VERSION,
   type IndexFilters,
@@ -14,14 +14,23 @@ import { type IndexKit, kits, sqliteKit } from "./helpers/indexKit";
 function chat(
   id: string,
   texts: string[],
-  extra: Partial<Pick<IndexedChat, "title" | "source" | "timestamp">> = {},
+  extra: Partial<Pick<IndexedChat, "title" | "source" | "timestamp" | "models" | "tags">> = {},
 ): IndexedChat {
   const messages: IndexedMessage[] = texts.map((text, i) => ({
     id: `${id}-m${i + 1}`,
     role: i % 2 === 0 ? "user" : "assistant",
     text,
   }));
-  return { id, title: "", source: "test", timestamp: 1_000, messages, ...extra };
+  return {
+    id,
+    title: "",
+    source: "test",
+    timestamp: 1_000,
+    models: [],
+    tags: [],
+    messages,
+    ...extra,
+  };
 }
 
 const plan = (query: string) => buildQueryPlan(parseSearchQuery(query));
@@ -736,5 +745,282 @@ describe("which file of the SQLite index is read, and which is wiped (HVN-87)", 
     expect(await index.open()).toBe(true);
 
     expect(ids("pineapple")).toEqual(["newer"]);
+  });
+});
+
+describe.each(kits)("models and tags in the index, on $name (HVN-164)", (kit: IndexKit) => {
+  let index: SearchIndex;
+
+  async function openWith(...chats: IndexedChat[]): Promise<void> {
+    index = kit.create();
+    await index.open();
+    const build = index.beginRebuild();
+    build.transaction(() => {
+      for (const c of chats) build.put(c);
+    });
+    build.commit();
+  }
+
+  const ids = (query: string) =>
+    index
+      .search(plan(query))
+      .map((r) => r.chatId)
+      .sort();
+
+  /** The chats of the tests below: `a` and `b` carry labels, `c` carries none. */
+  const a = chat("a", ["tell me about cats"], {
+    models: ["gpt-4o"],
+    tags: ["poetry", "creative writing"],
+  });
+  const b = chat("b", ["poetry is only mentioned in the text"], {
+    models: ["claude-3-5-sonnet", "gpt-4"],
+    tags: ["code"],
+  });
+  const c = chat("c", ["nothing to see"]);
+
+  beforeEach(() => {
+    kit.reset();
+  });
+
+  afterEach(() => {
+    index?.close();
+  });
+
+  it("finds a chat by a model or a tag typed as a plain word, as it finds a word of its text", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("poetry")).toEqual(["a", "b"]); // a's tag, b's message
+    expect(ids("sonnet")).toEqual(["b"]);
+    expect(ids("4o")).toEqual(["a"]);
+    expect(ids("creative writing")).toEqual(["a"]);
+  });
+
+  it("finds a chat by its label only, with model: and tag:", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("tag:poetry")).toEqual(["a"]); // not b, which has the word in its text
+    expect(ids("tag:code")).toEqual(["b"]);
+    expect(ids("model:sonnet")).toEqual(["b"]);
+    expect(ids("tag:cats")).toEqual([]); // a word of a's text, not a tag
+  });
+
+  it("keeps the two kinds apart", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("model:poetry")).toEqual([]);
+    expect(ids("tag:gpt")).toEqual([]);
+    expect(ids("model:code")).toEqual([]);
+  });
+
+  it("takes a hyphenated label as the label it is, not as its parts", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("model:gpt")).toEqual(["a", "b"]); // a word of either
+    expect(ids("model:gpt-4o")).toEqual(["a"]);
+    expect(ids("model:gpt-4")).toEqual(["b"]); // `4` next to `gpt`; a's is `4o`
+    expect(ids("model:claude-3-5-sonnet")).toEqual(["b"]);
+    expect(ids("model:sonnet-3")).toEqual([]); // the words of a label in another order
+    expect(ids("model:4o-gpt")).toEqual([]);
+  });
+
+  it("does not find a label by words that are in two different labels", async () => {
+    await openWith(a, b, c);
+
+    // `gpt-4o`'s `gpt` and `claude-3-5-sonnet`'s `sonnet` are both b's models, but one label has
+    // only one of them.
+    expect(ids("model:gpt-sonnet")).toEqual([]);
+    expect(ids('tag:"poetry creative"')).toEqual([]); // two tags of a, side by side in no label
+    expect(ids('tag:"creative writing"')).toEqual(["a"]);
+  });
+
+  it("goes on after the last word of a label typed with a star", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("model:gpt*")).toEqual(["a", "b"]);
+    expect(ids("model:gpt-4*")).toEqual(["a", "b"]); // `4o` and `4`
+    expect(ids("model:claude-3*")).toEqual(["b"]);
+    expect(ids("tag:poet*")).toEqual(["a"]);
+  });
+
+  it("combines labels with each other and with the text, every part required", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("tag:poetry model:gpt-4o")).toEqual(["a"]);
+    expect(ids("tag:poetry model:gpt-4")).toEqual([]);
+    expect(ids("tag:poetry cats")).toEqual(["a"]);
+    expect(ids("tag:poetry mentioned")).toEqual([]);
+    expect(ids("tag:code mentioned")).toEqual(["b"]);
+  });
+
+  it("leaves out a chat that has the label, in either way of typing it", async () => {
+    await openWith(a, b, c);
+
+    expect(ids("poetry -tag:code")).toEqual(["a"]);
+    expect(ids("poetry -code")).toEqual(["a"]); // a plain word sees the labels too
+    expect(ids("tag:poetry -model:gpt-4o")).toEqual([]);
+    expect(ids("poetry -model:gpt-4")).toEqual(["a"]);
+    expect(ids("poetry -tag:cats")).toEqual(["a", "b"]); // cats is not a tag
+  });
+
+  it("folds case and accents in a label, as it does in text", async () => {
+    await openWith(chat("x", ["hello"], { models: ["Café-Model"], tags: ["Déjà Vu"] }));
+
+    expect(ids("model:CAFE-model")).toEqual(["x"]);
+    expect(ids('tag:"deja vu"')).toEqual(["x"]);
+  });
+
+  it("indexes a label again when the chat is written again", async () => {
+    await openWith(a, b, c);
+
+    index.put({ ...a, tags: ["essays"], models: [] });
+
+    expect(ids("tag:poetry")).toEqual([]);
+    expect(ids("model:gpt-4o")).toEqual([]);
+    expect(ids("tag:essays")).toEqual(["a"]);
+    expect(ids("cats")).toEqual(["a"]); // its text is still there
+  });
+
+  it("forgets a label when the chat is removed", async () => {
+    await openWith(a, b, c);
+
+    index.remove("a");
+
+    expect(ids("tag:poetry")).toEqual([]);
+    expect(ids("model:gpt")).toEqual(["b"]);
+  });
+
+  it("gives a chat the rows of fifty labels of a kind and no more, and never one of the next chat", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `label${i}`);
+    await openWith(
+      chat("many", ["text"], { tags: many }),
+      chat("next", ["text"], { tags: ["onlyhere"] }),
+    );
+
+    expect(ids("tag:label0")).toEqual(["many"]);
+    expect(ids("tag:label49")).toEqual(["many"]);
+    expect(ids("tag:label50")).toEqual([]);
+    expect(ids("tag:onlyhere")).toEqual(["next"]);
+    expect(ids("tag:label59")).toEqual([]);
+  });
+
+  describe("passages", () => {
+    const passagesOf = (query: string, chatId: string, limit?: number) =>
+      index.passages(plan(query), chatId, limit);
+
+    it("shows the label that matched, as a passage that names no message", async () => {
+      await openWith(a, b, c);
+
+      const [tag, ...rest] = passagesOf("tag:poetry", "a");
+
+      expect(rest).toEqual([]);
+      expect(tag).toMatchObject({ messageId: LABEL_IDS.tag, text: "poetry" });
+      expect(marked(tag)).toEqual(["poetry"]);
+    });
+
+    it("shows the model of a model: search, and marks only what the label has", async () => {
+      await openWith(a, b, c);
+
+      const [model] = passagesOf("model:claude-3*", "b");
+
+      expect(model).toMatchObject({ messageId: LABEL_IDS.model, text: "claude-3-5-sonnet" });
+      expect(marked(model)).toEqual(["claude-3"]); // the phrase, as one mark
+    });
+
+    it("shows a plain word's hit in a label as it shows one in a message", async () => {
+      await openWith(a, b, c);
+
+      const found = passagesOf("poetry", "a");
+
+      expect(found.map((p) => p.messageId)).toEqual([LABEL_IDS.tag]);
+      expect(passagesOf("poetry", "b").map((p) => p.messageId)).toEqual(["b-m1"]);
+    });
+
+    it("shows the messages first and the labels last, and a label of each kind once", async () => {
+      await openWith(
+        chat("d", ["gpt is a word", "and so is code"], {
+          models: ["gpt-4", "gpt-4o"],
+          tags: ["code"],
+        }),
+      );
+
+      const found = passagesOf("gpt code", "d");
+
+      expect(found.map((p) => p.messageId)).toEqual([
+        "d-m1",
+        "d-m2",
+        LABEL_IDS.model,
+        LABEL_IDS.tag,
+      ]);
+      expect(passagesOf("gpt code", "d", 3).map((p) => p.messageId)).toEqual([
+        "d-m1",
+        "d-m2",
+        LABEL_IDS.model,
+      ]);
+    });
+
+    it("shows both the text and the label of a query that has both", async () => {
+      await openWith(a, b, c);
+
+      const found = passagesOf("tag:poetry cats", "a");
+
+      expect(found.map((p) => p.messageId)).toEqual(["a-m1", LABEL_IDS.tag]);
+      expect(marked(found[0])).toEqual(["cats"]);
+      expect(marked(found[1])).toEqual(["poetry"]);
+    });
+
+    it("shows no passage of a text that has the word of a tag: it is not a hit", async () => {
+      await openWith(a, b, c);
+
+      expect(passagesOf("tag:poetry", "b")).toEqual([]);
+    });
+
+    it("gives the same passages for many chats at once as for each alone", async () => {
+      // More chats than the index seeks one by one, so that the pass over the rows is the one run.
+      const chats = Array.from({ length: 12 }, (_, i) =>
+        chat(`m${i}`, [`text of ${i} with cats`], {
+          models: i % 2 === 0 ? ["gpt-4o"] : ["claude"],
+          tags: ["shared"],
+        }),
+      );
+      await openWith(...chats);
+      const everyId = chats.map((x) => x.id);
+
+      for (const query of ["tag:shared", "model:gpt-4o cats", "cats", "tag:shared model:claude"]) {
+        const together = index.passagesFor(plan(query), everyId);
+        for (const id of everyId) {
+          expect(together.get(id) ?? [], `${query} in ${id}`).toEqual(passagesOf(query, id));
+        }
+      }
+      expect(index.passagesFor(plan("tag:shared"), everyId).size).toBe(12);
+      expect(index.passagesFor(plan("model:gpt-4o"), everyId).size).toBe(6);
+    });
+  });
+
+  describe("ranking and filters", () => {
+    it("keeps the filters: a labelled search is cut by provider and date as any other", async () => {
+      await openWith(
+        chat("old", ["x"], { tags: ["shared"], source: "claude", timestamp: 100 }),
+        chat("new", ["x"], { tags: ["shared"], source: "chatgpt", timestamp: 900 }),
+      );
+
+      expect(
+        index.search(plan("tag:shared"), { provider: "chatgpt" }).map((r) => r.chatId),
+      ).toEqual(["new"]);
+      expect(index.search(plan("tag:shared"), { before: 500 }).map((r) => r.chatId)).toEqual([
+        "old",
+      ]);
+    });
+
+    it("scores a labelled search, so that the chats come back in a stable order", async () => {
+      await openWith(
+        chat("p", ["x"], { tags: ["shared"] }),
+        chat("q", ["x"], { tags: ["shared"] }),
+      );
+
+      const ranked = index.search(plan("tag:shared"));
+
+      expect(ranked.map((r) => r.chatId)).toEqual(["p", "q"]);
+      expect(ranked.every((r) => Number.isFinite(r.score) && r.score > 0)).toBe(true);
+    });
   });
 });

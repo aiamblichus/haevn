@@ -309,6 +309,11 @@ export interface SearchResult {
   messageSnippet: string;
   messageContent: string;
   messageRole: "user" | "assistant";
+  /**
+   * Set when the passage is one of the chat's models or tags, not a message: `messageContent` is
+   * that label, and `messageId` names no message of the chat.
+   */
+  label?: "model" | "tag";
   messageTimestamp?: number;
   model?: string;
   params?: Record<string, unknown>;

@@ -59,6 +59,8 @@ describe("the search index's build (HVN-87)", () => {
       title: "",
       source: "test",
       timestamp: 1,
+      models: [],
+      tags: [],
       messages: [{ id: "m", role: "user", text: "a pineapple" }],
     });
     build.commit();

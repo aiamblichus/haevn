@@ -4,6 +4,7 @@
 // a colon, a bracket), and FTS5 cuts and folds the quoted text with the tokenizer of the index,
 // which is what makes `café` find `cafe`.
 
+import type { LabelKind } from "./searchDocument";
 import type { QueryClause, QueryPlan } from "./searchWorkerQuery";
 
 /** The words of the index within `maxEdits` edits of `term`, for the clauses typed `word~N`. */
@@ -15,7 +16,9 @@ export function quoteMatch(text: string): string {
 }
 
 function clauseMatch(clause: QueryClause, variants: Variants): string {
-  if (clause.phrase) return quoteMatch(clause.term);
+  // A phrase is exact, but a label typed `claude-3*` may go on after its last word.
+  if (clause.phrase)
+    return clause.prefix ? `${quoteMatch(clause.term)} *` : quoteMatch(clause.term);
   if (clause.editDistance) {
     const near = variants(clause.term, clause.editDistance);
     // A word the index has no neighbour of is still asked for as typed, and finds nothing.
@@ -27,27 +30,37 @@ function clauseMatch(clause: QueryClause, variants: Variants): string {
   return clause.prefix ? `${quoteMatch(clause.term)} *` : quoteMatch(clause.term);
 }
 
+/** One MATCH string, and the labels it is confined to (none: it looks at every row of a chat). */
+export interface Match {
+  text: string;
+  scope?: LabelKind;
+}
+
 /** The plan in the three groups the index answers separately. */
 export interface PlanMatches {
   /** One MATCH per clause the chat must satisfy; a chat is a result when every one holds. */
-  required: string[];
+  required: Match[];
   /** Clauses of which any one will do (the relaxed plan). */
-  optional: string[];
+  optional: Match[];
   /** Clauses a chat must not satisfy (`-word`). */
-  excluded: string[];
+  excluded: Match[];
 }
 
 export function buildMatches(plan: QueryPlan, variants: Variants): PlanMatches {
   const matches: PlanMatches = { required: [], optional: [], excluded: [] };
   for (const clause of plan.clauses) {
-    matches[clause.presence].push(clauseMatch(clause, variants));
+    matches[clause.presence].push({
+      text: clauseMatch(clause, variants),
+      ...(clause.scope ? { scope: clause.scope } : {}),
+    });
   }
   return matches;
 }
 
-/** `parts` as one MATCH, any of them; null for none. */
-export function anyOf(parts: string[]): string | null {
-  return parts.length === 0 ? null : parts.join(" OR ");
+/** The matches of one scope (none: the ones that look at every row), as one MATCH; null for none. */
+export function anyOf(parts: Match[], scope?: LabelKind): string | null {
+  const texts = parts.filter((part) => part.scope === scope).map((part) => part.text);
+  return texts.length === 0 ? null : texts.join(" OR ");
 }
 
 /**

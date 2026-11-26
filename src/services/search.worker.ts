@@ -16,7 +16,7 @@ import {
   readBulkWindow,
   settleBulkWindow,
 } from "./searchBulkWindow";
-import { extractIndexedChat } from "./searchDocument";
+import { extractIndexedChat, labelKindOf } from "./searchDocument";
 import { inCategory, needsCategory } from "./searchFilters";
 import {
   createSearchIndex,
@@ -598,18 +598,22 @@ async function performSearch(
 
 /** The passages of one chat, as the results a caller shows. */
 function resultsOf(chat: Chat, found: MarkedPassage[], radius: number): SearchResult[] {
-  return found.map((passage) => ({
-    chatId: chat.id as string,
-    chatTitle: chat.title || "Untitled",
-    source: chat.source,
-    messageId: passage.messageId,
-    messageContent: passage.text,
-    messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
-    messageRole: passage.role,
-    messageTimestamp: passage.timestamp ?? chat.timestamp,
-    model: passage.model,
-    params: chat.params,
-  }));
+  return found.map((passage) => {
+    const label = labelKindOf(passage.messageId);
+    return {
+      chatId: chat.id as string,
+      chatTitle: chat.title || "Untitled",
+      source: chat.source,
+      messageId: passage.messageId,
+      messageContent: passage.text,
+      messageSnippet: buildSnippet(passage.text, passage.marks, { radius }),
+      messageRole: passage.role,
+      ...(label ? { label } : {}),
+      messageTimestamp: passage.timestamp ?? chat.timestamp,
+      model: passage.model,
+      params: chat.params,
+    };
+  });
 }
 
 // --- Message Handling ---
