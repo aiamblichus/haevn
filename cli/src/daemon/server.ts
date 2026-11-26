@@ -220,7 +220,10 @@ export async function startDaemon(
 
   // ── WebSocket server ────────────────────────────────────────────────────────
 
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  // A message over maxPayload closes the extension's socket (1009). The extension answers a larger
+  // reply with an error instead (`DAEMON_MAX_MESSAGE_BYTES` in `src/background/wsBridge.ts`, HVN-176):
+  // keep the two numbers equal.
+  const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 100 * 1024 * 1024 });
 
   wss.on("connection", (ws) => {
     let authenticated = false;

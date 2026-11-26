@@ -108,7 +108,7 @@ type WsRequest =
   | { id: string; action: "search"; query: string; options?: WsSearchOptions }
   | { id: string; action: "get"; chatId: string; options?: WsGetOptions }
   | { id: string; action: "list"; options?: WsListOptions }
-  | { id: string; action: "branches"; chatId: string }
+  | { id: string; action: "branches"; chatId: string; options?: WsBranchesOptions }
   | { id: string; action: "export"; chatId: string; options?: WsExportOptions }
   | {
       id: string;
@@ -159,6 +159,10 @@ interface WsSearchOptions {
 interface WsGetOptions {
   messageId?: string;
   includeMetadata?: boolean;
+  includeMedia?: boolean;
+}
+
+interface WsBranchesOptions {
   includeMedia?: boolean;
 }
 
@@ -674,7 +678,7 @@ function handleRequest(req: WsRequest): void {
 
   processRequest(req)
     .then((response) => {
-      sendJson(response);
+      sendResponse(response);
     })
     .catch((err) => {
       log.error(`[WsBridge] Unhandled error for ${action}:`, wsErrorShape(action, err));
@@ -1012,7 +1016,9 @@ async function handleBranches(
   if (!chat) {
     return { id, success: false, error: `Chat not found: ${req.chatId}`, code: "NOT_FOUND" };
   }
-  return { id, success: true, data: withDateLabel(chat) };
+  // As `get` does: a binary item's bytes stay behind unless the caller asked for media (HVN-176).
+  const messages = maybeStripBinary(Object.values(chat.messages), req.options?.includeMedia);
+  return { id, success: true, data: withDateLabel({ ...chat, messages: toMessageDict(messages) }) };
 }
 
 function resolveWsExporterId(options?: WsExportOptions): WsExporterId {
@@ -1520,6 +1526,50 @@ async function handleImport(
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * The most one message the daemon takes: the default of its `ws` server, 100 MiB. A larger one is
+ * refused by closing the socket (code 1009), which fails every request in flight and shows the
+ * caller only "Extension disconnected" (HVN-176).
+ */
+const DAEMON_MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
+
+/** The size of `text` as UTF-8, counted exactly only when it could be over the limit. */
+function utf8Size(text: string): number {
+  // A UTF-16 unit takes at most 3 bytes, so a text this short cannot be over the limit
+  if (text.length <= DAEMON_MAX_MESSAGE_BYTES / 3) return text.length;
+  return new TextEncoder().encode(text).length;
+}
+
+/** Answer a request, or say that the answer is too large for the daemon, instead of dropping the socket. */
+function sendResponse(response: WsResponse): void {
+  let text: string;
+  try {
+    text = JSON.stringify(response);
+  } catch (err) {
+    log.warn("[WsBridge] Failed to send message:", err);
+    return;
+  }
+  const bytes = utf8Size(text);
+  if (bytes <= DAEMON_MAX_MESSAGE_BYTES) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(text);
+    } catch (err) {
+      log.warn("[WsBridge] Failed to send message:", err);
+    }
+    return;
+  }
+  const mb = Math.ceil(bytes / (1024 * 1024));
+  const limitMb = DAEMON_MAX_MESSAGE_BYTES / (1024 * 1024);
+  log.warn(`[WsBridge] The reply to ${response.id} is ${mb} MB, over the ${limitMb} MB limit`);
+  sendJson({
+    id: response.id,
+    success: false,
+    error: `The reply is ${mb} MB, more than the ${limitMb} MB the daemon takes in one message, so it was not sent. Ask for less: one branch, or without --include-media.`,
+    code: "TOO_LARGE",
+  } satisfies WsResponse);
+}
 
 function sendJson(value: unknown): void {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;

@@ -104,7 +104,15 @@ describe("haevn get --all-branches", () => {
     await get([]);
 
     expect(vi.mocked(daemonRequest).mock.calls).toEqual([
-      [{ action: "branches", chatId: "chat-1" }],
+      [{ action: "branches", chatId: "chat-1", options: { includeMedia: false } }],
+    ]);
+  });
+
+  it("asks for the data of media only with --include-media (HVN-176)", async () => {
+    await get(["--include-media"]);
+
+    expect(vi.mocked(daemonRequest).mock.calls[0]).toEqual([
+      { action: "branches", chatId: "chat-1", options: { includeMedia: true } },
     ]);
   });
 
