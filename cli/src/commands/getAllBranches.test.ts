@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daemonRequest, pipeOut } from "../daemon/client.js";
-import { buildThreeBranchChat, makeToolReturn } from "../testing/fixtures";
+import { buildChat, buildThreeBranchChat, makeToolReturn } from "../testing/fixtures";
 import { runAsTyped } from "../testing/runAsTyped";
 import type { BinaryContent, Chat, ModelResponsePart } from "../types/chat";
 import { consola } from "../utils/output";
@@ -39,15 +39,15 @@ const image = (name: string): ModelResponsePart => ({
 });
 
 /**
- * The three-branch chat with an image on each answer. The trunk's is `trunk.png`; branches 1 and 2
- * both hold `shared.png` (one upload in two branches) and branch 2 has a video too; branch 3's is
- * `c.png`. In reading order the files are trunk.png, shared.png, (shared.png again), b.mp4, c.png.
+ * The three-branch chat with an image on each answer: the trunk's is `trunk.png`, branch 1's `a.png`,
+ * branch 2's `b.png` and a video `b.mp4`, branch 3's `c.png`. In reading order the files are
+ * trunk.png, a.png, b.png, b.mp4, c.png.
  */
 function mediaTree(): Chat {
   const chat = buildThreeBranchChat();
   chat.messages.a1.message = reply("trunk answer", image("trunk.png"));
-  chat.messages.a3.message = reply("reply A", image("shared.png"));
-  chat.messages.a5.message = reply("reply B", image("shared.png"), {
+  chat.messages.a3.message = reply("reply A", image("a.png"));
+  chat.messages.a5.message = reply("reply B", image("b.png"), {
     part_kind: "video-response",
     content: stored("b.mp4", "video/mp4"),
   } as ModelResponsePart);
@@ -192,7 +192,8 @@ describe("haevn get --all-branches with flags that pick one branch", () => {
 });
 
 describe("haevn get --all-branches --include-media -o FILE", () => {
-  beforeEach(() => serve({ "trunk.png": PNG, "shared.png": PNG, "b.mp4": MP4, "c.png": PNG }));
+  const FILES = { "trunk.png": PNG, "a.png": PNG, "b.png": PNG, "b.mp4": MP4, "c.png": PNG };
+  beforeEach(() => serve(FILES));
 
   it("numbers the files in the order the Markdown shows them", async () => {
     await get(["--include-media", "-o", path.join(dir, "chat.md")], mediaTree());
@@ -200,30 +201,55 @@ describe("haevn get --all-branches --include-media -o FILE", () => {
     const md = read("chat.md");
     expect(md).toContain("trunk answer\n\n![image](chat-media/01.png)");
     expect(md).toContain("reply A\n\n![image](chat-media/02.png)");
-    expect(md).toContain("reply B\n\n![image](chat-media/02.png)\n\n[video](chat-media/03.mp4)");
-    expect(md).toContain("reply C\n\n![image](chat-media/04.png)");
+    expect(md).toContain("reply B\n\n![image](chat-media/03.png)\n\n[video](chat-media/04.mp4)");
+    expect(md).toContain("reply C\n\n![image](chat-media/05.png)");
     expect(fs.readdirSync(path.join(dir, "chat-media")).sort()).toEqual([
       "01.png",
       "02.png",
-      "03.mp4",
-      "04.png",
+      "03.png",
+      "04.mp4",
+      "05.png",
     ]);
   });
 
-  it("saves a file that two messages share once, and links it from both", async () => {
+  it("numbers by reading order, not by the order the messages are stored in", async () => {
+    // a9 is stored after branch 2 (a5) but is read before it, as the second answer of branch 1
+    const chat = buildChat([
+      { id: "u0", parentId: null, role: "user", text: "Draw a robot" },
+      { id: "a1", parentId: "u0", role: "assistant", text: "trunk answer" },
+      { id: "u2", parentId: "a1", role: "user", text: "ask A" },
+      { id: "a3", parentId: "u2", role: "assistant", text: "reply A" },
+      { id: "u4", parentId: "a1", role: "user", text: "ask B" },
+      { id: "a5", parentId: "u4", role: "assistant", text: "reply B" },
+      { id: "u8", parentId: "a3", role: "user", text: "ask A1" },
+      { id: "a9", parentId: "u8", role: "assistant", text: "reply A1" },
+    ]);
+    chat.messages.a5.message = reply("reply B", image("b.png"));
+    chat.messages.a9.message = reply("reply A1", image("a1.png"));
+    serve({ "b.png": PNG, "a1.png": MP4 });
+
+    await get(["--include-media", "-o", path.join(dir, "chat.md")], chat);
+
+    const md = read("chat.md");
+    expect(md).toContain("reply A1\n\n![image](chat-media/01.png)");
+    expect(md).toContain("reply B\n\n![image](chat-media/02.png)");
+    expect(read("chat-media", "01.png")).toBe(MP4.toString());
+  });
+
+  it("asks the extension for each file once, in reading order", async () => {
     await get(["--include-media", "-o", path.join(dir, "chat.md")], mediaTree());
 
     expect(vi.mocked(pipeOut).mock.calls.map(([, action]) => action.name)).toEqual([
       "trunk.png",
-      "shared.png",
+      "a.png",
+      "b.png",
       "b.mp4",
       "c.png",
     ]);
-    expect(read("chat.md").match(/chat-media\/02\.png/g)).toHaveLength(2);
   });
 
-  it("leaves no gap in the numbers for a file that does not arrive, and names it once", async () => {
-    serve({ "trunk.png": PNG, "b.mp4": MP4, "c.png": PNG });
+  it("leaves no gap in the numbers for a file that does not arrive", async () => {
+    serve(Object.fromEntries(Object.entries(FILES).filter(([name]) => name !== "a.png")));
 
     await expect(
       get(["--include-media", "-o", path.join(dir, "chat.md")], mediaTree()),
@@ -231,15 +257,16 @@ describe("haevn get --all-branches --include-media -o FILE", () => {
 
     expect(fs.readdirSync(path.join(dir, "chat-media")).sort()).toEqual([
       "01.png",
-      "02.mp4",
-      "03.png",
+      "02.png",
+      "03.mp4",
+      "04.png",
     ]);
     const md = read("chat.md");
     expect(md).toContain("reply A\n\n[image]");
-    expect(md).toContain("reply B\n\n[image]\n\n[video](chat-media/02.mp4)");
+    expect(md).toContain("reply B\n\n![image](chat-media/02.png)\n\n[video](chat-media/03.mp4)");
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("image shared.png was not saved: chat chat-1 has no media file"),
+      expect.stringContaining("image a.png was not saved: chat chat-1 has no media file"),
     );
   });
 
@@ -257,36 +284,21 @@ describe("haevn get --all-branches --include-media -o FILE", () => {
     expect(fs.existsSync(path.join(dir, "chat.md"))).toBe(false);
   });
 
-  it("writes no folder and fetches nothing when there is no -o, and counts the shared file once", async () => {
+  it("writes no folder and fetches nothing when there is no -o", async () => {
     await get(["--include-media"], mediaTree());
 
     expect(out.join("")).toContain("trunk answer\n\n[image]");
     expect(fs.readdirSync(dir)).toEqual([]);
     expect(vi.mocked(pipeOut)).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(
-      "4 media files were not saved: add -o FILE to save them beside it.",
+      "5 media files were not saved: add -o FILE to save them beside it.",
     );
-  });
-
-  it("saves one file for any number of items that hold it", async () => {
-    const chat = buildThreeBranchChat();
-    chat.messages.a1.message = reply("trunk answer", image("trunk.png"));
-    chat.messages.a3.message = reply(
-      "reply A",
-      ...Array.from({ length: 10 }, () => image("trunk.png")),
-    );
-
-    await get(["--include-media", "-o", path.join(dir, "chat.md")], chat);
-
-    expect(fs.readdirSync(path.join(dir, "chat-media"))).toEqual(["01.png"]);
-    expect(read("chat.md").match(/chat-media\/01\.png/g)).toHaveLength(11);
-    expect(vi.mocked(pipeOut)).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("haevn get --all-branches --include-media -f json", () => {
-  it("puts each message's media in its own entry, shared or not", async () => {
-    serve({ "trunk.png": PNG, "shared.png": PNG, "b.mp4": MP4, "c.png": PNG });
+  it("puts each message's media in its own entry", async () => {
+    serve({ "trunk.png": PNG, "a.png": PNG, "b.png": PNG, "b.mp4": MP4, "c.png": PNG });
 
     await get(["--include-media", "-f", "json"], mediaTree());
 

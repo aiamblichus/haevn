@@ -230,13 +230,12 @@ describe("haevn get --include-media -o FILE (Markdown)", () => {
       {
         kind: "response",
         timestamp: TIME,
-        parts: Array.from({ length: 101 }, (_, i) => ({
+        parts: Array.from({ length: 101 }, () => ({
           part_kind: "image-response",
-          content: stored(`many_${i}.png`, "image/png"),
+          content: stored("a1_0.png", "image/png"),
         })) as ModelResponsePart[],
       },
     ];
-    serve(Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`many_${i}.png`, PNG])));
     await get(["--include-media", "-o", path.join(dir, "chat.md")], chat);
 
     const names = fs.readdirSync(path.join(dir, "chat-media")).sort();
