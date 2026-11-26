@@ -160,8 +160,39 @@ function titleFromDocumentTitle(): string {
   return GEMINI_PRODUCT_NAMES.has(title) ? "" : title;
 }
 
-// Title Extraction
+/** The longest title the archive keeps for a Gemini chat, in characters. */
+export const GEMINI_TITLE_MAX_LENGTH = 100;
+
+/** How far back from the cut a word boundary may be found, in characters. */
+const GEMINI_TITLE_BOUNDARY_WINDOW = 20;
+
+/**
+ * A title of at most `GEMINI_TITLE_MAX_LENGTH` characters, with no ellipsis. Gemini's own titles
+ * run to thousands of characters (65 of 308 were 200 or more in HVN-161, the longest 29,146).
+ * A longer title is cut at the last whitespace within the final 20 characters of the cut, or at
+ * the limit when there is none; a title whose next character after the limit is whitespace is
+ * already cut on a word. A cut never splits a surrogate pair.
+ */
+export function capGeminiTitle(title: string): string {
+  if (title.length <= GEMINI_TITLE_MAX_LENGTH) return title;
+  let head = title.slice(0, GEMINI_TITLE_MAX_LENGTH);
+  if (!/\s/.test(title[GEMINI_TITLE_MAX_LENGTH])) {
+    const lastSpace = head.search(/\s\S*$/);
+    if (lastSpace >= GEMINI_TITLE_MAX_LENGTH - GEMINI_TITLE_BOUNDARY_WINDOW) {
+      head = head.slice(0, lastSpace);
+    } else if (/[\ud800-\udbff]$/.test(head)) {
+      head = head.slice(0, -1);
+    }
+  }
+  return head.trimEnd();
+}
+
+// Title Extraction: the chat's title, at most `GEMINI_TITLE_MAX_LENGTH` characters long.
 export function extractGeminiConversationTitle(): string {
+  return capGeminiTitle(readGeminiConversationTitle());
+}
+
+function readGeminiConversationTitle(): string {
   // First: the tab's title, which every page of a chat carries
   const tabTitle = titleFromDocumentTitle();
   if (tabTitle) return tabTitle;
@@ -202,7 +233,7 @@ export function extractGeminiConversationTitle(): string {
     .replace(/\s+/g, " ")
     .trim();
   if (normalizedPrompt) {
-    return normalizedPrompt.substring(0, 100).trim();
+    return normalizedPrompt;
   }
 
   return "Untitled Gemini Conversation";

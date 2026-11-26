@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  capGeminiTitle,
   extractGeminiConversationData,
   extractGeminiConversationTitle,
 } from "../src/providers/gemini/extractor";
@@ -146,5 +147,102 @@ describe("a tab title that is only the product's name", () => {
 
   it("ends in 'Untitled Gemini Conversation' on a page with nothing at all", async () => {
     expect(await titleOf("Google Gemini", "")).toBe("Untitled Gemini Conversation");
+  });
+});
+
+// ─── The cap ─────────────────────────────────────────────────────────────────────────────────
+//
+// Gemini's own titles run to thousands of characters (65 of 308 were 200 or more), and the title
+// used to be 100 characters of the prompt. The cap is 100, cut on a word boundary when one is in
+// the last 20 characters of the cut, with no ellipsis. It lives in one place and every branch of
+// the reader goes through it. What these cases cannot see: how a cut title reads in the archive's
+// list (a person's judgement), and a word boundary that is not whitespace (a CJK title has none:
+// it is cut at 100).
+
+/** `n` characters: the letter, repeated. */
+const run = (n: number, ch = "a") => ch.repeat(n);
+
+describe("the cap on the stored title (HVN-161)", () => {
+  it("leaves a title of 99 and of exactly 100 characters as it is", () => {
+    expect(capGeminiTitle(run(99))).toBe(run(99));
+    expect(capGeminiTitle(run(100))).toBe(run(100));
+    const hundredWithSpaces = `${run(40)} ${run(40)} ${run(18)}`;
+    expect(hundredWithSpaces.length).toBe(100);
+    expect(capGeminiTitle(hundredWithSpaces)).toBe(hundredWithSpaces);
+  });
+
+  it("cuts a title of 101 characters with no whitespace at 100", () => {
+    expect(capGeminiTitle(run(101))).toBe(run(100));
+    expect(capGeminiTitle(run(5000))).toBe(run(100));
+  });
+
+  it("adds no ellipsis", () => {
+    const cut = capGeminiTitle(`${run(60)} ${run(60)}`);
+    expect(cut).not.toMatch(/…|\.\.\./);
+  });
+
+  it("cuts at the last whitespace when it is among the last 20 characters (index 80 to 99)", () => {
+    // whitespace at index 80: the first index that counts
+    expect(capGeminiTitle(`${run(80)} ${run(50)}`)).toBe(run(80));
+    // at 85, with a word after it that runs past the limit
+    expect(capGeminiTitle(`${run(85)} ${run(50)}`)).toBe(run(85));
+    // at 99: the cut leaves the 99 characters before it
+    expect(capGeminiTitle(`${run(99)} ${run(50)}`)).toBe(run(99));
+  });
+
+  it("takes the last whitespace when there are several", () => {
+    expect(capGeminiTitle(`${run(82)} ${run(5)} ${run(50)}`)).toBe(`${run(82)} ${run(5)}`);
+  });
+
+  it("cuts at the limit when the last whitespace is before index 80", () => {
+    expect(capGeminiTitle(`${run(79)} ${run(50)}`)).toBe(`${run(79)} ${run(20)}`);
+  });
+
+  it("keeps all 100 characters when the next one is whitespace (the word ends at the limit)", () => {
+    expect(capGeminiTitle(`${run(100)} ${run(50)}`)).toBe(run(100));
+    // a whitespace inside the window as well: the word at the limit stays whole
+    expect(capGeminiTitle(`${run(85)} ${run(14)} ${run(50)}`)).toBe(`${run(85)} ${run(14)}`);
+    expect(capGeminiTitle(`${run(85)} ${run(14)}\n${run(50)}`)).toBe(`${run(85)} ${run(14)}`);
+  });
+
+  it("counts a tab or a newline as whitespace, and drops a run of it at the cut", () => {
+    expect(capGeminiTitle(`${run(90)}\n\t ${run(50)}`)).toBe(run(90));
+    expect(capGeminiTitle(`${run(90)}\n${run(50)}`)).toBe(run(90));
+    expect(capGeminiTitle(`${run(90)}\t${run(50)}`)).toBe(run(90));
+  });
+
+  it("does not leave half of a surrogate pair", () => {
+    const cut = capGeminiTitle(`${run(99)}😀${run(5)}`);
+    expect(cut).toBe(run(99));
+    // a lone surrogate is what makes encodeURIComponent throw
+    expect(() => encodeURIComponent(cut)).not.toThrow();
+    expect(() => encodeURIComponent(capGeminiTitle(`${run(98)}😀${run(5)}`))).not.toThrow();
+  });
+
+  it("is the same cut on every branch of the reader", async () => {
+    const long = `${run(85)} ${run(300)}`;
+    const cut = run(85);
+    const header = (t: string) =>
+      `<conversation-actions><span class="conversation-title">${t}</span></conversation-actions>`;
+    const side = (t: string) =>
+      `<div data-test-id="conversation" href="/app/abc"><span class="conversation-title">${t}</span></div>`;
+    const selected = (t: string) =>
+      `<div data-test-id="conversation" class="selected"><span class="conversation-title">${t}</span></div>`;
+
+    // the tab's title
+    expect(await titleOf(`${long} - Google Gemini`)).toBe(cut);
+    // the header, the sidebar entry of this chat, the selected entry (each with a bare tab title)
+    expect(await titleOf("Google Gemini", header(long))).toBe(cut);
+    expect(await titleOf("Google Gemini", side(long))).toBe(cut);
+    expect(await titleOf("Google Gemini", selected(long))).toBe(cut);
+    // the first prompt, which used to be a hard cut at 100 and is now a cut on a word
+    expect(await titleOf("Google Gemini", PROMPT(long))).toBe(cut);
+  });
+
+  it("stores the capped title, and leaves a title that fits alone", async () => {
+    await withPage(page(`${run(85)} ${run(300)} - Google Gemini`, PROMPT("Hi")), async () => {
+      expect((await extractGeminiConversationData()).title).toBe(run(85));
+    });
+    expect(await titleOf("A short one - Google Gemini")).toBe("A short one");
   });
 });
