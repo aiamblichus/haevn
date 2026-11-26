@@ -13,6 +13,11 @@ export interface BranchJsonOptions {
   head?: number;
   /** As for Markdown: only the last N messages of the branch (0 = all). */
   tail?: number;
+  /**
+   * The media items of each message by message id (`--include-media`). A message with an entry gets
+   * a `media` array; without the option no message does.
+   */
+  media?: ReadonlyMap<string, readonly object[]>;
 }
 
 /**
@@ -24,7 +29,7 @@ export function formatBranchAsJson(
   branchPath: string[],
   options: BranchJsonOptions = {},
 ): object {
-  const { includeThinking = false, skipSystem = false, head = 0, tail = 0 } = options;
+  const { includeThinking = false, skipSystem = false, head = 0, tail = 0, media } = options;
   const cut = windowMessages(getMessagesOnBranch(chat, branchPath), { head, tail });
   const messages = cut.messages.filter((msg) => {
     if (!skipSystem) return true;
@@ -46,6 +51,7 @@ export function formatBranchAsJson(
         role: getMessageRole(msg),
         content: getMessageText(msg, { includeThinking, skipSystem }),
         timestamp: msg.timestamp,
+        ...(media?.has(msg.id) ? { media: media.get(msg.id) } : {}),
       })),
     },
   };

@@ -176,7 +176,7 @@ haevn get <chatId> --tail 20
 ```
 
 By default, `get` excludes heavy binary payloads.  
-Use `--include-media` only when explicitly needed.
+`get --include-media -o FILE` saves each image, video, sound or file beside the output in `<FILE>-media/` and links it from the Markdown; with `-f json` the bytes come as base64 in each message's `media`. Without `-o`, Markdown shows `[image]`-style stand-ins and saves nothing.
 
 ---
 
@@ -301,5 +301,5 @@ haevn search "query" --format json | jq '.results[] | {chatId, messageRef, sourc
 
 - Start broad with `list`/`search`, then narrow with `branches` and `get -m`.
 - Prefer short refs in user communication; raw IDs are too noisy.
-- Keep `get --include-media` off unless required (smaller payloads, faster runs); `export` never embeds media.
+- Use `get --include-media` when the media matters: it fetches each file, so it is slower on media-heavy chats; `export` and `branches` never carry media.
 - For automations and scripts, prefer `--format json` + `jq`.

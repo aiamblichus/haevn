@@ -13,6 +13,11 @@ import type { Chat, ChatMessage, ModelResponsePart, UserContent } from "../types
 export interface GetMessageTextOptions {
   includeThinking?: boolean;
   skipSystem?: boolean;
+  /**
+   * What stands for each media item of the message, by its index in `getMediaItems`. The default is
+   * the bare `[image]`, `[video]`, `[audio]` or `[file]`.
+   */
+  mediaText?: (item: MediaItem, index: number) => string;
 }
 
 /**
@@ -163,8 +168,71 @@ export function getMessageRole(message: ChatMessage): "system" | "user" | "assis
   return hasSystemPrompt && !hasNonSystemPrompt ? "system" : "user";
 }
 
-/** How a media part is shown in the text view: `[image]`, `[video]`, `[audio]` or `[file]`. */
-type MediaKind = "image" | "video" | "audio" | "file";
+/** What a media item is, and so how the text view names it: `[image]`, `[video]`, `[audio]` or `[file]`. */
+export type MediaKind = "image" | "video" | "audio" | "file";
+
+/**
+ * Where a media item's content is, as the archive holds it:
+ *
+ * - `stored`: `data` is the path of a file in the extension's store (`media/<chat>/<name>`). Every
+ *   provider's download ends this way, and so does an import.
+ * - `inline`: `data` is the content itself (base64 for ChatGPT's images; a provider may leave text
+ *   there), or nothing when the part has no content.
+ * - `url`: a link only, nothing was downloaded.
+ */
+export type MediaSource =
+  | { type: "stored"; path: string }
+  | { type: "inline"; data: string }
+  | { type: "url"; url: string };
+
+/** One media item of a message: what the text view shows as `[image]` and the like. */
+export interface MediaItem {
+  kind: MediaKind;
+  source: MediaSource;
+  /** The media type the archive records. A link has none. */
+  mediaType?: string;
+  /** The file name the provider gave it, when it did. */
+  name?: string;
+}
+
+function mediaKindOfType(mediaType: string): MediaKind {
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("video/")) return "video";
+  if (mediaType.startsWith("audio/")) return "audio";
+  return "file";
+}
+
+const URL_KINDS: Record<string, MediaKind> = {
+  "image-url": "image",
+  "video-url": "video",
+  "audio-url": "audio",
+};
+
+/** A prompt's item, or a reply's content, as a media item. `kind` is the reply part's own, when it has one. */
+function itemOf(
+  content: Exclude<UserContent, string> | undefined,
+  kind: MediaKind | undefined,
+): MediaItem {
+  // A part with no content (a damaged record) is still an item, as the text view has always shown it
+  if (!content) return { kind: kind ?? "file", source: { type: "inline", data: "" } };
+  if (content.kind === "binary") {
+    const data = typeof content.data === "string" ? content.data : "";
+    const stored = /^\/?(media\/.+)$/.exec(data);
+    return {
+      kind: kind ?? mediaKindOfType(content.media_type ?? ""),
+      source: stored ? { type: "stored", path: stored[1] } : { type: "inline", data },
+      mediaType: content.media_type,
+      ...(content.identifier ? { name: content.identifier } : {}),
+    };
+  }
+  return {
+    kind: kind ?? URL_KINDS[content.kind] ?? "file",
+    source:
+      typeof content.url === "string"
+        ? { type: "url", url: content.url }
+        : { type: "inline", data: "" },
+  };
+}
 
 /** The kind of a media part of a reply, or undefined for a part that is not media. */
 function responseMediaKind(part: ModelResponsePart): MediaKind | undefined {
@@ -182,54 +250,50 @@ function responseMediaKind(part: ModelResponsePart): MediaKind | undefined {
   }
 }
 
-function mediaKindOfType(mediaType: string): MediaKind {
-  if (mediaType.startsWith("image/")) return "image";
-  if (mediaType.startsWith("video/")) return "video";
-  if (mediaType.startsWith("audio/")) return "audio";
-  return "file";
-}
-
-/** The kind of a non-text item of a prompt: a URL by its kind, bytes by their media type. */
-function userMediaKind(item: Exclude<UserContent, string>): MediaKind {
-  switch (item.kind) {
-    case "image-url":
-      return "image";
-    case "video-url":
-      return "video";
-    case "audio-url":
-      return "audio";
-    case "binary":
-      return mediaKindOfType(item.media_type);
-    default:
-      return "file";
-  }
-}
-
 /**
- * The stand-in for each media item of a message, in part order: a reply's image, video, audio or
- * document part, and a prompt's non-text items.
+ * The media items of a message, in part order: a reply's image, video, audio or document part, and
+ * a prompt's non-text items. The text view shows each as a stand-in; `--include-media` fetches them.
  */
-export function getMediaStandIns(message: ChatMessage): string[] {
-  const standIns: string[] = [];
+export function getMediaItems(message: ChatMessage): MediaItem[] {
+  const items: MediaItem[] = [];
 
   for (const msg of message.message) {
     if (msg.kind === "request") {
       for (const part of msg.parts) {
         if (part.part_kind === "user-prompt" && Array.isArray(part.content)) {
-          for (const item of part.content) {
-            if (typeof item !== "string") standIns.push(`[${userMediaKind(item)}]`);
+          for (const entry of part.content) {
+            if (typeof entry !== "string") items.push(itemOf(entry, undefined));
           }
         }
       }
     } else {
       for (const part of msg.parts) {
         const kind = responseMediaKind(part);
-        if (kind) standIns.push(`[${kind}]`);
+        if (kind) {
+          items.push(itemOf((part as { content?: Exclude<UserContent, string> }).content, kind));
+        }
       }
     }
   }
 
-  return standIns;
+  return items;
+}
+
+/** The stand-in for one media item in the text view. */
+export function standIn(item: MediaItem): string {
+  return `[${item.kind}]`;
+}
+
+/**
+ * The stand-in for each media item of a message, in part order: a reply's image, video, audio or
+ * document part, and a prompt's non-text items. `options.mediaText` says what stands for an item.
+ */
+export function getMediaStandIns(
+  message: ChatMessage,
+  options: Pick<GetMessageTextOptions, "mediaText"> = {},
+): string[] {
+  const text = options.mediaText ?? standIn;
+  return getMediaItems(message).map((item, index) => text(item, index));
 }
 
 /**
@@ -269,7 +333,9 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
 
   // The stand-ins follow the text, so a message with both shows both, and a message with only media
   // is never blank. An empty text part makes no block.
-  return [...parts, ...getMediaStandIns(message)].filter((part) => part !== "").join("\n\n");
+  return [...parts, ...getMediaStandIns(message, options)]
+    .filter((part) => part !== "")
+    .join("\n\n");
 }
 
 /**
