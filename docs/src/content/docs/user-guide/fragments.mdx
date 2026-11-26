@@ -104,7 +104,7 @@ A chat can have no date, or only a rough one. `date:` takes these forms:
 
 The archive shows the date as you wrote it: "2024", "Mar 2024", "15 Mar 2024", "Nov 2023 to Feb 2024", "Mar 2024 or later", "c. Mar 2024", or "undated". A chat with no date sorts after every dated chat under the Modified Time sort, and a search that has an `after` date does not find it.
 
-Exports show the same date and no time for the chat. The Markdown export writes it as `date:` in the frontmatter, with no `created_at` or `modified_at`, and no time on its messages. The JSON export keeps `params.roughDate` and the stored times as they are, so a re-import is exact.
+Exports show the same date and no time for the chat. The Markdown export writes it as `date:` in the frontmatter, as you wrote it, with no `created_at` or `modified_at`, and no time on its messages; importing that file gives the chat its date back. The JSON export keeps `params.roughDate` and the stored times as they are, so a re-import is exact.
 
 **A date is your claim about when the chat happened.** HAEVN does not read it from the text, and it need not agree with it: a chat can be set in 1999. "Not before March 2024" is often all you honestly know ("this model was released in March 2024"), and that is what `2024-03..` is for. A date that is none of the forms above refuses the file: importing it as undated would lose your claim without a word.
 

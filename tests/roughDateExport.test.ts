@@ -23,23 +23,24 @@ function frontmatterOf(markdown: string): Record<string, unknown> {
 }
 
 describe("Markdown export of a chat with a rough date (HVN-171)", () => {
-  it("writes its label as date, and no created_at or modified_at", async () => {
+  it("writes its date as written, and no created_at or modified_at", async () => {
     const md = await generateExportContent(await fragment("date: ~2024-03"), { format: "markdown" });
-    expect(frontmatterOf(md).date).toBe("c. Mar 2024");
+    expect(frontmatterOf(md).date).toBe("~2024-03");
     expect(md).not.toContain("created_at");
     expect(md).not.toContain("modified_at");
   });
 
+  // HVN-175: date is the form the importer reads back, so the label the archive shows is not written
   it.each([
     ["2024", "2024"],
-    ["~2024-03", "c. Mar 2024"],
-    ["2024-03..", "Mar 2024 or later"],
-    ["2023-11..2024-02", "Nov 2023 to Feb 2024"],
-  ])("writes the label the archive shows for %s", async (written, label) => {
+    ["~2024-03", "~2024-03"],
+    ["2024-03..", "2024-03.."],
+    ["2023-11..2024-02", "2023-11..2024-02"],
+  ])("writes the date as the person wrote it: %s", async (written, expected) => {
     const md = await generateExportContent(await fragment(`date: ${written}`), {
       format: "markdown",
     });
-    expect(frontmatterOf(md).date).toBe(label);
+    expect(frontmatterOf(md).date).toBe(expected);
   });
 
   it("writes no time anywhere in the export, the messages included", async () => {
