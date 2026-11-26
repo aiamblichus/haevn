@@ -4,7 +4,13 @@
 
 import type { Chat, ChatMessage } from "../types/chat";
 import { formatTimestamp } from "../utils/output";
-import { getMessageRole, getMessagesOnBranch, getMessageText, windowMessages } from "../utils/tree";
+import {
+  getMediaStandIns,
+  getMessageRole,
+  getMessagesOnBranch,
+  getMessageText,
+  windowMessages,
+} from "../utils/tree";
 
 export interface MarkdownOptions {
   includeMetadata?: boolean;
@@ -39,7 +45,7 @@ export function formatBranchAsMarkdown(
   // head takes precedence over tail when both are specified.
   const cut = windowMessages(allMessages, { head, tail });
 
-  // Filter out messages with no text (tool calls, image-only uploads)
+  // Filter out messages with neither text nor media (tool calls, tool results)
   const rendered = cut.messages.filter((m) => {
     const role = getMessageRole(m);
     if (skipSystem && role === "system") return false;
@@ -128,12 +134,16 @@ function formatMessageForMarkdown(
     }
   }
 
+  // The media stand-ins come after the text, as getMessageText puts them.
+  otherParts.push(...getMediaStandIns(message));
+
   const blocks: string[] = [];
   if (thinkingParts.length > 0) {
     blocks.push(`<thinking>\n${thinkingParts.join("\n\n")}\n</thinking>`);
   }
-  if (otherParts.length > 0) {
-    blocks.push(otherParts.join("\n\n"));
+  const text = otherParts.filter((part) => part !== "");
+  if (text.length > 0) {
+    blocks.push(text.join("\n\n"));
   }
 
   return blocks.join("\n\n");

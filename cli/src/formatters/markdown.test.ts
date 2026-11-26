@@ -52,3 +52,50 @@ describe("formatBranchAsMarkdown", () => {
     expect(both).not.toContain("earlier messages omitted");
   });
 });
+
+describe("formatBranchAsMarkdown with media", () => {
+  const TIME = "2026-01-01T00:00:00.000Z";
+  const IMAGE = { kind: "binary", data: "", media_type: "image/png" } as const;
+
+  // a1 is a reply that is only an image; a2 is a reply with thinking and an image.
+  const media = buildChat([
+    { id: "u1", parentId: null, role: "user", text: "draw a fox" },
+    { id: "a1", parentId: "u1", role: "assistant", text: "" },
+    { id: "u2", parentId: "a1", role: "user", text: "and a hen" },
+    { id: "a2", parentId: "u2", role: "assistant", text: "" },
+  ]);
+  media.messages.a1.message = [
+    {
+      kind: "response",
+      parts: [
+        { part_kind: "text", content: "" },
+        { part_kind: "image-response", content: IMAGE },
+      ],
+      timestamp: TIME,
+    },
+  ];
+  media.messages.a2.message = [
+    {
+      kind: "response",
+      parts: [
+        { part_kind: "thinking", content: "Picturing a hen" },
+        { part_kind: "image-response", content: IMAGE },
+      ],
+      timestamp: TIME,
+    },
+  ];
+  const path = ["u1", "a1", "u2", "a2"];
+
+  it("renders an image-only reply as [image] under its heading, with or without thinking", () => {
+    expect(formatBranchAsMarkdown(media, path)).toContain("## Assistant\n\n[image]");
+    expect(formatBranchAsMarkdown(media, path, { includeThinking: true })).toContain(
+      "## Assistant\n\n[image]",
+    );
+  });
+
+  it("keeps the stand-in after the thinking when thinking is shown in full", () => {
+    const out = formatBranchAsMarkdown(media, path, { includeThinking: true });
+
+    expect(out).toContain("<thinking>\nPicturing a hen\n</thinking>\n\n[image]");
+  });
+});

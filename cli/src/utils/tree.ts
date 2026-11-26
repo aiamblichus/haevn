@@ -8,7 +8,7 @@
  */
 
 import type { BranchInfo } from "../types";
-import type { Chat, ChatMessage } from "../types/chat";
+import type { Chat, ChatMessage, ModelResponsePart, UserContent } from "../types/chat";
 
 export interface GetMessageTextOptions {
   includeThinking?: boolean;
@@ -56,6 +56,18 @@ export function getPathToMessage(chat: Chat, targetId: string): string[] {
 }
 
 /**
+ * The text of a prompt: its content, or for a list (a prompt with attachments) its string items in
+ * order, joined as the text view joins parts. Attachments are not text and add nothing here.
+ */
+function promptText(content: string | UserContent[]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item): item is string => typeof item === "string" && item !== "")
+    .join("\n\n");
+}
+
+/**
  * Get all branches in a chat tree.
  * A branch is defined by its leaf node and the path to it.
  */
@@ -75,8 +87,8 @@ export function getAllBranches(chat: Chat): BranchInfo[] {
       const userPart = firstUserMsg.message[0];
       if (userPart?.kind === "request") {
         const promptPart = userPart.parts.find((p) => p.part_kind === "user-prompt");
-        if (promptPart && "content" in promptPart && typeof promptPart.content === "string") {
-          firstPrompt = promptPart.content.slice(0, 60);
+        if (promptPart?.part_kind === "user-prompt") {
+          firstPrompt = promptText(promptPart.content).slice(0, 60);
         }
       }
     }
@@ -151,6 +163,75 @@ export function getMessageRole(message: ChatMessage): "system" | "user" | "assis
   return hasSystemPrompt && !hasNonSystemPrompt ? "system" : "user";
 }
 
+/** How a media part is shown in the text view: `[image]`, `[video]`, `[audio]` or `[file]`. */
+type MediaKind = "image" | "video" | "audio" | "file";
+
+/** The kind of a media part of a reply, or undefined for a part that is not media. */
+function responseMediaKind(part: ModelResponsePart): MediaKind | undefined {
+  switch (part.part_kind) {
+    case "image-response":
+      return "image";
+    case "video-response":
+      return "video";
+    case "audio-response":
+      return "audio";
+    case "document-response":
+      return "file";
+    default:
+      return undefined;
+  }
+}
+
+function mediaKindOfType(mediaType: string): MediaKind {
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("video/")) return "video";
+  if (mediaType.startsWith("audio/")) return "audio";
+  return "file";
+}
+
+/** The kind of a non-text item of a prompt: a URL by its kind, bytes by their media type. */
+function userMediaKind(item: Exclude<UserContent, string>): MediaKind {
+  switch (item.kind) {
+    case "image-url":
+      return "image";
+    case "video-url":
+      return "video";
+    case "audio-url":
+      return "audio";
+    case "binary":
+      return mediaKindOfType(item.media_type);
+    default:
+      return "file";
+  }
+}
+
+/**
+ * The stand-in for each media item of a message, in part order: a reply's image, video, audio or
+ * document part, and a prompt's non-text items.
+ */
+export function getMediaStandIns(message: ChatMessage): string[] {
+  const standIns: string[] = [];
+
+  for (const msg of message.message) {
+    if (msg.kind === "request") {
+      for (const part of msg.parts) {
+        if (part.part_kind === "user-prompt" && Array.isArray(part.content)) {
+          for (const item of part.content) {
+            if (typeof item !== "string") standIns.push(`[${userMediaKind(item)}]`);
+          }
+        }
+      }
+    } else {
+      for (const part of msg.parts) {
+        const kind = responseMediaKind(part);
+        if (kind) standIns.push(`[${kind}]`);
+      }
+    }
+  }
+
+  return standIns;
+}
+
 /**
  * Get text content from a message (best effort extraction).
  */
@@ -162,9 +243,7 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
     if (msg.kind === "request") {
       for (const part of msg.parts) {
         if (part.part_kind === "user-prompt") {
-          if (typeof part.content === "string") {
-            parts.push(part.content);
-          }
+          parts.push(promptText(part.content));
         } else if (part.part_kind === "system-prompt") {
           if (!skipSystem) {
             parts.push(part.content);
@@ -188,7 +267,9 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
     }
   }
 
-  return parts.join("\n\n");
+  // The stand-ins follow the text, so a message with both shows both, and a message with only media
+  // is never blank. An empty text part makes no block.
+  return [...parts, ...getMediaStandIns(message)].filter((part) => part !== "").join("\n\n");
 }
 
 /**
