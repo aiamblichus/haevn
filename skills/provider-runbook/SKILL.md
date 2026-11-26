@@ -55,6 +55,8 @@ The viewer shows text, thinking and attachments only. **It does not draw tool ca
 
 If a sync fails and you want the reason for the ticket: `haevn logs -n 50 --level warn` in a terminal (or `--match syncCurrentChat`). Since HVN-157 a log line holds ids, sizes and counts, not chat text; still glance at it before it goes into a ticket. A peer can read it too, so you need not copy it.
 
+A failed request names itself (HVN-120): method, origin and path, each attempt's outcome with its milliseconds, the total, and whether the browser was online. Each attempt near 0 ms means the browser blocked it (look at the extension); seconds mean the server or its edge dropped it; `offline` means the network. This line has not yet been seen from a real tab: the first time a sync fails in this pass, say on HVN-120 whether it told you who failed and why.
+
 ### The nine
 
 | Provider | Chat page looks like | How it reads the chat | Carries branches | Look for, beyond the six points | Minutes |
@@ -73,7 +75,6 @@ Total: seven at 3 minutes and two at 5, **31 minutes**, plus the 5 before and ab
 
 ### Known and open: do not count these as failures
 
-- **HVN-16** (Gemini) and **HVN-15** (Grok): the chat *list* is short, so SYNC ALL misses chats. This pass syncs one chat and does not use the list.
 - **HVN-17** (AI Studio): the text is taken from the rendered page, not from Raw Mode, so Markdown formatting can differ from what you typed. Missing turns or wrong roles are still a fail.
 - Tool calls are not drawn in the viewer (see above).
 - The date column in the archive is the provider's last-modified time, not the time of the sync.
