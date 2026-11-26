@@ -1391,6 +1391,16 @@ async function handleImport(
     };
   }
 
+  // A request for a dry run must not be answered with an import: only fragments have a plan
+  if (options?.dryRun && format !== "fragment") {
+    return {
+      id,
+      success: false,
+      error: `A dry run is only offered for the fragment format, not "${format}"`,
+      code: "BAD_REQUEST",
+    };
+  }
+
   if (format === "fragment") {
     // The plan is the answer: a refused file is in it, and does not stop the others
     const fragmentFiles = files.map((file) => ({

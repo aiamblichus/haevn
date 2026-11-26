@@ -8,6 +8,7 @@ const getCliSettings = vi.hoisted(() => vi.fn());
 const getMetadataAIConfig = vi.hoisted(() => vi.fn());
 const getStarmapConfig = vi.hoisted(() => vi.fn());
 const getChat = vi.hoisted(() => vi.fn());
+const getChatsBySource = vi.hoisted(() => vi.fn());
 const startBulkSyncIndexing = vi.hoisted(() => vi.fn());
 const finishBulkSyncIndexing = vi.hoisted(() => vi.fn());
 const saveImportedChat = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ vi.mock("../src/services/settingsService", () => ({
 vi.mock("../src/services/syncService", () => ({
   SyncService: {
     getChat,
+    getChatsBySource,
     getChatsMetadata,
     getChatMessages,
     unmovedRefusal,
@@ -109,6 +111,8 @@ beforeEach(async () => {
   });
   getChat.mockReset();
   getChat.mockResolvedValue(undefined);
+  getChatsBySource.mockReset();
+  getChatsBySource.mockResolvedValue([]);
   startBulkSyncIndexing.mockReset();
   finishBulkSyncIndexing.mockReset();
   saveImportedChat.mockReset();
@@ -325,6 +329,68 @@ describe("import over the bridge goes through the archive's import sequence (HVN
       id: expect.any(String),
       success: true,
       data: { format: "haevn_json", total: 2, processed: 2, saved: 2, skipped: 0, errors: 0 },
+    });
+  });
+
+  describe("a fragment import and its dry run (HVN-163)", () => {
+    const fragment = {
+      name: "note.md",
+      content:
+        "---\nid: 7b0e6c1e-2f4a-4c58-9d0b-3a1f5e8c9a12\n---\n## User\nHello\n\n## Assistant\nHi\n",
+    };
+
+    it("answers the plan and saves nothing when options.dryRun is set", async () => {
+      const bridge = await connectedBridge();
+
+      const reply = await bridge.ask({
+        action: "import",
+        format: "fragment",
+        files: [fragment],
+        options: { overwrite: true, dryRun: true },
+      });
+
+      expect(reply).toMatchObject({
+        success: true,
+        data: {
+          format: "fragment",
+          dryRun: true,
+          saved: 0,
+          plan: [{ name: "note.md", state: "new" }],
+        },
+      });
+      expect(saveImportedChat).not.toHaveBeenCalled();
+    });
+
+    it("saves the fragment when it is not a dry run (the control of the test above)", async () => {
+      const bridge = await connectedBridge();
+
+      const reply = await bridge.ask({
+        action: "import",
+        format: "fragment",
+        files: [fragment],
+        options: { overwrite: true },
+      });
+
+      expect(reply).toMatchObject({
+        success: true,
+        data: { format: "fragment", dryRun: false, saved: 1, plan: [{ state: "new" }] },
+      });
+      expect(saveImportedChat).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses a dry run of any other format instead of importing", async () => {
+      const bridge = await connectedBridge();
+
+      const reply = await bridge.ask({
+        action: "import",
+        format: "haevn_json",
+        files: files(1),
+        options: { overwrite: true, dryRun: true },
+      });
+
+      expect(reply).toMatchObject({ success: false, code: "BAD_REQUEST" });
+      expect(reply.error).toContain("only offered for the fragment format");
+      expect(saveImportedChat).not.toHaveBeenCalled();
     });
   });
 
