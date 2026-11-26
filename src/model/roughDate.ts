@@ -116,6 +116,24 @@ export function formatRoughDate(date: RoughDate): string {
   return date.approximate ? `c. ${label}` : label;
 }
 
+/** The label of the rough date a chat carries, or undefined for a chat that has none. */
+export function roughDateLabelOf(chat: HasParams | undefined): string | undefined {
+  const rough = roughDateOf(chat);
+  return rough ? formatRoughDate(rough) : undefined;
+}
+
+/**
+ * The time fields of a search result. A chat with a rough date gives its label and no message time,
+ * since the times of its messages are only there to keep their order (HVN-163).
+ */
+export function whenOf(
+  chat: HasParams,
+  messageTimestamp: number | undefined,
+): { messageTimestamp?: number; dateLabel?: string } {
+  const dateLabel = roughDateLabelOf(chat);
+  return dateLabel ? { dateLabel } : { messageTimestamp };
+}
+
 /** The plain form of an exact time: what the archive has always shown. */
 function formatTime(ts?: number): string {
   if (!ts) return "—";

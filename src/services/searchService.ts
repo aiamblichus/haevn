@@ -13,6 +13,7 @@
 
 import { ensureOffscreenDocument } from "../background/utils/offscreenUtils";
 import type { Chat, SearchResult } from "../model/haevn_model";
+import { whenOf } from "../model/roughDate";
 import type {
   SearchFilters,
   SearchIndexIncompleteStatus,
@@ -132,7 +133,7 @@ function buildIdSearchResult(chat: Chat): SearchResult {
     messageContent: safeChatId,
     messageSnippet: `Matched chat ID: {{HIGHLIGHT}}${safeChatId}{{/HIGHLIGHT}}`,
     messageRole: "assistant",
-    messageTimestamp: chat.timestamp,
+    ...whenOf(chat, chat.timestamp),
     model: chat.models?.[0],
     params: chat.params,
   };

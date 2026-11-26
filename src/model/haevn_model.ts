@@ -315,6 +315,11 @@ export interface SearchResult {
    */
   label?: "model" | "tag";
   messageTimestamp?: number;
+  /**
+   * The date of a chat that has only a rough one ("c. Mar 2024", "undated"). Such a chat's
+   * messages carry made-up times, so `messageTimestamp` is then left out and readers show this.
+   */
+  dateLabel?: string;
   model?: string;
   params?: Record<string, unknown>;
 }
