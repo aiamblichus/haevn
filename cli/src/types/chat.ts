@@ -284,6 +284,8 @@ export interface SearchResult {
   messageSnippet: string;
   messageContent: string;
   messageRole: "user" | "assistant";
+  /** Set when the hit is one of the chat's models or tags, not a message of it. */
+  label?: "model" | "tag";
   messageTimestamp?: number;
   model?: string;
   params?: Record<string, unknown>;

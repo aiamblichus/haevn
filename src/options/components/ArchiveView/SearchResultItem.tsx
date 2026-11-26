@@ -28,6 +28,17 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
     [result.messageSnippet],
   );
 
+  // A model or a tag is no one's message: it says what it is, and has no time of its own.
+  const speaker =
+    result.label === "model"
+      ? "Model"
+      : result.label === "tag"
+        ? "Tag"
+        : result.messageRole === "user"
+          ? "User"
+          : "Assistant";
+  const when = result.label ? undefined : result.messageTimestamp;
+
   return (
     <div
       className="bg-haevn-navy-dark/60 rounded-lg border border-haevn-teal/20 p-3 hover:border-haevn-teal/40 hover:shadow-haevn-glow cursor-pointer transition-all"
@@ -53,11 +64,11 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
               <div className="flex items-center gap-2 text-xs text-haevn-teal-light/60 flex-shrink-0 ml-2">
                 <span>{escapeHtml(result.source)}</span>
                 <span>•</span>
-                <span>{result.messageRole === "user" ? "User" : "Assistant"}</span>
-                {result.messageTimestamp && (
+                <span>{speaker}</span>
+                {when && (
                   <>
                     <span>•</span>
-                    <span>{formatTime(result.messageTimestamp)}</span>
+                    <span>{formatTime(when)}</span>
                   </>
                 )}
               </div>
@@ -65,13 +76,11 @@ export const SearchResultItem = ({ result, onAction, compact = false }: SearchRe
           )}
           {compact && (
             <div className="flex items-center gap-2 text-xs text-haevn-teal-light/60 mb-1">
-              <span className="font-medium text-haevn-teal-light">
-                {result.messageRole === "user" ? "User" : "Assistant"}
-              </span>
-              {result.messageTimestamp && (
+              <span className="font-medium text-haevn-teal-light">{speaker}</span>
+              {when && (
                 <>
                   <span>•</span>
-                  <span>{formatTime(result.messageTimestamp)}</span>
+                  <span>{formatTime(when)}</span>
                 </>
               )}
             </div>

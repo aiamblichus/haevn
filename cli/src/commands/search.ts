@@ -28,7 +28,8 @@ export default defineCommand({
       "  • exact phrase: haevn search '\"you may not recognize me\"'\n" +
       '  • exclude term: haevn search "alignment -rlhf"\n' +
       '  • prefix wildcard: haevn search "recurs*"\n' +
-      '  • fuzzy term: haevn search "kubernates~2"',
+      '  • fuzzy term: haevn search "kubernates~2"\n' +
+      '  • by model or tag: haevn search "model:gpt-4o" or haevn search "tag:poetry"',
   },
   args: {
     query: {
@@ -137,7 +138,8 @@ export function searchJson(
   return toJsonString({
     results: jsonResults.map((result) => ({
       ...result,
-      messageRef: createMessageRef(result.chatId, result.messageId),
+      // A model or a tag is no message of the chat, so it has no ref to fetch it by.
+      ...(result.label ? {} : { messageRef: createMessageRef(result.chatId, result.messageId) }),
     })),
     total: jsonResults.length,
     hasMore: options.hasMore,
@@ -203,7 +205,11 @@ export function formatSearchResultsText(
       }
     }
 
-    const roleLabel = result.messageRole === "user" ? pc.cyan("user") : pc.magenta("asst");
+    const roleLabel = result.label
+      ? pc.green(result.label)
+      : result.messageRole === "user"
+        ? pc.cyan("user")
+        : pc.magenta("asst");
 
     const snippet = renderSnippet(
       safeText(result.messageSnippet ?? result.messageContent.slice(0, 150)),
@@ -212,11 +218,15 @@ export function formatSearchResultsText(
     const platform = formatPlatform(safeText(result.source));
     const modelSuffix = result.model ? ` · ${pc.dim(truncate(safeText(result.model), 24))}` : "";
 
-    lines.push(
-      `  ${pc.dim("┌─")} ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`,
-    );
+    // A model or a tag is no message of the chat: it has no ref to fetch it by, and no time.
+    const ref = result.label
+      ? ""
+      : ` ${pc.dim(`[${createMessageRef(result.chatId, result.messageId)}]`)}`;
+    const when = result.label ? "" : ` · ${pc.dim(time)}`;
+
+    lines.push(`  ${pc.dim("┌─")}${ref}`);
     lines.push(`  ${pc.dim("│")} ${snippet}`);
-    lines.push(`  ${pc.dim("└─")} ${roleLabel} · ${platform}${modelSuffix} · ${pc.dim(time)}`);
+    lines.push(`  ${pc.dim("└─")} ${roleLabel} · ${platform}${modelSuffix}${when}`);
   }
 
   lines.push("");

@@ -4,6 +4,7 @@
  */
 
 import { foldText, foldWithMap } from "../services/searchFold";
+import { splitScopedTerms } from "../services/searchQuery";
 
 // A split on this gives the tags and comments at the odd indexes and the text between them at the
 // even ones. A quoted attribute value may hold a `>`. marked escapes a `<` in text, so a `<` before
@@ -44,8 +45,10 @@ function escapeRegExp(s: string): string {
  * case, accents of Latin letters removed), longest first. The viewer finds them in the text the
  * way the index found them, so `cafe` marks `Café` and `istanbul` marks `İstanbul` (`searchFold.ts`).
  */
-function foldedTerms(query: string): string[] {
+function foldedTerms(typed: string): string[] {
   const terms: string[] = [];
+  // A `model:` or a `tag:` is looked for among the chat's labels, which are not in its text.
+  const query = splitScopedTerms(typed).rest;
 
   // 1. Extract quoted phrases
   const quoteRegex = /"([^"]+)"/g;

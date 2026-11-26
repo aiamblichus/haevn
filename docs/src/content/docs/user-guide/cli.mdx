@@ -123,6 +123,8 @@ haevn search "async*"
 | `-` | `-exclude` | Must NOT be present |
 | `*` | `react*` | Prefix/wildcard match |
 | `~` | `roam~2` | Fuzzy match (edit distance) |
+| `model:` | `model:gpt-4o` | The chat has this model (its words next to each other, in order) |
+| `tag:` | `tag:poetry` | The chat has this tag; `-tag:draft` leaves out chats that have it |
 | `^` | `term^10` | Accepted and ignored (no term has more weight than another) |
 | `"..."` | `"exact phrase"` | Phrase must appear consecutively |
 
