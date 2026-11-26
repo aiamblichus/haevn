@@ -64,6 +64,29 @@ describe("formatBranchAsJson", () => {
     expect(withoutSystem.branch.messageCount).toBe(4);
     expect(withoutSystem.branch.messages).toHaveLength(4);
   });
+
+  it("gives a reply that is only an image the content [image], as the text view does", () => {
+    const media = buildChat([
+      { id: "u1", parentId: null, role: "user", text: "draw a fox" },
+      { id: "a1", parentId: "u1", role: "assistant", text: "" },
+    ]);
+    media.messages.a1.message = [
+      {
+        kind: "response",
+        parts: [
+          {
+            part_kind: "image-response",
+            content: { kind: "binary", data: "", media_type: "image/png" },
+          },
+        ],
+        timestamp: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    const out = parsed(formatBranchAsJson(media, ["u1", "a1"]));
+
+    expect(out.branch.messages.map((m) => m.content)).toEqual(["draw a fox", "[image]"]);
+  });
 });
 
 describe("toJsonString", () => {
