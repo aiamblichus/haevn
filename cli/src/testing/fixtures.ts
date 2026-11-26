@@ -110,3 +110,86 @@ export function buildForkedChat(): Chat {
     { currentId: "a3" },
   );
 }
+
+/**
+ * A trunk and three branches off the same answer, open on the middle one:
+ *   u0 → a1 → u2 → a3   (ask A)
+ *           ↘ u4 → a5   (ask B, currentId)
+ *           ↘ u6 → a7   (ask C)
+ */
+export function buildThreeBranchChat(): Chat {
+  return buildChat(
+    [
+      { id: "u0", parentId: null, role: "user", text: "Draw a robot" },
+      { id: "a1", parentId: "u0", role: "assistant", text: "trunk answer" },
+      { id: "u2", parentId: "a1", role: "user", text: "ask A" },
+      { id: "a3", parentId: "u2", role: "assistant", text: "reply A" },
+      { id: "u4", parentId: "a1", role: "user", text: "ask B" },
+      { id: "a5", parentId: "u4", role: "assistant", text: "reply B" },
+      { id: "u6", parentId: "a1", role: "user", text: "ask C" },
+      { id: "a7", parentId: "u6", role: "assistant", text: "reply C" },
+    ],
+    { currentId: "a5" },
+  );
+}
+
+/**
+ * A fork inside a branch of a fork, open on the last leaf:
+ *   u0 → a1 → u2 → a3 → u8  → a9    (ask A, then ask A1)
+ *           │         ↘ u10 → a11   (ask A, then ask A2, currentId)
+ *           ↘ u4 → a5               (ask B)
+ */
+export function buildNestedForkChat(): Chat {
+  return buildChat(
+    [
+      { id: "u0", parentId: null, role: "user", text: "Draw a robot" },
+      { id: "a1", parentId: "u0", role: "assistant", text: "trunk answer" },
+      { id: "u2", parentId: "a1", role: "user", text: "ask A" },
+      { id: "a3", parentId: "u2", role: "assistant", text: "reply A" },
+      { id: "u8", parentId: "a3", role: "user", text: "ask A1" },
+      { id: "a9", parentId: "u8", role: "assistant", text: "reply A1" },
+      { id: "u10", parentId: "a3", role: "user", text: "ask A2" },
+      { id: "a11", parentId: "u10", role: "assistant", text: "reply A2" },
+      { id: "u4", parentId: "a1", role: "user", text: "ask B" },
+      { id: "a5", parentId: "u4", role: "assistant", text: "reply B" },
+    ],
+    { currentId: "a11" },
+  );
+}
+
+/**
+ * Make message `id` what ChatGPT's transformer stores for a tool's output: a request holding one
+ * `tool-return` part, which has the tool's text (`content`) and no prompt. The chat is changed.
+ */
+export function makeToolReturn(chat: Chat, id: string, content = "search results"): Chat {
+  chat.messages[id].message = [
+    {
+      kind: "request",
+      parts: [
+        {
+          part_kind: "tool-return",
+          tool_name: "browser",
+          content,
+          tool_call_id: `call-${id}`,
+          timestamp: TIMESTAMP,
+        },
+      ],
+    },
+  ];
+  return chat;
+}
+
+/** Make message `id` an assistant reply that is only a tool call, as the transformer stores one. */
+export function makeToolCall(chat: Chat, id: string): Chat {
+  chat.messages[id].message = [
+    {
+      kind: "response",
+      parts: [
+        { part_kind: "tool-call", tool_name: "browser", args: {}, tool_call_id: `call-${id}` },
+      ],
+      timestamp: TIMESTAMP,
+      model_name: "fixture-model",
+    },
+  ];
+  return chat;
+}

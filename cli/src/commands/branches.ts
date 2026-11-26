@@ -15,6 +15,7 @@ import {
   getMessageRole,
   getMessageText,
   getPrimaryBranch,
+  toolStandIn,
 } from "../utils/tree";
 
 export default defineCommand({
@@ -73,6 +74,7 @@ export function buildTree(chat: Chat): TreeNode {
       messageId,
       role: getMessageRole(msg),
       preview: getMessagePreview(msg, 40),
+      isTool: toolStandIn(msg) !== undefined,
       isLeaf: msg.childrenIds.length === 0,
       isOnPrimaryPath: primarySet.has(messageId),
       children: msg.childrenIds.map(buildNode),
@@ -92,7 +94,7 @@ function summarizeNode(chat: Chat, messageId: string): string {
   const msg = chat.messages[messageId];
   if (!msg) return truncate(safeText(messageId), 12);
   const role = getMessageRole(msg);
-  const roleLabel = role === "system" ? "S" : role === "user" ? "U" : "A";
+  const roleLabel = toolStandIn(msg) ? "T" : role === "system" ? "S" : role === "user" ? "U" : "A";
   return `${roleLabel}:${truncate(safeText(getMessagePreview(msg, 22)), 22)}`;
 }
 
@@ -124,8 +126,9 @@ export function formatTreeText(chat: Chat, showIds = false): string {
 }
 
 function formatNodeLine(node: TreeNode, showIds: boolean): string {
-  const roleLabel =
-    node.role === "system"
+  const roleLabel = node.isTool
+    ? pc.dim("[tool]")
+    : node.role === "system"
       ? pc.yellow("[sys]")
       : node.role === "user"
         ? pc.cyan("[user]")
@@ -193,6 +196,7 @@ export function formatBranchesJson(chat: Chat): string {
       preview: node.preview,
       content: getMessageText(chat.messages[node.messageId] as ChatMessage),
       isLeaf: node.isLeaf,
+      isTool: node.isTool,
       isOnPrimaryPath: node.isOnPrimaryPath,
       children: node.children.map(toNodeJson),
     });

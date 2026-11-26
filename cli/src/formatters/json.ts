@@ -4,7 +4,14 @@
 
 import type { Chat } from "../types/chat";
 import { buildMessageRefIndex, getMessageRef } from "../utils/messageRefs";
-import { getMessageRole, getMessagesOnBranch, getMessageText, windowMessages } from "../utils/tree";
+import {
+  buildChatTree,
+  getMessageRole,
+  getMessagesOnBranch,
+  getMessageText,
+  treeMessageIds,
+  windowMessages,
+} from "../utils/tree";
 
 export interface BranchJsonOptions {
   includeThinking?: boolean;
@@ -54,6 +61,50 @@ export function formatBranchAsJson(
         ...(media?.has(msg.id) ? { media: media.get(msg.id) } : {}),
       })),
     },
+  };
+}
+
+export interface ChatJsonOptions {
+  includeThinking?: boolean;
+  skipSystem?: boolean;
+  /** The media items of each message by message id, as for `BranchJsonOptions`. */
+  media?: ReadonlyMap<string, readonly object[]>;
+}
+
+/**
+ * Format the whole chat as JSON: every message once, as stored, with the links that make the tree.
+ *
+ * `messages` lists the messages in the order `get --all-branches` shows them (the trunk, then each
+ * branch). Each has the fields a branch's messages have, and `parentRef` (null for a root) and
+ * `childRefs` in the order the chat stores them; `currentRef` is the message the chat is open on.
+ * With `skipSystem` a system message is left out of the list, and the links to it stay.
+ */
+export function formatChatAsJson(chat: Chat, options: ChatJsonOptions = {}): object {
+  const { includeThinking = false, skipSystem = false, media } = options;
+  const refs = buildMessageRefIndex(chat);
+  const ref = (id: string): string => getMessageRef(refs, id);
+  const messages = treeMessageIds(buildChatTree(chat))
+    .map((id) => chat.messages[id])
+    .filter((msg) => !skipSystem || getMessageRole(msg) !== "system");
+
+  return {
+    chatId: chat.id,
+    title: chat.title,
+    platform: chat.source,
+    timestamp: chat.timestamp,
+    system: !skipSystem ? chat.system : undefined,
+    currentRef: chat.messages[chat.currentId] ? ref(chat.currentId) : null,
+    branchCount: Object.values(chat.messages).filter((msg) => msg.childrenIds.length === 0).length,
+    messageCount: messages.length,
+    messages: messages.map((msg) => ({
+      ref: ref(msg.id),
+      parentRef: msg.parentId && chat.messages[msg.parentId] ? ref(msg.parentId) : null,
+      childRefs: msg.childrenIds.filter((id) => chat.messages[id]).map(ref),
+      role: getMessageRole(msg),
+      content: getMessageText(msg, { includeThinking, skipSystem }),
+      timestamp: msg.timestamp,
+      ...(media?.has(msg.id) ? { media: media.get(msg.id) } : {}),
+    })),
   };
 }
 

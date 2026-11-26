@@ -131,6 +131,123 @@ export function getMessagesOnBranch(chat: Chat, path: string[]): ChatMessage[] {
 }
 
 /**
+ * A run of messages along one path, and the branches that leave it. The run goes on through every
+ * message with a single child, and ends at a leaf or at the first message with several.
+ */
+export interface TreeSection {
+  /** The messages of the run, root side first. */
+  messageIds: string[];
+  /**
+   * One section per child of the run's last message, in the order the tree stores them. Empty at a
+   * leaf; two or more at a fork.
+   */
+  branches: TreeSection[];
+  /** True when `currentId` is in this run or in any branch below it. */
+  holdsCurrent: boolean;
+}
+
+/** A chat's whole tree, as `get --all-branches` shows it: every message once, trunk before branches. */
+export interface ChatTree {
+  /**
+   * The sections the chat opens with: one in the usual case, several when it has several roots
+   * (alternative beginnings), which read as a fork at the start.
+   */
+  roots: TreeSection[];
+  /**
+   * Messages no walk from a root reaches (a cycle, or a parent link that its parent's children do
+   * not repeat), oldest first, so that no message is lost.
+   */
+  unlinked: string[];
+}
+
+/** Oldest first, the id as tiebreak: the order of several roots, and of unlinked messages. */
+function byAge(a: ChatMessage, b: ChatMessage): number {
+  const age = (a.timestamp ?? 0) - (b.timestamp ?? 0);
+  if (age !== 0) return age;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Cut a chat into its trunk and branches. A message is walked once, by the links its parent keeps
+ * in `childrenIds`; a link to a message that is not in the chat is ignored. Several roots come
+ * oldest first. The walk keeps its own stack, so a chat can be as deep as it likes.
+ */
+export function buildChatTree(chat: Chat): ChatTree {
+  const visited = new Set<string>();
+
+  /** A section's run, taken by following single children, and the children its last message has. */
+  function open(startId: string): { section: TreeSection; children: string[] } | undefined {
+    if (visited.has(startId) || !chat.messages[startId]) return undefined;
+    const messageIds: string[] = [];
+    let cursor: ChatMessage = chat.messages[startId];
+    for (;;) {
+      visited.add(cursor.id);
+      messageIds.push(cursor.id);
+      const children: string[] = [...new Set(cursor.childrenIds)].filter(
+        (id) => chat.messages[id] && !visited.has(id),
+      );
+      if (children.length !== 1) {
+        return { section: { messageIds, branches: [], holdsCurrent: false }, children };
+      }
+      cursor = chat.messages[children[0]];
+    }
+  }
+
+  interface Frame {
+    section: TreeSection;
+    children: string[];
+    next: number;
+  }
+
+  const all = Object.values(chat.messages);
+  const roots: TreeSection[] = [];
+  const stack: Frame[] = [];
+  for (const root of all
+    .filter((msg) => !msg.parentId || !chat.messages[msg.parentId])
+    .sort(byAge)) {
+    const opened = open(root.id);
+    if (!opened) continue;
+    roots.push(opened.section);
+    stack.push({ ...opened, next: 0 });
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (frame.next < frame.children.length) {
+        const child = open(frame.children[frame.next++]);
+        if (child) {
+          frame.section.branches.push(child.section);
+          stack.push({ ...child, next: 0 });
+        }
+        continue;
+      }
+      stack.pop();
+      const { section } = frame;
+      section.holdsCurrent =
+        section.messageIds.includes(chat.currentId) ||
+        section.branches.some((branch) => branch.holdsCurrent);
+    }
+  }
+
+  const unlinked = all
+    .filter((msg) => !visited.has(msg.id))
+    .sort(byAge)
+    .map((msg) => msg.id);
+
+  return { roots, unlinked };
+}
+
+/** Every message of a tree once, in the order `get --all-branches` shows them: trunk, then each branch. */
+export function treeMessageIds(tree: ChatTree): string[] {
+  const ids: string[] = [];
+  const stack = [...tree.roots].reverse();
+  for (let section = stack.pop(); section; section = stack.pop()) {
+    for (const id of section.messageIds) ids.push(id);
+    for (let i = section.branches.length - 1; i >= 0; i--) stack.push(section.branches[i]);
+  }
+  for (const id of tree.unlinked) ids.push(id);
+  return ids;
+}
+
+/**
  * The head or tail window that `get --head` and `get --tail` cut from a branch's messages. head
  * wins over tail; 0 means no window. Markdown and JSON both cut through here, so they cut the same
  * messages. `headOmitted` and `tailOmitted` count what the window left out at each end.
@@ -339,10 +456,26 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
 }
 
 /**
- * Get a short preview of a message (first N chars).
+ * What stands for a message that holds only a tool's traffic: `[tool result]` for a result handed
+ * back (a `tool-return` or a `retry-prompt`), `[tool call]` for a call made. A message with text or
+ * media has none, and neither does an ordinary blank one. The text view leaves these messages out
+ * (they are not conversation); the tree view lists every message, so its rows say what they are.
+ */
+export function toolStandIn(message: ChatMessage): "[tool call]" | "[tool result]" | undefined {
+  if (getMessageText(message).trim()) return undefined;
+  const parts = message.message.flatMap((msg) => msg.parts as Array<{ part_kind: string }>);
+  if (parts.some((p) => p.part_kind === "tool-return" || p.part_kind === "retry-prompt")) {
+    return "[tool result]";
+  }
+  return parts.some((p) => p.part_kind === "tool-call") ? "[tool call]" : undefined;
+}
+
+/**
+ * Get a short preview of a message (first N chars). A message of tool traffic only shows its
+ * stand-in.
  */
 export function getMessagePreview(message: ChatMessage, maxLength = 50): string {
-  const text = getMessageText(message);
+  const text = getMessageText(message) || toolStandIn(message) || "";
   const truncated = text.slice(0, maxLength).replace(/\n/g, " ");
   return truncated.length < text.length ? `${truncated}...` : truncated;
 }

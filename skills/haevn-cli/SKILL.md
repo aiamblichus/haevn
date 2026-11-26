@@ -281,13 +281,17 @@ haevn search "<error phrase>" --platform claude --limit 200
 haevn get <chatId> -m <messageRef> -f markdown
 ```
 
-### Compare branches in a heavily forked chat
+### Read a whole forked chat, or compare branches
 
 ```bash
-haevn branches <chatId>
-haevn get <chatId> -m <refA> -f json > /tmp/a.json
+haevn branches <chatId>                      # the tree; tool-only messages show as [tool] rows (isTool in JSON)
+haevn get <chatId> --all-branches -o chat.md # every branch: the trunk once, then "Branch N of M" sections
+haevn get <chatId> --all-branches --include-media -o chat.md   # plus the media in chat-media/
+haevn get <chatId> -m <refA> -f json > /tmp/a.json             # one branch at a time, to diff
 haevn get <chatId> -m <refB> -f json > /tmp/b.json
 ```
+
+`--all-branches` cannot be combined with `-m`, `--head` or `--tail`. Its JSON is one flat tree (`messages` with `parentRef` and `childRefs`, `currentRef` null when unknown), not single-branch `get`'s `branch.messages`. `export --all-branches` writes a different, flat shape.
 
 ### Build scripts around results
 
