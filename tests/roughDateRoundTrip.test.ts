@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateExportContent } from "../src/formatters";
 import type { Chat } from "../src/model/haevn_model";
 import { transformFragmentToHaevnChat } from "../src/providers/fragment";
+import { log } from "../src/utils/logger";
 import { parseMarkdownContent } from "../src/utils/markdownImporter";
 import { parsed, withId } from "./helpers/fragmentFile";
 
@@ -76,11 +77,29 @@ describe("a Markdown file's dates, as the importer reads them (HVN-175)", () => 
     expect(back.params).toEqual({});
   });
 
-  it("refuses a date that is none of the fragment forms, such as a label written by hand", async () => {
-    await expect(
-      parseMarkdownContent(
-        `---\ntitle: Labelled\ndate: c. Mar 2024\n---\n\n<!-- HAEVN: role="user" -->\nHi\n`,
-      ),
-    ).rejects.toThrow("date is none of");
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // A date HAEVN does not read is not a refusal: the importer never read date: before HVN-175, so
+  // such a file (an HVN-171 label, or one written elsewhere) imports dated at the import, with a
+  // warning that says so.
+  it.each([
+    ["c. Mar 2024", "an HVN-171 label"],
+    ["yesterday", "a word"],
+    ["2024/03/05 14:00", "another form"],
+  ])("dates %s (%s) at the import, with no roughDate, and warns", async (written) => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    const before = Date.now();
+    const back = await parseMarkdownContent(
+      `---\ntitle: Not a date HAEVN reads\ndate: ${written}\n---\n\n<!-- HAEVN: role="user" -->\nHi\n`,
+    );
+    const after = Date.now();
+    expect(back.timestamp).toBeGreaterThanOrEqual(before);
+    expect(back.timestamp).toBeLessThanOrEqual(after);
+    expect(back.params).toEqual({});
+    expect(warn).toHaveBeenCalledWith(
+      `date "${written}" is not a date HAEVN reads; the chat is dated at import`,
+    );
   });
 });

@@ -107,7 +107,7 @@ Assistant message text
 - `conversation_id` (optional): stable source identifier; when omitted, HAEVN computes an ID from file content
 - `created_at` (optional): chat creation timestamp (ISO 8601 string, milliseconds, or numeric string)
 - `modified_at` (optional): source/provider last-modified timestamp (same accepted formats as `created_at`)
-- `date` (optional, read only when `created_at` is absent): a date in the forms a fragment's `date:` takes (`2024`, `~2024-03`, `2023-11..2024-02`, `2024-03..`, and so on; see [Dates](/user-guide/fragments/#dates)). Left out, empty or `unknown` means undated. A date that is none of those forms refuses the file.
+- `date` (optional, read only when `created_at` is absent): a date in the forms a fragment's `date:` takes (`2024`, `~2024-03`, `2023-11..2024-02`, `2024-03..`, and so on; see [Dates](/user-guide/fragments/#dates)). Left out, empty or `unknown` means undated. A date that is none of those forms is not read: the chat is dated at the time of the import, as it was before these forms were read, and HAEVN logs a warning.
 - `system` (optional): system prompt/context
 - `models_used` (optional): list of model names; defaults to `unknown` when omitted
 

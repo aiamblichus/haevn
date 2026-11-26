@@ -14,6 +14,7 @@ import type {
 import type { RoughDate } from "../model/roughDate";
 import { parseRoughDate } from "../providers/fragment/parser";
 import { getAllProviders } from "../providers/provider";
+import { log } from "./logger";
 
 async function sha256Hex(text: string): Promise<string> {
   try {
@@ -38,7 +39,8 @@ async function sha256Hex(text: string): Promise<string> {
  * title: Chat title
  * source: provider-name
  * conversation_id: chat-id (optional)
- * date: the date of a chat with no created_at, read as a fragment's date is (optional, HVN-175)
+ * date: the date of a chat with no created_at, read as a fragment's date is (optional, HVN-175;
+ *   a date it does not read dates the chat at the import)
  * system: system message (optional)
  * models_used: [model1, model2]
  * ---
@@ -74,12 +76,15 @@ interface ParsedHeader {
 
 /**
  * The date: line of a file with no created_at, read by the fragment parser (HVN-175): the same
- * forms, the same made-up times for a rough date, and undated when the line is absent.
+ * forms, the same made-up times for a rough date, and undated when the line is absent. A date the
+ * parser does not read is not a refusal: the importer never read date: before, so the chat is
+ * dated at the import, as it was, and a warning says so.
  */
-function readDateLine(value: unknown): DateLine {
+function readDateLine(value: unknown): DateLine | undefined {
   const date = parseRoughDate(value);
-  if (!date.ok) throw new Error(date.message);
-  return { timestamp: date.timestamp, roughDate: date.roughDate };
+  if (date.ok) return { timestamp: date.timestamp, roughDate: date.roughDate };
+  log.warn(`date "${String(value)}" is not a date HAEVN reads; the chat is dated at import`);
+  return undefined;
 }
 
 function parseTimestampValue(value: unknown): number | undefined {
