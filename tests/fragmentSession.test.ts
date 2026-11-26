@@ -179,8 +179,11 @@ describe("the limit holds for the whole set (HVN-179)", () => {
     expect(h.asks).toHaveLength(1);
     expect(h.last().view.kind).toBe("plan");
     expect(h.last().plan.map((e) => e.name)).toEqual(["a.md"]);
-    expect(h.last().notice).toMatchObject({ tone: "bad", title: "Too much for one import." });
-    expect(h.last().notice?.body).toContain("the files already here are kept");
+    expect(h.last().notice).toMatchObject({
+      tone: "bad",
+      title: "Not added: too much for one import.",
+    });
+    expect(h.last().notice?.body).toContain("The 1 file already here is kept: import it first");
     expect(h.session.gathered?.candidates.map((c) => c.name)).toEqual(["a.md"]);
   });
 
