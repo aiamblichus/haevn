@@ -256,6 +256,35 @@ describe("an image that could not be stored", () => {
     ).toEqual({ unstored: "save_failed" });
   });
 
+  it("writes no file for a download that loses the timeout race, and counts its link once (HVN-160)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // the download outlives the overall timeout, and cannot be cancelled
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return new Response(JPEG_BYTES, { status: 200, headers: { "content-type": "image/jpeg" } });
+      }),
+    );
+
+    const [part] = await processExternalAssets([{ url: UPLOAD, type: "image/jpeg" }], {
+      chatId: "c",
+      messageId: "m",
+      retries: 0,
+      overallTimeoutMs: 20,
+      logPrefix: "[test]",
+    });
+    expect(part).toEqual({
+      kind: "image-url",
+      url: UPLOAD,
+      vendor_metadata: { unstored: "timeout" },
+    });
+    expect(countUnstoredMedia({ parts: [part] })).toBe(1);
+
+    // past the end of the download: it has finished, and would have written its file by now
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(fs.files()).toEqual([]);
+  });
+
   it("marks a page's blob: link without fetching it: the extension cannot reach it", async () => {
     const fetchSpy = respondWith(200);
     vi.stubGlobal("fetch", fetchSpy);
