@@ -123,11 +123,13 @@ function responseModelNames(cm: ChatMessage): unknown[] {
 
 /**
  * What makes two labels one row: the index folds case and treats a dash or a space alike, so
- * `gpt-4o-mini` and `GPT-4o Mini` find the same chats and one row serves both.
+ * `gpt-4o-mini` and `GPT-4o Mini` find the same chats and one row serves both. What the index
+ * keeps inside a word (letters, digits, marks, `_`, and the symbols `Co` and `So`) stays in the key,
+ * so `gpt-4o` and `gpt-4-o`, and `x ✓` and `x ✗`, are different labels.
  */
 function labelKey(label: string): string {
   const lower = label.toLowerCase();
-  return lower.replace(/[^\p{L}\p{N}\p{M}_]+/gu, " ").trim() || lower;
+  return lower.replace(/[^\p{L}\p{N}\p{M}\p{Co}\p{So}_]+/gu, " ").trim() || lower;
 }
 
 /**

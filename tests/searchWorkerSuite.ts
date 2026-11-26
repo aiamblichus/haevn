@@ -2586,13 +2586,27 @@ hi there
       return chat;
     }
 
-    it("finds a stored ChatGPT chat by its slug or its display name, through model_name alone", async () => {
+    it("finds a stored ChatGPT chat by its display name, through model_name alone", async () => {
       await seedChats([storedChatGPT("old-gpt")]);
       await send({ type: "rebuild" });
 
       expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
       expect(chatsOf(await passages('model:"GPT-4o"'))).toEqual(["old-gpt"]);
       expect(chatsOf(await passages("model:gpt-5"))).toEqual([]);
+      // The slug it was never given is not found: that waits for a re-sync.
+      expect(chatsOf(await passages("model:text-davinci-002-render-sha"))).toEqual([]);
+    });
+
+    it("finds a chat the transformer wrote after HVN-168 by its slug and its display name, in one row", async () => {
+      const chat = storedChatGPT("new-gpt");
+      chat.models = ["gpt-4o"];
+      chat.messages["new-gpt-m1"].model = "gpt-4o";
+      await seedChats([chat]);
+      await send({ type: "rebuild" });
+
+      expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["new-gpt"]);
+      expect(chatsOf(await passages('model:"GPT-4o"'))).toEqual(["new-gpt"]);
+      expect(await passages("model:gpt-4o")).toHaveLength(1);
     });
 
     it("finds a Grok chat by the model its answers name", async () => {

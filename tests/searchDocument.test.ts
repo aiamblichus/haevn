@@ -150,6 +150,18 @@ describe("the models a response names (HVN-168)", () => {
     expect(indexed?.models).toEqual(["ChatGPT", "GPT-4o Mini", "GPT-4o"]);
   });
 
+  it("keeps two models that differ in where their separators fall as two labels", () => {
+    const indexed = extractIndexedChat(answeredBy("gpt-4o", "gpt-4-o", "o1", "o-1"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "gpt-4o", "gpt-4-o", "o1", "o-1"]);
+  });
+
+  it("keeps two labels that differ only in a symbol the index reads as part of a word", () => {
+    const indexed = extractIndexedChat(answeredBy("x \u2713", "x \u2717", "x \u2713"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "x \u2713", "x \u2717"]);
+  });
+
   it("keeps a label that is no model name when the provider wrote it (DALL-E, Deep Research)", () => {
     const indexed = extractIndexedChat(answeredBy("DALL-E", "Deep Research"));
 
