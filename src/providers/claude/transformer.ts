@@ -296,6 +296,13 @@ export async function convertClaudeTranscriptToHaevn(
     };
   });
 
+  // The model the conversation says it uses; its messages name none of their own. `null`, blank
+  // or not a string (an API that changes) leaves the provider's name.
+  const modelName =
+    typeof transcript.model === "string" && transcript.model.trim()
+      ? transcript.model.trim()
+      : "Claude";
+
   // Step 3: Build message tree
   const { messages } = buildMessageTree(nodes, (node) => {
     const { claudeMsg, conversationId, downloadedMedia } = node.data;
@@ -358,7 +365,7 @@ export async function convertClaudeTranscriptToHaevn(
         kind: "response",
         parts: contentParts,
         timestamp: claudeMsg.created_at,
-        model_name: "Claude", // The model is not in the transcript, so we hardcode it
+        model_name: modelName,
         vendor_id: claudeMsg.uuid,
       } as ModelResponse;
     }
@@ -368,7 +375,7 @@ export async function convertClaudeTranscriptToHaevn(
       parentId: node.parentId,
       childrenIds: [],
       message: [modelMessage],
-      model: "Claude",
+      model: modelName,
       done: claudeMsg.stop_reason === "stop_sequence",
       // Milliseconds since epoch
       timestamp: new Date(claudeMsg.created_at).getTime(),
@@ -381,7 +388,7 @@ export async function convertClaudeTranscriptToHaevn(
     source: "claude",
     sourceId: transcript.uuid,
     title: transcript.name,
-    models: ["Claude"],
+    models: [modelName],
     system: "", // May be filled in below from projects
     params: {},
     currentId:

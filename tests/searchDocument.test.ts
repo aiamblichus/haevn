@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Chat, ChatMessage } from "../src/model/haevn_model";
 import {
   extractIndexedChat,
-  labelKindOf,
   LABEL_IDS,
+  labelKindOf,
   MAX_LABELS,
 } from "../src/services/searchDocument";
 
@@ -108,5 +108,76 @@ describe("the models and tags of an indexed chat (HVN-164)", () => {
     expect(labelKindOf(LABEL_IDS.tag)).toBe("tag");
     expect(labelKindOf("title")).toBeUndefined();
     expect(labelKindOf("m1")).toBeUndefined();
+  });
+});
+
+describe("the models a response names (HVN-168)", () => {
+  /** A chat as an earlier release stored it: a placeholder in `models`, the real model in the response. */
+  function answeredBy(...names: (string | undefined)[]): Chat {
+    const messages: Record<string, ChatMessage> = {};
+    names.forEach((name, i) => {
+      const id = `m${i + 1}`;
+      messages[id] = {
+        id,
+        childrenIds: [],
+        chatId: "c",
+        model: "ChatGPT",
+        done: true,
+        message: [
+          { kind: "request", parts: [{ part_kind: "user-prompt", content: `question ${id}` }] },
+          {
+            kind: "response",
+            parts: [{ part_kind: "text", content: `answer ${id}` }],
+            ...(name === undefined ? {} : { model_name: name }),
+          },
+        ],
+      } as ChatMessage;
+    });
+    return chatWith({ models: ["ChatGPT"], messages });
+  }
+
+  it("indexes the model_name of each response, after the chat's own models", () => {
+    const indexed = extractIndexedChat(answeredBy("GPT-4o", "o3"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "GPT-4o", "o3"]);
+  });
+
+  it("names each once, and counts a display name and a slug that read alike as one", () => {
+    const indexed = extractIndexedChat(
+      answeredBy("GPT-4o Mini", "gpt-4o-mini", "GPT-4o", "GPT-4o", "gpt-4o"),
+    );
+
+    expect(indexed?.models).toEqual(["ChatGPT", "GPT-4o Mini", "GPT-4o"]);
+  });
+
+  it("keeps two models that differ in where their separators fall as two labels", () => {
+    const indexed = extractIndexedChat(answeredBy("gpt-4o", "gpt-4-o", "o1", "o-1"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "gpt-4o", "gpt-4-o", "o1", "o-1"]);
+  });
+
+  it("keeps two labels that differ only in a symbol the index reads as part of a word", () => {
+    const indexed = extractIndexedChat(answeredBy("x \u2713", "x \u2717", "x \u2713"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "x \u2713", "x \u2717"]);
+  });
+
+  it("keeps a label that is no model name when the provider wrote it (DALL-E, Deep Research)", () => {
+    const indexed = extractIndexedChat(answeredBy("DALL-E", "Deep Research"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "DALL-E", "Deep Research"]);
+  });
+
+  it("leaves out a blank name, an unknown one and a response that names none", () => {
+    const indexed = extractIndexedChat(answeredBy("", "  ", "unknown", "Unknown", undefined, "o3"));
+
+    expect(indexed?.models).toEqual(["ChatGPT", "o3"]);
+  });
+
+  it("still stops at the cap", () => {
+    const names = Array.from({ length: MAX_LABELS + 10 }, (_, i) => `model-${i}`);
+    const indexed = extractIndexedChat(answeredBy(...names));
+
+    expect(indexed?.models).toHaveLength(MAX_LABELS);
   });
 });

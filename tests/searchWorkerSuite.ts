@@ -1,6 +1,8 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
+import type { GrokResponse } from "../src/providers/grok/model";
+import { convertGrokToHaevn } from "../src/providers/grok/transformer";
 import { registerAllProviders } from "../src/providers/index";
 import { parsePiJsonl } from "../src/providers/pi/importer";
 import { transformPiToHaevnChat } from "../src/providers/pi/transformer";
@@ -2565,6 +2567,112 @@ hi there
       expect(chunk.indexRebuilding).toBeDefined();
       expect(chunk.results).toEqual([]);
       await waitUntilIndexReady("pineapple");
+    });
+  });
+
+  describe("the model each response names (HVN-168)", () => {
+    // Format 4 is what a release before HVN-168 leaves: label rows, but only for Chat.models and
+    // ChatMessage.model, and a ChatGPT chat synced then has "ChatGPT" in both.
+    const BEFORE_RESPONSE_MODELS = 4;
+
+    /** A ChatGPT chat as the transformer made it before HVN-168: the real model in `model_name` alone. */
+    function storedChatGPT(id: string): Chat {
+      const chat = buildChat(id, "pineapple");
+      chat.source = "chatgpt";
+      chat.models = ["ChatGPT"];
+      const message = chat.messages[`${id}-m1`];
+      message.model = "ChatGPT";
+      (message.message[1] as { model_name?: string }).model_name = "GPT-4o";
+      return chat;
+    }
+
+    it("finds a stored ChatGPT chat by its display name, through model_name alone", async () => {
+      await seedChats([storedChatGPT("old-gpt")]);
+      await send({ type: "rebuild" });
+
+      expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
+      expect(chatsOf(await passages('model:"GPT-4o"'))).toEqual(["old-gpt"]);
+      expect(chatsOf(await passages("model:gpt-5"))).toEqual([]);
+      // The slug it was never given is not found: that waits for a re-sync.
+      expect(chatsOf(await passages("model:text-davinci-002-render-sha"))).toEqual([]);
+    });
+
+    it("finds a chat the transformer wrote after HVN-168 by its slug and its display name, in one row", async () => {
+      const chat = storedChatGPT("new-gpt");
+      chat.models = ["gpt-4o"];
+      chat.messages["new-gpt-m1"].model = "gpt-4o";
+      await seedChats([chat]);
+      await send({ type: "rebuild" });
+
+      expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["new-gpt"]);
+      expect(chatsOf(await passages('model:"GPT-4o"'))).toEqual(["new-gpt"]);
+      expect(await passages("model:gpt-4o")).toHaveLength(1);
+    });
+
+    it("finds a Grok chat by the model its answers name", async () => {
+      const chat = await convertGrokToHaevn({
+        conversation: {
+          conversationId: "grok-chat",
+          title: "A Grok chat",
+          starred: false,
+          createTime: "2026-01-01T10:00:00.000Z",
+          modifyTime: "2026-01-01T10:05:00.000Z",
+          systemPromptName: "",
+          temporary: false,
+          mediaTypes: [],
+          workspaces: [],
+          taskResult: {},
+        },
+        responseNodes: [
+          { responseId: "g1", sender: "human" },
+          { responseId: "g2", sender: "assistant", parentResponseId: "g1" },
+        ],
+        responses: [
+          { responseId: "g1", sender: "human", message: "pineapple" },
+          { responseId: "g2", sender: "assistant", message: "mango", model: "grok-4" },
+        ].map((r) => ({
+          createTime: "2026-01-01T10:00:00.000Z",
+          partial: false,
+          fileAttachmentsMetadata: [],
+          metadata: {},
+          model: "",
+          ...r,
+        })) as unknown as GrokResponse[],
+      });
+      await seedChats([chat]);
+      await send({ type: "rebuild" });
+
+      expect(chatsOf(await passages("model:grok-4"))).toEqual(["grok-chat"]);
+      expect(chatsOf(await passages("model:grok-3"))).toEqual([]);
+    });
+
+    it("is rebuilt from format 4, says so meanwhile, and then finds the chat by its model", async () => {
+      await seedChats([storedChatGPT("old-gpt")]);
+      await kit.seedFormat(BEFORE_RESPONSE_MODELS);
+      await loadWorker();
+
+      await send({ type: "init" });
+      const [during] = await search("model:gpt-4o", false);
+
+      expect(during.results).toEqual([]);
+      expect(during.indexRebuilding).toBeDefined(); // "not searched", never "no matches"
+      await waitUntilIndexReady("model:gpt-4o");
+      expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(1);
+    });
+
+    it("rebuilds it once: the next start has nothing to rebuild", async () => {
+      await seedChats([storedChatGPT("old-gpt")]);
+      await kit.seedFormat(BEFORE_RESPONSE_MODELS);
+      await loadWorker();
+      await send({ type: "init" });
+      await waitUntilIndexReady("model:gpt-4o");
+
+      await loadWorker();
+      await send({ type: "init" });
+
+      expect(posted.filter((m) => m.type === "indexRebuildComplete")).toHaveLength(0);
+      expect(chatsOf(await passages("model:gpt-4o"))).toEqual(["old-gpt"]);
     });
   });
 });

@@ -202,8 +202,11 @@ export async function openSqliteHost(): Promise<SqliteHost> {
  *   3: SQLite FTS5, one row for each message, text stored, accents folded.
  *   4: and a row for each model and each tag of a chat (HVN-164). The tables are the same; an
  *      index of format 3 has no label rows, so it is not read and the next start rebuilds it.
+ *   5: the model labels also hold the model each response names (`model_name`, HVN-168). Same
+ *      tables; an index of format 4 lacks those labels for chats synced earlier, so it is not read
+ *      and the next start rebuilds it.
  */
-export const INDEX_FORMAT_VERSION = 4;
+export const INDEX_FORMAT_VERSION = 5;
 
 /** What a search may be narrowed to, before the cut. */
 export interface IndexFilters {

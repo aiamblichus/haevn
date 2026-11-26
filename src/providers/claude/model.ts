@@ -301,6 +301,11 @@ export interface ChatTranscript {
   is_temporary: boolean;
   /** The UUID of the latest message in the main conversation thread. This indicates the "leaf" of the chat tree. */
   current_leaf_message_uuid: UUID;
+  /**
+   * The model the conversation uses, as the chat list gives it (`Chat.model`). Not yet checked
+   * against a live fetch of one conversation: the transformer treats it as optional (HVN-168).
+   */
+  model?: string | null;
   /** An ordered array of all messages within this chat transcript, representing the conversation flow. */
   chat_messages: ChatMessage[];
 }
