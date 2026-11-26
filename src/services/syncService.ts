@@ -30,6 +30,7 @@ export namespace SyncService {
   export const saveChatMessages = ChatRepository.saveChatMessages;
   export const deleteChatMessages = ChatRepository.deleteChatMessages;
   export const getChatBySourceId = ChatRepository.getChatBySourceId;
+  export const getChatsBySource = ChatRepository.getChatsBySource;
   export const existsChatBySourceId = ChatRepository.existsChatBySourceId;
   export const batchCheckExistingChats = ChatRepository.batchCheckExistingChats;
   export const deleteChats = ChatRepository.deleteChats;
