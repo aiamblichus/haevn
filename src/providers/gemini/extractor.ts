@@ -657,9 +657,23 @@ export function extractGeminiSimpleText(): string {
 
 // Removed export/download helpers; formatting is handled elsewhere.
 
+/**
+ * How many turns Gemini renders when a chat opens: the last ten. A page with fewer `user-query`
+ * elements holds the whole chat, whatever its scroll height (measured in HVN-161: a 9-turn chat
+ * was 22 times the viewport and complete), so there is nothing above it to load. A page with ten
+ * or more may have older turns above.
+ */
+const GEMINI_INITIAL_TURNS = 10;
+
 // Identify and scroll the chat window's message scroller upwards to load older messages
 async function loadAllGeminiMessagesUpwards(): Promise<void> {
   try {
+    const turnsOnPage = document.querySelectorAll("user-query").length;
+    if (turnsOnPage < GEMINI_INITIAL_TURNS) {
+      log.info(`[Extractor] ${turnsOnPage} turns on the page: complete, no upward preload.`);
+      return;
+    }
+
     // Userscript's approach: Try primary selector first
     let scroller = document.querySelector(
       '[data-test-id="chat-history-container"]',
@@ -694,11 +708,12 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     let previousMessageCount = -1;
-    let noChangeAttempts = 0;
     const maxAttempts = 40;
     const delay = 300; // Reduced from 500ms for faster iteration
     const AUTOSCROLL_MAT_PROGRESS_BAR_POLL_INTERVAL = 50;
-    const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 1500; // Reduced from 3000ms - if no spinner shows in 1.5s, content is likely already loaded
+    // The bar showed 154 to 192 ms after `scrollTop = 0` in every measured round that had older
+    // turns to load (HVN-161); 500 ms leaves 2.6 times that for a busy tab.
+    const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 500;
     const AUTOSCROLL_MAT_PROGRESS_BAR_DISAPPEAR_TIMEOUT = 5000; // Keep this timeout to ensure content fully loads
 
     const waitForElementToAppear = async (
@@ -759,7 +774,6 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
       );
 
       if (progressBarElement) {
-        noChangeAttempts = 0; // Reset retries if progress bar appeared
         // Wait for progress bar to disappear
         const disappeared = await waitForElementToDisappear(
           "mat-progress-bar.mdc-linear-progress--indeterminate",
@@ -769,13 +783,9 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
           log.warn("[Extractor] mat-progress-bar did not disappear within expected time.");
         }
       } else {
-        // If progress bar doesn't appear, increment retry count
-        noChangeAttempts++;
-        if (noChangeAttempts > 3) {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
+        // A scroll to the top with older turns above shows the bar at once; a round without it
+        // means nothing is left to load.
+        break;
       }
 
       // Track message count changes (userscript's approach)
@@ -784,7 +794,6 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
 
       if (currentMessageCount > previousMessageCount) {
         previousMessageCount = currentMessageCount;
-        noChangeAttempts = 0; // Reset retries if new messages found
       } else {
         // No new messages detected after a scroll attempt
         if (previousMessageCount !== -1) {
