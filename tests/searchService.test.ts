@@ -198,6 +198,34 @@ describe("SearchService.searchChatsStreaming for an id, with a limit and filters
     expect(cut.stats.wasLimited).toBe(true);
   });
 
+  it("gives the date of a chat that has a rough date, and no message time, whatever its source (HVN-163)", async () => {
+    await seed(
+      {
+        ...chatRow("abc1", 0),
+        source: "gemini",
+        params: {
+          roughDate: {
+            text: "~2024-03",
+            precision: "month",
+            approximate: true,
+            from: Date.UTC(2024, 2, 1),
+            to: Date.UTC(2024, 3, 1),
+          },
+        },
+      } as Chat,
+      chatRow("abc2", 7),
+    );
+
+    const { results } = await runId({ maxChatsToScan: 5 });
+
+    const dated = results.find((r) => r.chatId === "abc1");
+    const plain = results.find((r) => r.chatId === "abc2");
+    expect(dated?.dateLabel).toBe("c. Mar 2024");
+    expect(dated).not.toHaveProperty("messageTimestamp");
+    expect(plain?.messageTimestamp).toBe(7);
+    expect(plain).not.toHaveProperty("dateLabel");
+  });
+
   it("applies the date range and the category before the limit", async () => {
     await seed(chatRow("abc1", 10), chatRow("abc2", 20), chatRow("abc3", 30));
     await getDB().chatMetadata.put({

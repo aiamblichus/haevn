@@ -1,12 +1,12 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chat, ChatMessage, SearchResult } from "../src/model/haevn_model";
-import { saveChatToDb } from "../src/services/chatPersistence";
 import { registerAllProviders } from "../src/providers/index";
 import { parsePiJsonl } from "../src/providers/pi/importer";
 import { transformPiToHaevnChat } from "../src/providers/pi/transformer";
 import type { PoeConversationData } from "../src/providers/poe/model";
 import { transformPoeToHaevn } from "../src/providers/poe/transformer";
+import { saveChatToDb } from "../src/services/chatPersistence";
 import { getDB } from "../src/services/db";
 import {
   BULK_WINDOW_KEY,
@@ -2431,6 +2431,28 @@ hi there
       messageContent: "starred",
       messageSnippet: "{{HIGHLIGHT}}starred{{/HIGHLIGHT}}",
     });
+  });
+
+  it("gives the date of a chat that has a rough date, and no message time, whatever its source (HVN-163)", async () => {
+    const undated = {
+      ...buildChat("undated", "pineapple"),
+      source: "gemini",
+      timestamp: 0,
+      params: {
+        roughDate: { text: "", precision: "unknown", approximate: false, from: 0, to: 0 },
+      },
+    };
+    await seedChats([undated, buildChat("plain", "pineapple")]);
+    await send({ type: "rebuild" });
+
+    const found = await passages("pineapple");
+    const forUndated = found.find((r) => r.chatId === "undated");
+    const forPlain = found.find((r) => r.chatId === "plain");
+
+    expect(forUndated?.dateLabel).toBe("undated");
+    expect(forUndated).not.toHaveProperty("messageTimestamp");
+    expect(forPlain?.messageTimestamp).toBeGreaterThan(0);
+    expect(forPlain).not.toHaveProperty("dateLabel");
   });
 
   it("does not call a message a label, or a label a message", async () => {
