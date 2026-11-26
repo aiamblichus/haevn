@@ -252,6 +252,20 @@ describe("--assign-ids decides after the plan's other checks, and writes with ca
     );
   });
 
+  it("says in a dry run that a read-only file would get no id, as the real run does", async () => {
+    write("1-ok.md", body);
+    const readOnly = write("2-ro.md", body);
+    fs.chmodSync(readOnly, 0o444);
+    const dry = await assignIds(await collectFragmentFiles([dir]), fakeAsk().ask, true);
+    const real = await assignIds(await collectFragmentFiles([dir]), fakeAsk().ask, false);
+
+    expect(states(dry.result)).toEqual(states(real.result));
+    expect(dry.assigned.map((a) => path.basename(a.name))).toEqual(["1-ok.md"]);
+    expect(dry.result.plan?.find((e) => e.name.endsWith("2-ro.md"))?.message).toContain(
+      "read-only",
+    );
+  });
+
   it("asks the extension three times for a real run (the plan, the plan with ids, the import), and once more for none", async () => {
     write("a.md", body);
     const input = await collectFragmentFiles([dir]);

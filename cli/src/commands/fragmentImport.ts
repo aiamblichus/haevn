@@ -140,6 +140,13 @@ export function assignId(content: string, id: string): string {
 /** Why an id was not written to a file: said to the person, and kept out of the plan's states. */
 class NotWritten extends Error {}
 
+/** Throws when a file is one `--assign-ids` must not replace: a read-only file is the person's mark. */
+async function checkWritable(target: string): Promise<number> {
+  const { mode } = await fs.stat(target);
+  if ((mode & 0o222) === 0) throw new NotWritten("the file is read-only");
+  return mode;
+}
+
 /**
  * Writes `content` over `target` by writing a temporary file beside it and renaming it over, so a
  * failure keeps the original. The file keeps its mode as it was (the umask does not apply). A
@@ -147,8 +154,7 @@ class NotWritten extends Error {}
  * that is not what was read is left alone too: it is being edited, and its edit wins.
  */
 async function writeAtomically(target: string, content: string, original: Buffer): Promise<void> {
-  const { mode } = await fs.stat(target);
-  if ((mode & 0o222) === 0) throw new NotWritten("the file is read-only");
+  const mode = await checkWritable(target);
   const temporary = path.join(
     path.dirname(target),
     `.${path.basename(target)}.${randomUUID().slice(0, 8)}.tmp`,
@@ -278,7 +284,19 @@ export async function assignIds(
       }
     }
   } else {
-    for (const name of accepted) assigned.push({ name, id: candidates.get(name)?.id ?? "" });
+    // Nothing is written, but what can be known beforehand is checked, so that the run that follows agrees
+    for (const name of accepted) {
+      const target = input.paths.get(name);
+      try {
+        if (target) await checkWritable(target);
+        assigned.push({ name, id: candidates.get(name)?.id ?? "" });
+      } catch (err) {
+        left.set(
+          name,
+          `${NOT_ADDED}: ${err instanceof NotWritten ? err.message : "the file cannot be read"}`,
+        );
+      }
+    }
   }
 
   // A dry run answers with the plan it just made; a real run imports the files as they are now
