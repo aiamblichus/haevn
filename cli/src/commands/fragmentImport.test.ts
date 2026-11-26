@@ -6,10 +6,12 @@ import { daemonRequest } from "../daemon/client.js";
 import type { FragmentPlanEntry, ImportResult } from "../types";
 import { consola } from "../utils/output";
 import {
+  type AskExtension,
   assignId,
   assignIds,
   collectFragmentFiles,
   summarizeFragmentImport,
+  whyNoId,
 } from "./fragmentImport";
 import importCommand from "./import";
 
@@ -64,6 +66,28 @@ describe("reading the input", () => {
     ]);
   });
 
+  it("counts a symlink in a directory and leaves it, and reads through one named outright", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "haevn-fragments-outside-"));
+    try {
+      const target = path.join(outside, "target.md");
+      fs.writeFileSync(target, "target words\n");
+      write("real.md", "real");
+      fs.symlinkSync(target, path.join(dir, "link.md"));
+
+      const inDirectory = await collectFragmentFiles([dir]);
+      const named = await collectFragmentFiles([path.join(dir, "link.md")]);
+
+      expect(inDirectory.files.map((f) => path.basename(f.name))).toEqual(["real.md"]);
+      expect(inDirectory.symlinks).toBe(1);
+      expect(named.files.map((f) => f.content)).toEqual(["target words\n"]);
+      // an id would be written to what the link points at
+      expect(named.paths.get(path.join(dir, "link.md"))).toBe(fs.realpathSync(target));
+      expect(named.symlinks).toBe(0);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("reads a file given twice, or in a directory and by name, once", async () => {
     const md = write("a.md", "a");
     const input = await collectFragmentFiles([md, dir, md]);
@@ -116,47 +140,221 @@ describe("--assign-ids writes the one line and no other change", () => {
   it("keeps a byte-order mark where it was", () => {
     expect(assignId("﻿---\ntitle: x\n---\nbody", ID)).toBe(`﻿---\nid: ${ID}\ntitle: x\n---\nbody`);
   });
+});
 
-  it("writes the files the plan calls no-id, atomically, and none other", async () => {
-    const bare = write("bare.md", body);
-    const titled = write("titled.md", "---\ntitle: T\n---\nwords\n");
-    const named = write("named.md", `---\nid: ${ID}\n---\nwords\n`);
+/**
+ * A stand-in for the extension's plan, with the few of its rules these cases need: an `id:` line
+ * makes a file `new`, a blank body is `unreadable`, `BADDATE` in the frontmatter is `bad-date`.
+ * The real planner is held to the CLI's rules in tests/fragmentAssignIds.test.ts.
+ */
+function fakePlan(files: { name: string; content: string }[]): FragmentPlanEntry[] {
+  return files.map(({ name, content }) => {
+    const bodyOf = content.replace(/^﻿?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/, "");
+    if (!/^id: [0-9a-f-]{36}\r?$/m.test(content)) {
+      return { name, state: "no-id", warnings: [], message: "the frontmatter has no id" };
+    }
+    if (content.includes("BADDATE")) {
+      return { name, state: "bad-date", warnings: [], message: "date is not a date" };
+    }
+    if (bodyOf.trim() === "") {
+      return { name, state: "unreadable", warnings: [], message: "the body is empty" };
+    }
+    return { name, state: "new", warnings: [], title: "T", turns: 1, date: "2024" };
+  });
+}
+
+function fakeAsk(onAsk?: (files: { name: string; content: string }[], planOnly: boolean) => void) {
+  const asked: { planOnly: boolean; contents: string[] }[] = [];
+  const ask: AskExtension = async (files, planOnly) => {
+    asked.push({ planOnly, contents: files.map((f) => f.content) });
+    onAsk?.(files, planOnly);
+    return resultOf(fakePlan(files));
+  };
+  return { ask, asked };
+}
+
+describe("--assign-ids decides after the plan's other checks, and writes with care", () => {
+  const body = "A body\n";
+  const states = (result: ImportResult) =>
+    (result.plan ?? []).map((e) => [path.basename(e.name), e.state] as const);
+
+  it("writes an id to the files the plan then accepts, and to no other", async () => {
+    const bare = write("1-bare.md", body);
+    const titled = write("2-titled.md", "---\ntitle: T\n---\nwords\n");
+    const blank = write("3-blank.md", "\n  \n");
+    const badDate = write("4-baddate.md", "---\ndate: BADDATE\n---\nwords\n");
+    const flow = write("5-flow.md", "---\n{ title: Flow }\n---\nwords\n");
+    const indented = write("6-indented.md", "---\n  title: Indented\n---\nwords\n");
+    const named = write("7-named.md", `---\nid: ${ID}\n---\nwords\n`);
     const input = await collectFragmentFiles([dir]);
-    const plan: FragmentPlanEntry[] = [
-      { name: bare, state: "no-id", warnings: [] },
-      { name: titled, state: "no-id", warnings: [] },
-      { name: named, state: "unchanged", warnings: [] },
-    ];
+    const { ask } = fakeAsk();
 
-    const given = await assignIds(plan, input.files, input.paths, false);
+    const { result, assigned } = await assignIds(input, ask, false);
 
-    expect(given.map((g) => path.basename(g.name))).toEqual(["bare.md", "titled.md"]);
-    expect(fs.readFileSync(bare, "utf8")).toBe(`---\nid: ${given[0].id}\n---\n${body}`);
-    expect(fs.readFileSync(titled, "utf8")).toBe(`---\nid: ${given[1].id}\ntitle: T\n---\nwords\n`);
+    expect(assigned.map((a) => path.basename(a.name))).toEqual(["1-bare.md", "2-titled.md"]);
+    expect(fs.readFileSync(bare, "utf8")).toBe(`---\nid: ${assigned[0].id}\n---\n${body}`);
+    expect(fs.readFileSync(titled, "utf8")).toBe(
+      `---\nid: ${assigned[1].id}\ntitle: T\n---\nwords\n`,
+    );
+    // left exactly as they were
+    expect(fs.readFileSync(blank, "utf8")).toBe("\n  \n");
+    expect(fs.readFileSync(badDate, "utf8")).toBe("---\ndate: BADDATE\n---\nwords\n");
+    expect(fs.readFileSync(flow, "utf8")).toBe("---\n{ title: Flow }\n---\nwords\n");
+    expect(fs.readFileSync(indented, "utf8")).toBe("---\n  title: Indented\n---\nwords\n");
     expect(fs.readFileSync(named, "utf8")).toBe(`---\nid: ${ID}\n---\nwords\n`);
-    expect(given[0].id).toMatch(
+    expect(assigned[0].id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     );
-    // the payload that is sent next carries the id
-    expect(input.files.find((f) => f.name === bare)?.content).toContain(`id: ${given[0].id}`);
+    // the files that are sent next carry the ids, and the plan says why the others have none
+    expect(input.files.find((f) => f.name === bare)?.content).toContain(`id: ${assigned[0].id}`);
+    expect(states(result)).toEqual([
+      ["1-bare.md", "new"],
+      ["2-titled.md", "new"],
+      ["3-blank.md", "no-id"],
+      ["4-baddate.md", "no-id"],
+      ["5-flow.md", "no-id"],
+      ["6-indented.md", "no-id"],
+      ["7-named.md", "new"],
+    ]);
+    const why = (name: string) => result.plan?.find((e) => e.name.endsWith(name))?.message;
+    expect(why("3-blank.md")).toContain("refused as unreadable");
+    expect(why("4-baddate.md")).toContain("refused as bad-date");
+    expect(why("5-flow.md")).toContain("put one in by hand");
+    expect(why("6-indented.md")).toContain("left margin");
     // no temporary file is left behind
-    expect(fs.readdirSync(dir).sort()).toEqual(["bare.md", "named.md", "titled.md"]);
+    expect(fs.readdirSync(dir).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 
-  it("changes no file's bytes with --dry-run, and says which it would change", async () => {
-    const bare = write("bare.md", body);
-    const input = await collectFragmentFiles([dir]);
+  it("makes the same decisions with --dry-run, writes nothing, and the real run agrees", async () => {
+    write("1-bare.md", body);
+    write("2-blank.md", "\n");
+    write("3-flow.md", "---\n[ a ]\n---\nwords\n");
+    const before = fs.readdirSync(dir).map((n) => fs.readFileSync(path.join(dir, n), "utf8"));
 
-    const given = await assignIds(
-      [{ name: bare, state: "no-id", warnings: [] }],
-      input.files,
-      input.paths,
-      true,
+    const dryInput = await collectFragmentFiles([dir]);
+    const dry = await assignIds(dryInput, fakeAsk().ask, true);
+
+    expect(fs.readdirSync(dir).map((n) => fs.readFileSync(path.join(dir, n), "utf8"))).toEqual(
+      before,
+    );
+    expect(dryInput.files.map((f) => f.content)).toEqual(before);
+    expect(dry.assigned.map((a) => path.basename(a.name))).toEqual(["1-bare.md"]);
+    expect(dry.result.plan?.find((e) => e.name.endsWith("1-bare.md"))?.message).toBe(
+      "would get a new id",
     );
 
-    expect(given).toHaveLength(1);
-    expect(fs.readFileSync(bare, "utf8")).toBe(body);
+    const realInput = await collectFragmentFiles([dir]);
+    const real = await assignIds(realInput, fakeAsk().ask, false);
+
+    expect(states(real.result)).toEqual(states(dry.result));
+    expect(real.assigned.map((a) => path.basename(a.name))).toEqual(
+      dry.assigned.map((a) => path.basename(a.name)),
+    );
+  });
+
+  it("asks the extension three times for a real run (the plan, the plan with ids, the import), and once more for none", async () => {
+    write("a.md", body);
+    const input = await collectFragmentFiles([dir]);
+    const { ask, asked } = fakeAsk();
+
+    await assignIds(input, ask, false);
+
+    expect(asked.map((a) => a.planOnly)).toEqual([true, true, false]);
+    // the plan with ids carried the id, the first plan did not, and the import carries the file as written
+    expect(asked[0].contents[0]).toBe(body);
+    expect(asked[1].contents[0]).toMatch(/^---\nid: [0-9a-f-]{36}\n---\n/);
+    expect(asked[2].contents[0]).toBe(asked[1].contents[0]);
+  });
+
+  it("keeps the mode of a file exactly, the umask not applied", async () => {
+    const file = write("a.md", body);
+    fs.chmodSync(file, 0o664);
+    const input = await collectFragmentFiles([dir]);
+
+    await assignIds(input, fakeAsk().ask, false);
+
+    expect(fs.statSync(file).mode & 0o7777).toBe(0o664);
+    expect(fs.readFileSync(file, "utf8")).toContain("id: ");
+  });
+
+  it("leaves a read-only file as it is, and says so", async () => {
+    const file = write("a.md", body);
+    fs.chmodSync(file, 0o444);
+    const input = await collectFragmentFiles([dir]);
+
+    const { result, assigned } = await assignIds(input, fakeAsk().ask, false);
+
+    expect(assigned).toEqual([]);
+    expect(fs.readFileSync(file, "utf8")).toBe(body);
+    expect(fs.statSync(file).mode & 0o7777).toBe(0o444);
+    expect(result.plan?.[0]).toMatchObject({ state: "no-id" });
+    expect(result.plan?.[0].message).toContain("read-only");
+    // and the file the import is then asked about has no id
     expect(input.files[0].content).toBe(body);
+  });
+
+  it("writes through a symlink named outright, to its target, and leaves the link a link", async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "haevn-fragments-outside-"));
+    try {
+      const target = path.join(outside, "target.md");
+      fs.writeFileSync(target, body);
+      const link = path.join(dir, "link.md");
+      fs.symlinkSync(target, link);
+      const input = await collectFragmentFiles([link]);
+
+      const { assigned } = await assignIds(input, fakeAsk().ask, false);
+
+      expect(assigned).toHaveLength(1);
+      expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(target, "utf8")).toBe(`---\nid: ${assigned[0].id}\n---\n${body}`);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to write over a file that changed after it was read, and the edit stays", async () => {
+    const file = write("a.md", body);
+    const input = await collectFragmentFiles([dir]);
+    // the person saves the file while the plan with ids is being made
+    const { ask } = fakeAsk((_files, planOnly) => {
+      if (planOnly && fs.readFileSync(file, "utf8") === body)
+        fs.writeFileSync(file, "edited by hand\n");
+    });
+
+    const { result, assigned } = await assignIds(input, ask, false);
+
+    expect(assigned).toEqual([]);
+    expect(fs.readFileSync(file, "utf8")).toBe("edited by hand\n");
+    expect(result.plan?.[0]).toMatchObject({ state: "no-id" });
+    expect(result.plan?.[0].message).toContain("changed after it was read");
+    expect(fs.readdirSync(dir)).toEqual(["a.md"]);
+  });
+});
+
+describe("whyNoId: where the id: line cannot go", () => {
+  it.each([
+    ["no block", "words\n"],
+    ["a block that is never closed", "---\nwords\n"],
+    ["an empty block", "---\n---\nwords\n"],
+    ["a block of comments", "---\n# only a note\n---\nwords\n"],
+    ["a plain key", "---\ntitle: T\n---\nwords\n"],
+    ["a comment, then a key", "---\n# note\n\ntitle: T\n---\nwords\n"],
+    ["a quoted key", '---\n"a key": v\n---\nwords\n'],
+    ["a key with nothing after it", "---\ntags:\n  - a\n---\nwords\n"],
+    ["CRLF", "---\r\ntitle: T\r\n---\r\nwords\r\n"],
+    ["a byte-order mark", "﻿---\ntitle: T\n---\nwords\n"],
+  ])("accepts %s", (_label, content) => {
+    expect(whyNoId(content)).toBeUndefined();
+  });
+
+  it.each([
+    ["a flow map", "---\n{ title: T }\n---\nwords\n"],
+    ["a flow sequence", "---\n[a, b]\n---\nwords\n"],
+    ["an indented block", "---\n  title: T\n---\nwords\n"],
+    ["a list", "---\n- a\n- b\n---\nwords\n"],
+    ["a plain line", "---\njust some words\n---\nwords\n"],
+  ])("refuses %s, with the way out", (_label, content) => {
+    expect(whyNoId(content)).toContain("put one in by hand");
   });
 });
 
@@ -232,6 +430,15 @@ describe("what the plan says", () => {
     expect(summary.lines).toContain("3 files: 1 new · 2 refused · 0 warnings");
     expect(summary.lines).toContain("  refused: 1 no-id · 1 bad-date");
     expect(summary.lines.join("\n")).toContain("bare.md · no frontmatter");
+  });
+
+  it("says how many symlinks of a directory were not read", () => {
+    const out = summarizeFragmentImport(
+      resultOf([entry({ name: "a.md" })]),
+      { ...none, symlinks: 2 },
+      { dryRun: false, skipIndex: false },
+    ).lines.join("\n");
+    expect(out).toContain("2 symlinks in a directory were not read");
   });
 
   it("counts a file the CLI refused before asking, and the files that are not .md", () => {
@@ -359,22 +566,22 @@ describe("haevn import --format fragment", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("with --assign-ids asks for the plan, writes the id, then imports the file as written", async () => {
-    const file = write("a.md", "just words\n");
-    // what each request carried when it was sent: the payload array is the CLI's own, and changes after
+  /** The daemon, answering with the stand-in plan, and remembering what each request carried when it was sent. */
+  function planningDaemon() {
     const sent: Array<{ dryRun: boolean; content: string }> = [];
     vi.mocked(daemonRequest).mockImplementation((async (request: {
       options: { dryRun: boolean };
-      files: { content: string }[];
+      files: { name: string; content: string }[];
     }) => {
       sent.push({ dryRun: request.options.dryRun, content: request.files[0].content });
-      return resultOf([
-        entry({
-          name: file,
-          ...(request.options.dryRun ? { state: "no-id", turns: undefined } : {}),
-        }),
-      ]);
+      return resultOf(fakePlan(request.files));
     }) as never);
+    return sent;
+  }
+
+  it("with --assign-ids asks for the plan, then the plan with the id, writes it, and imports the file as written", async () => {
+    const file = write("a.md", "just words\n");
+    const sent = planningDaemon();
     log();
     vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
@@ -384,24 +591,38 @@ describe("haevn import --format fragment", () => {
     expect(written).toMatch(/^---\nid: [0-9a-f-]{36}\n---\njust words\n$/);
     expect(sent).toEqual([
       { dryRun: true, content: "just words\n" },
+      { dryRun: true, content: written },
       { dryRun: false, content: written },
     ]);
   });
 
   it("with --assign-ids --dry-run changes no file, and does not call the files without an id refused", async () => {
     const file = write("a.md", "just words\n");
-    vi.mocked(daemonRequest).mockResolvedValue(
-      resultOf([entry({ name: file, state: "no-id", turns: undefined })]),
-    );
+    planningDaemon();
     const output = log();
     const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
 
     await run({ "assign-ids": true, "dry-run": true });
 
     expect(fs.readFileSync(file, "utf8")).toBe("just words\n");
-    expect(daemonRequest).toHaveBeenCalledTimes(1);
+    expect(daemonRequest).toHaveBeenCalledTimes(2);
     expect(exit).not.toHaveBeenCalled();
     expect(output.mock.calls.join("\n")).toContain("would get a new id");
+  });
+
+  it("with --assign-ids leaves a file that could not be imported anyway as it is, and exits 1 saying why", async () => {
+    const blank = write("blank.md", "\n");
+    planningDaemon();
+    const output = log();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+    await run({ "assign-ids": true });
+
+    expect(fs.readFileSync(blank, "utf8")).toBe("\n");
+    expect(exit).toHaveBeenCalledWith(1);
+    const printed = output.mock.calls.join("\n");
+    expect(printed).toContain("no id was added");
+    expect(printed).toContain("refused as unreadable");
   });
 
   it("refuses --dry-run for any other format instead of importing for real", async () => {

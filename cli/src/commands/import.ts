@@ -201,26 +201,15 @@ async function runFragmentImport(
   try {
     if (input.files.length > 0) {
       if (assign) {
-        // The plan says which files have no id; the ids are written, and then the import is asked for
-        const plan = await ask(input.files, true);
-        const assigned = await assignIds(plan.plan ?? [], input.files, input.paths, dryRun);
-        for (const { name } of assigned) {
+        // The ids are decided after the plan's other checks, so a file that could not be imported
+        // anyway is left as it is; a dry run decides the same and writes nothing
+        const outcome = await assignIds(input, ask, dryRun);
+        for (const { name } of outcome.assigned) {
           consola.log(
             `  ${pc.cyan("id")} ${dryRun ? "would write an id to" : "wrote an id to"} ${name}`,
           );
         }
-        if (dryRun) {
-          // The files that would get an id are no longer refused: say what they will be
-          const given = new Set(assigned.map((a) => a.name));
-          plan.plan = (plan.plan ?? []).map((entry) =>
-            given.has(entry.name)
-              ? { ...entry, state: "new", message: "would get a new id" }
-              : entry,
-          );
-          result = plan;
-        } else {
-          result = await ask(input.files, false);
-        }
+        result = outcome.result;
       } else {
         result = await ask(input.files, dryRun);
       }
