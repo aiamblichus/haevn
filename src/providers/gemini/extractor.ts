@@ -137,8 +137,66 @@ function visibleTextOf(element: Element): string {
   return clone.textContent ?? "";
 }
 
-// Title Extraction
+/** What Gemini appends to a chat's title in the tab's title. */
+const GEMINI_TITLE_SUFFIX = " - Google Gemini";
+
+/** What the tab's title is when no chat is open, or the chat has no title yet. */
+const GEMINI_PRODUCT_NAMES = new Set(["Google Gemini", "Gemini"]);
+
+/**
+ * The chat's own title as the tab's title holds it: the title, then " - Google Gemini". It equalled
+ * the title in Gemini's own chat list in 13 of 13 chats read in HVN-161, and was there whenever the
+ * messages were. "" when the tab holds only the product's name.
+ *
+ * `document.title` is already stripped and has each run of whitespace collapsed to one space (the
+ * HTML standard's getter; Chrome returns "Two words - Google Gemini" for a title written as
+ * "  Two   words\n - Google Gemini  "), so cutting the suffix leaves nothing to trim.
+ */
+function titleFromDocumentTitle(): string {
+  const tabTitle = document.title ?? "";
+  const title = tabTitle.endsWith(GEMINI_TITLE_SUFFIX)
+    ? tabTitle.slice(0, -GEMINI_TITLE_SUFFIX.length)
+    : tabTitle;
+  return GEMINI_PRODUCT_NAMES.has(title) ? "" : title;
+}
+
+/** The longest title the archive keeps for a Gemini chat, in characters. */
+export const GEMINI_TITLE_MAX_LENGTH = 100;
+
+/** How far back from the cut a word boundary may be found, in characters. */
+const GEMINI_TITLE_BOUNDARY_WINDOW = 20;
+
+/**
+ * A title of at most `GEMINI_TITLE_MAX_LENGTH` characters, with no ellipsis. Gemini's own titles
+ * run to thousands of characters (65 of 308 were 200 or more in HVN-161, the longest 29,146).
+ * A longer title is cut at the last whitespace within the final 20 characters of the cut, or at
+ * the limit when there is none; a title whose next character after the limit is whitespace is
+ * already cut on a word. A cut never splits a surrogate pair.
+ */
+export function capGeminiTitle(title: string): string {
+  if (title.length <= GEMINI_TITLE_MAX_LENGTH) return title;
+  let head = title.slice(0, GEMINI_TITLE_MAX_LENGTH);
+  if (!/\s/.test(title[GEMINI_TITLE_MAX_LENGTH])) {
+    const lastSpace = head.search(/\s\S*$/);
+    if (lastSpace >= GEMINI_TITLE_MAX_LENGTH - GEMINI_TITLE_BOUNDARY_WINDOW) {
+      head = head.slice(0, lastSpace);
+    } else if (/[\ud800-\udbff]$/.test(head)) {
+      head = head.slice(0, -1);
+    }
+  }
+  return head.trimEnd();
+}
+
+// Title Extraction: the chat's title, at most `GEMINI_TITLE_MAX_LENGTH` characters long.
 export function extractGeminiConversationTitle(): string {
+  return capGeminiTitle(readGeminiConversationTitle());
+}
+
+function readGeminiConversationTitle(): string {
+  // First: the tab's title, which every page of a chat carries
+  const tabTitle = titleFromDocumentTitle();
+  if (tabTitle) return tabTitle;
+
   // Primary: Try conversation-actions header (current Gemini UI)
   const headerTitle = document
     .querySelector("conversation-actions .conversation-title")
@@ -175,7 +233,7 @@ export function extractGeminiConversationTitle(): string {
     .replace(/\s+/g, " ")
     .trim();
   if (normalizedPrompt) {
-    return normalizedPrompt.substring(0, 100).trim();
+    return normalizedPrompt;
   }
 
   return "Untitled Gemini Conversation";
@@ -657,9 +715,23 @@ export function extractGeminiSimpleText(): string {
 
 // Removed export/download helpers; formatting is handled elsewhere.
 
+/**
+ * How many turns Gemini renders when a chat opens: the last ten. A page with fewer `user-query`
+ * elements holds the whole chat, whatever its scroll height (measured in HVN-161: a 9-turn chat
+ * was 22 times the viewport and complete), so there is nothing above it to load. A page with ten
+ * or more may have older turns above.
+ */
+const GEMINI_INITIAL_TURNS = 10;
+
 // Identify and scroll the chat window's message scroller upwards to load older messages
 async function loadAllGeminiMessagesUpwards(): Promise<void> {
   try {
+    const turnsOnPage = document.querySelectorAll("user-query").length;
+    if (turnsOnPage < GEMINI_INITIAL_TURNS) {
+      log.info(`[Extractor] ${turnsOnPage} turns on the page: complete, no upward preload.`);
+      return;
+    }
+
     // Userscript's approach: Try primary selector first
     let scroller = document.querySelector(
       '[data-test-id="chat-history-container"]',
@@ -694,11 +766,12 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     let previousMessageCount = -1;
-    let noChangeAttempts = 0;
     const maxAttempts = 40;
     const delay = 300; // Reduced from 500ms for faster iteration
     const AUTOSCROLL_MAT_PROGRESS_BAR_POLL_INTERVAL = 50;
-    const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 1500; // Reduced from 3000ms - if no spinner shows in 1.5s, content is likely already loaded
+    // The bar showed 154 to 192 ms after `scrollTop = 0` in every measured round that had older
+    // turns to load (HVN-161); 500 ms leaves 2.6 times that for a busy tab.
+    const AUTOSCROLL_MAT_PROGRESS_BAR_APPEAR_TIMEOUT = 500;
     const AUTOSCROLL_MAT_PROGRESS_BAR_DISAPPEAR_TIMEOUT = 5000; // Keep this timeout to ensure content fully loads
 
     const waitForElementToAppear = async (
@@ -759,7 +832,6 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
       );
 
       if (progressBarElement) {
-        noChangeAttempts = 0; // Reset retries if progress bar appeared
         // Wait for progress bar to disappear
         const disappeared = await waitForElementToDisappear(
           "mat-progress-bar.mdc-linear-progress--indeterminate",
@@ -769,13 +841,9 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
           log.warn("[Extractor] mat-progress-bar did not disappear within expected time.");
         }
       } else {
-        // If progress bar doesn't appear, increment retry count
-        noChangeAttempts++;
-        if (noChangeAttempts > 3) {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        continue;
+        // A scroll to the top with older turns above shows the bar at once; a round without it
+        // means nothing is left to load.
+        break;
       }
 
       // Track message count changes (userscript's approach)
@@ -784,7 +852,6 @@ async function loadAllGeminiMessagesUpwards(): Promise<void> {
 
       if (currentMessageCount > previousMessageCount) {
         previousMessageCount = currentMessageCount;
-        noChangeAttempts = 0; // Reset retries if new messages found
       } else {
         // No new messages detected after a scroll attempt
         if (previousMessageCount !== -1) {
