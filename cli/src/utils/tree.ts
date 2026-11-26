@@ -56,6 +56,18 @@ export function getPathToMessage(chat: Chat, targetId: string): string[] {
 }
 
 /**
+ * The text of a prompt: its content, or for a list (a prompt with attachments) its string items in
+ * order, joined as the text view joins parts. Attachments are not text and add nothing here.
+ */
+function promptText(content: string | UserContent[]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item): item is string => typeof item === "string" && item !== "")
+    .join("\n\n");
+}
+
+/**
  * Get all branches in a chat tree.
  * A branch is defined by its leaf node and the path to it.
  */
@@ -75,8 +87,8 @@ export function getAllBranches(chat: Chat): BranchInfo[] {
       const userPart = firstUserMsg.message[0];
       if (userPart?.kind === "request") {
         const promptPart = userPart.parts.find((p) => p.part_kind === "user-prompt");
-        if (promptPart && "content" in promptPart && typeof promptPart.content === "string") {
-          firstPrompt = promptPart.content.slice(0, 60);
+        if (promptPart?.part_kind === "user-prompt") {
+          firstPrompt = promptText(promptPart.content).slice(0, 60);
         }
       }
     }
@@ -231,14 +243,7 @@ export function getMessageText(message: ChatMessage, options: GetMessageTextOpti
     if (msg.kind === "request") {
       for (const part of msg.parts) {
         if (part.part_kind === "user-prompt") {
-          if (typeof part.content === "string") {
-            parts.push(part.content);
-          } else if (Array.isArray(part.content)) {
-            // Its text is the string items; the search index reads a prompt the same way.
-            for (const piece of part.content) {
-              if (typeof piece === "string") parts.push(piece);
-            }
-          }
+          parts.push(promptText(part.content));
         } else if (part.part_kind === "system-prompt") {
           if (!skipSystem) {
             parts.push(part.content);

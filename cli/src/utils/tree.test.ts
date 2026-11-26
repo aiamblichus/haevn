@@ -145,3 +145,26 @@ describe("getMessageText with media", () => {
     expect(getMessageText(prompt(""))).toBe("");
   });
 });
+
+describe("getAllBranches with a list prompt", () => {
+  it("gives a branch the text of its first prompt when that prompt has attachments", () => {
+    const chat = buildChat([
+      { id: "u1", parentId: null, role: "user", text: "placeholder" },
+      { id: "a1", parentId: "u1", role: "assistant", text: "a reply" },
+    ]);
+    chat.messages.u1.message = [
+      {
+        kind: "request",
+        parts: [
+          {
+            part_kind: "user-prompt",
+            content: ["Compare these two", IMAGE, "in one line"],
+            timestamp: TIME,
+          },
+        ],
+      },
+    ];
+
+    expect(getAllBranches(chat)[0]?.firstPrompt).toBe("Compare these two\n\nin one line");
+  });
+});
