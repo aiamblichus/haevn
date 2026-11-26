@@ -112,9 +112,28 @@ function flatten(cm: ChatMessage): {
   };
 }
 
+/** The `model_name` of each response of a message. */
+function responseModelNames(cm: ChatMessage): unknown[] {
+  const names: unknown[] = [];
+  for (const entry of cm.message || []) {
+    if (entry.kind === "response") names.push(entry.model_name);
+  }
+  return names;
+}
+
 /**
- * The labels of one kind, as the rows they become: trimmed, each once (case aside), without the
- * characters the index keeps for its marks, and without `skip` (a placeholder that names nothing).
+ * What makes two labels one row: the index folds case and treats a dash or a space alike, so
+ * `gpt-4o-mini` and `GPT-4o Mini` find the same chats and one row serves both.
+ */
+function labelKey(label: string): string {
+  const lower = label.toLowerCase();
+  return lower.replace(/[^\p{L}\p{N}\p{M}_]+/gu, " ").trim() || lower;
+}
+
+/**
+ * The labels of one kind, as the rows they become: trimmed, each once (case and separators aside),
+ * without the characters the index keeps for its marks, and without `skip` (a placeholder that
+ * names nothing).
  */
 function labelsOf(values: unknown[], skip?: string): string[] {
   const seen = new Set<string>();
@@ -122,8 +141,8 @@ function labelsOf(values: unknown[], skip?: string): string[] {
   for (const value of values) {
     if (typeof value !== "string") continue;
     const label = value.replace(RESERVED, " ").trim();
-    const key = label.toLowerCase();
-    if (!label || key === skip || seen.has(key)) continue;
+    const key = labelKey(label);
+    if (!label || label.toLowerCase() === skip || seen.has(key)) continue;
     seen.add(key);
     labels.push(label);
     if (labels.length >= MAX_LABELS) break;
@@ -160,10 +179,17 @@ export function extractIndexedChat(chat: Chat): IndexedChat | null {
     });
   }
 
-  // The chat's own list first, then any model a message names that the list does not. "unknown"
-  // is what the Markdown importer writes when a file names none: it is no model to search for.
+  // The chat's own list first, then any model a message names that the list does not, then the
+  // model each response names for itself (HVN-168: a chat synced before its provider wrote the
+  // real model into `Chat.models` still has it there). "unknown" is what the Markdown importer
+  // writes when a file names none: it is no model to search for.
+  const stored = Object.values(chat.messages || {});
   const models = labelsOf(
-    [...(chat.models || []), ...Object.values(chat.messages || {}).map((cm) => cm.model)],
+    [
+      ...(chat.models || []),
+      ...stored.map((cm) => cm.model),
+      ...stored.flatMap((cm) => responseModelNames(cm)),
+    ],
     "unknown",
   );
 
