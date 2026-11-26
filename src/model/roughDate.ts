@@ -2,7 +2,8 @@
 //
 // `Chat.timestamp` must be an exact number, so a chat with a rough date carries the claim in
 // `params.roughDate` and a `timestamp` at the middle of the range, for sorting. Any chat may carry
-// the key; the readers look for the key, not for the provider. Only fragments write it today.
+// the key; the readers look for the key, not for the provider. Fragments and the Markdown importer
+// (HVN-175, for a file with no created_at) write it today.
 
 export type RoughPrecision = "year" | "month" | "day" | "range" | "after" | "unknown";
 

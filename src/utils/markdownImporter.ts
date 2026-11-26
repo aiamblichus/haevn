@@ -11,6 +11,8 @@ import type {
   TextPart,
   UserPromptPart,
 } from "../model/haevn_model";
+import type { RoughDate } from "../model/roughDate";
+import { parseRoughDate } from "../providers/fragment/parser";
 import { getAllProviders } from "../providers/provider";
 
 async function sha256Hex(text: string): Promise<string> {
@@ -36,6 +38,7 @@ async function sha256Hex(text: string): Promise<string> {
  * title: Chat title
  * source: provider-name
  * conversation_id: chat-id (optional)
+ * date: the date of a chat with no created_at, read as a fragment's date is (optional, HVN-175)
  * system: system message (optional)
  * models_used: [model1, model2]
  * ---
@@ -50,6 +53,12 @@ export async function parseMarkdownFile(file: File): Promise<Chat> {
   return parseMarkdownContent(text);
 }
 
+/** When a file with no created_at is dated by its date: line (HVN-175). */
+interface DateLine {
+  timestamp: number;
+  roughDate?: RoughDate;
+}
+
 interface ParsedHeader {
   title: string;
   source: string;
@@ -57,8 +66,20 @@ interface ParsedHeader {
   system?: string;
   models: string[];
   createdAt?: number;
+  /** Set only when the file has no created_at */
+  dateLine?: DateLine;
   modifiedAt?: number;
   lastSyncedAt?: number;
+}
+
+/**
+ * The date: line of a file with no created_at, read by the fragment parser (HVN-175): the same
+ * forms, the same made-up times for a rough date, and undated when the line is absent.
+ */
+function readDateLine(value: unknown): DateLine {
+  const date = parseRoughDate(value);
+  if (!date.ok) throw new Error(date.message);
+  return { timestamp: date.timestamp, roughDate: date.roughDate };
 }
 
 function parseTimestampValue(value: unknown): number | undefined {
@@ -170,6 +191,7 @@ function parseYamlFrontmatter(content: string): {
   }
 
   const createdAt = parseTimestampValue(record.created_at ?? record.createdAt ?? record.timestamp);
+  const dateLine = createdAt === undefined ? readDateLine(record.date) : undefined;
   const modifiedAt = parseTimestampValue(
     record.modified_at ??
       record.modifiedAt ??
@@ -188,6 +210,7 @@ function parseYamlFrontmatter(content: string): {
       system,
       models,
       createdAt,
+      dateLine,
       modifiedAt,
       lastSyncedAt,
     },
@@ -197,6 +220,7 @@ function parseYamlFrontmatter(content: string): {
 
 export async function parseMarkdownContent(content: string): Promise<Chat> {
   const { header, body } = parseYamlFrontmatter(content);
+  const dated = header.dateLine;
 
   let systemPrompt = header.system;
 
@@ -238,8 +262,10 @@ export async function parseMarkdownContent(content: string): Promise<Chat> {
       continue;
     }
 
+    // A chat dated by its date: line has made-up times, as a fragment's (HVN-175): turn i is i ms on
+    const at = dated ? dated.timestamp + messageIndex : undefined;
     const messageId = `msg_${messageIndex++}`;
-    const timestamp = new Date().toISOString();
+    const timestamp = new Date(at ?? Date.now()).toISOString();
 
     if (role === "user") {
       const userPart: UserPromptPart = {
@@ -260,7 +286,7 @@ export async function parseMarkdownContent(content: string): Promise<Chat> {
         message: [modelRequest],
         model: header.models[0] || "unknown",
         done: true,
-        timestamp: Date.now(),
+        timestamp: at ?? Date.now(),
         chatId,
       };
 
@@ -285,7 +311,7 @@ export async function parseMarkdownContent(content: string): Promise<Chat> {
         message: [modelResponse],
         model: header.models[0] || "unknown",
         done: true,
-        timestamp: Date.now(),
+        timestamp: at ?? Date.now(),
         chatId,
       };
 
@@ -324,7 +350,8 @@ export async function parseMarkdownContent(content: string): Promise<Chat> {
       const systemPart: SystemPromptPart = {
         part_kind: "system-prompt",
         content: systemPrompt,
-        timestamp: new Date().toISOString(),
+        // A dated chat's times are made up: the prompt is as old as the first turn it sits in
+        timestamp: dated ? request.parts[0].timestamp : new Date().toISOString(),
       };
       // Insert system prompt at the beginning
       request.parts.unshift(systemPart);
@@ -339,11 +366,11 @@ export async function parseMarkdownContent(content: string): Promise<Chat> {
     title: header.title,
     models: header.models,
     system: systemPrompt,
-    params: {},
+    params: dated?.roughDate ? { roughDate: dated.roughDate } : {},
     currentId: messageIds[messageIds.length - 1],
     messages,
     tags: [],
-    timestamp: header.createdAt ?? now,
+    timestamp: header.createdAt ?? dated?.timestamp ?? now,
     lastSyncedTimestamp: header.lastSyncedAt ?? now,
     providerLastModifiedTimestamp: header.modifiedAt,
     checksum: "",
