@@ -84,6 +84,8 @@ describe("the backfill of rows stored before the fix (HVN-165)", () => {
   beforeEach(async () => {
     const db = getDB();
     await Promise.all([db.chats.clear(), db.chatMessages.clear()]);
+    // Each test starts with the pass not yet run, whatever order the tests run in.
+    await getStorageAdapter().remove(PROVIDER_MODIFIED_BACKFILL_FLAG);
   });
 
   it("gives each row without the field its timestamp, soft-deleted ones too, and sets its flag", async () => {

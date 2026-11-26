@@ -45,7 +45,7 @@ async function backfill(): Promise<ProviderModifiedBackfillReport> {
   const updated = await getDB()
     .chats.filter((chat) => chat.providerLastModifiedTimestamp == null)
     .modify((chat) => {
-      chat.providerLastModifiedTimestamp = chat.timestamp;
+      chat.providerLastModifiedTimestamp = chat.timestamp ?? chat.lastSyncedTimestamp;
     });
 
   await storage.set(PROVIDER_MODIFIED_BACKFILL_FLAG, "done");
