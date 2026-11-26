@@ -384,9 +384,10 @@ export async function processExternalAssets(
           );
         }
 
-        // Set when the overall timeout wins. A download cannot be cancelled, so it runs to its end, and
-        // then writes nothing: the chat holds the link, and a file no part points to would be left in OPFS
-        // (HVN-160).
+        // Set when the overall timeout wins. A download cannot be cancelled, so it runs to its end. The
+        // check before the save keeps a download that lost the race from writing a file no part points
+        // to (HVN-160). It narrows that window and does not close it: a save already under way when the
+        // timeout fires still lands (HVN-120).
         let timedOut = false;
 
         // Wrap entire download operation in a timeout to prevent hanging
@@ -524,7 +525,7 @@ export async function processExternalAssets(
             buffer = await response.arrayBuffer();
           }
 
-          // The race is already lost: this file would be one no part of the chat points to (HVN-160)
+          // The race is already lost, so no part of the chat points to this file: it is not written (HVN-160)
           if (timedOut) {
             throw new DownloadFailure(
               "timeout",

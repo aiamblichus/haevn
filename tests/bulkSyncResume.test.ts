@@ -10,6 +10,7 @@ import {
   clearPendingHandoffs,
   getPendingHandoffs,
   settlePendingHandoff,
+  settleWorkerReport,
 } from "../src/background/bulkSync/pendingHandoffs";
 import { planResume } from "../src/background/bulkSync/stateManager";
 import type { BulkSyncState } from "../src/background/bulkSync/types";
@@ -1000,12 +1001,13 @@ describe("a resume takes the run over in one step (HVN-160)", () => {
     const adapter = getStorageAdapter();
     const read = adapter.get.bind(adapter);
     let landed = false;
+    // not awaited where it lands: a resume that holds the hand-off queue would wait for this report
+    let lateReport: Promise<void> | undefined;
     adapter.get = (async (key: string) => {
       const value = await read(key);
       if (key === "bulkSyncPendingHandoffs" && !landed) {
         landed = true;
-        // not awaited: a resume that holds the hand-off queue would wait for this report
-        void handleWorkerMessage(late);
+        lateReport = handleWorkerMessage(late);
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
       return value;
@@ -1015,6 +1017,8 @@ describe("a resume takes the run over in one step (HVN-160)", () => {
       await clearStaleOperationLocks();
       await resumeBulkSync("chatgpt");
       await driveToEnd();
+      // a rejection of the late report fails the test, rather than surfacing after it
+      await lateReport;
     } finally {
       adapter.get = read;
     }
@@ -1066,5 +1070,46 @@ describe("two failure reports at once are both kept (HVN-160)", () => {
       "c2",
     ]);
     expect((await getPendingHandoffs()).chatIds).toEqual(["c3"]);
+  });
+});
+
+describe("a failed chat is recorded before it leaves the pending set (HVN-160)", () => {
+  it("stays recorded as failed when the write that settles it fails", async () => {
+    await setBulkSyncState(
+      runState({ chatIds: ["c7"], total: 1, currentIndex: 1, processedChatIds: ["c7"] }),
+    );
+    await setActiveOperation("bulkSync");
+    await addPendingHandoff("c7");
+
+    // the write of the pending set fails once: a full disk, or a service worker that dies between
+    // the two writes of a failed report
+    const adapter = getStorageAdapter();
+    const write = adapter.set.bind(adapter);
+    let failed = false;
+    adapter.set = (async (key: string, value: unknown) => {
+      if (key === "bulkSyncPendingHandoffs" && !failed) {
+        failed = true;
+        throw new Error("quota exceeded");
+      }
+      return write(key, value);
+    }) as typeof adapter.set;
+
+    try {
+      await expect(
+        settleWorkerReport({
+          chatId: "c7",
+          runId: `${STARTED}:0`,
+          failure: { error: "download failed" },
+        }),
+      ).rejects.toThrow("quota exceeded");
+    } finally {
+      adapter.set = write;
+    }
+
+    // the chat is not lost: it is still pending, and its failure is on the run
+    expect((await getBulkSyncState())?.failedSyncs).toEqual([
+      { chatId: "c7", error: "download failed" },
+    ]);
+    expect((await getPendingHandoffs()).chatIds).toEqual(["c7"]);
   });
 });

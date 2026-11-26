@@ -119,25 +119,14 @@ async function clearNow(keepUnstoredMedia: boolean): Promise<void> {
   await getStorageAdapter().remove(PENDING_KEY);
 }
 
-// Appends a failed chat to the run's failed chats. The run is read again here, so the append is made
-// to the state as it is now: the tick loop writes the same record, and a read made earlier in the
-// step could be stale by the time of the write.
-async function appendFailureNow(
-  runId: string,
-  failure: { chatId: string; error: string },
-): Promise<void> {
-  const latest = await getBulkSyncState();
-  if (!latest || syncRunId(latest) !== runId) return;
-  await setBulkSyncState({ ...latest, failedSyncs: [...latest.failedSyncs, failure] });
-}
-
 /**
  * A worker report for chat `chatId`, made under run `runId`, settles the chat only while that is
  * the stored run (HVN-127). The check, the settle and the record of a failure are one step of the
  * queue (HVN-160), and so is the resume's take-over (`takeOverRun`): a report is settled before the
  * resume reads the pending set, or refused after the resume has written its new count, never in
- * between, and two failures reported at once are both kept. Returns false for a report of another
- * run, which changes nothing.
+ * between, and two failures reported at once are both kept. A failure is recorded before the chat
+ * leaves the pending set, so a write that fails between the two leaves the chat pending, not lost.
+ * Returns false for a report of another run, which changes nothing.
  */
 export function settleWorkerReport(report: {
   chatId: string;
@@ -149,10 +138,17 @@ export function settleWorkerReport(report: {
   return exclusive(async () => {
     const state = await getBulkSyncState();
     if (!state || report.runId !== syncRunId(state)) return false;
-    await settleNow(report.chatId, report.unstoredMedia ?? 0);
     if (report.failure) {
-      await appendFailureNow(report.runId, { chatId: report.chatId, error: report.failure.error });
+      // Written from the state read above, with no await between the read and this write. The tick
+      // loop writes the same record outside this queue, so a tick write that lands between the two
+      // can still be overwritten: this narrows that window to one storage round trip, and does not
+      // close it (the real fix is HVN-130).
+      await setBulkSyncState({
+        ...state,
+        failedSyncs: [...state.failedSyncs, { chatId: report.chatId, error: report.failure.error }],
+      });
     }
+    await settleNow(report.chatId, report.unstoredMedia ?? 0);
     return true;
   });
 }
