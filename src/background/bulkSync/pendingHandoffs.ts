@@ -156,8 +156,12 @@ export function settleWorkerReport(report: {
 /**
  * A resume takes the run over in one step of the queue (HVN-160). It reads the stored run, which
  * must still be `startedAt`'s and running or paused, and the pending set; `build` plans the resumed
- * run from both; the hand-offs are forgotten, keeping the count of media not stored, and the planned
- * run is written. Returns null, and writes nothing, when the stored run can no longer be resumed.
+ * run from both; the planned run is written, and then the hand-offs are forgotten, keeping the count
+ * of media not stored. The order matters (HVN-169): a service worker that stops between the two
+ * writes leaves the old hand-offs beside the planned run, and the next resume fetches their chats
+ * again. Written the other way round, it would leave the old run with no hand-offs, and those chats
+ * would count as settled. Returns null, and writes nothing, when the stored run can no longer be
+ * resumed.
  */
 export function takeOverRun<T extends { next: BulkSyncState }>(
   startedAt: number,
@@ -173,8 +177,8 @@ export function takeOverRun<T extends { next: BulkSyncState }>(
       return null;
     }
     const built = build(current, (await getPendingHandoffs()).chatIds);
-    await clearNow(true);
     await setBulkSyncState(built.next);
+    await clearNow(true);
     return built;
   });
 }
