@@ -180,6 +180,8 @@ export const ProvidersView = ({
             providerName = "pi";
           } else if (source.includes("openrouter")) {
             providerName = "openrouter";
+          } else if (source.includes("fragment")) {
+            providerName = "fragment";
           } else if (source.includes("poe")) {
             providerName = "poe";
           } else if (source.includes("chatgpt")) {

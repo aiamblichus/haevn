@@ -298,6 +298,7 @@ const Header = ({
     if (s.includes("grok")) return "icons/grok.png";
     if (s.includes("codex")) return "icons/codex.png";
     if (s.includes("openrouter")) return "icons/openrouter.png";
+    if (s.includes("fragment")) return "icons/fragment.png";
     if (s === "pi" || s.startsWith("pi")) return "icons/pi.png";
     return null;
   };

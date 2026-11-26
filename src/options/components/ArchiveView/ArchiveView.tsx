@@ -332,6 +332,7 @@ export const ArchiveView = ({
                 <SelectItem value="codex">Codex</SelectItem>
                 <SelectItem value="pi">PI</SelectItem>
                 <SelectItem value="openrouter">OpenRouter</SelectItem>
+                <SelectItem value="fragment">Fragment</SelectItem>
                 <SelectItem value="poe">Poe</SelectItem>
                 <SelectItem value="chatgpt">ChatGPT</SelectItem>
                 <SelectItem value="openwebui">Open WebUI</SelectItem>

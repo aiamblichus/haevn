@@ -29,5 +29,6 @@ export const PLATFORM_COLORS: ReadonlyMap<string, PlatformColor> = new Map<strin
   ["deepseek", "dim"],
   ["aistudio", "blue"],
   ["openrouter", "blue"],
+  ["fragment", "yellow"],
   ["grok", "white"],
 ]);
