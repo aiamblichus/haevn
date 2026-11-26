@@ -549,7 +549,8 @@ export const FragmentImportPanel = ({
     <div className="flex flex-wrap items-center justify-end gap-2">
       {parts.left}
       <span className="flex-1" />
-      {parts.right}
+      {/* One group, so that Cancel and Import wrap together on a narrow dialog */}
+      <div className="ml-auto flex flex-wrap gap-2">{parts.right}</div>
     </div>
   );
 

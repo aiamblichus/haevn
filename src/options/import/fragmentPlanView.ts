@@ -283,15 +283,21 @@ export function readFailedNotice(): Notice {
 
 export const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-export function overLimitNotice(gathered: GatheredFragments, kept = false): Notice {
+/**
+ * `kept`: how many files were already here when a drop would have passed the limit. That drop is
+ * not added, and `gathered` is the set it would have made.
+ */
+export function overLimitNotice(gathered: GatheredFragments, kept?: number): Notice {
   const limit = FRAGMENT_IMPORT_MAX_BYTES / 1024 / 1024;
-  const size = `${gathered.candidates.length} .md files hold ${megabytes(gathered.totalBytes)} of text, and one import takes at most ${limit} MB`;
+  if (kept !== undefined) {
+    return {
+      title: "Not added: too much for one import.",
+      body: `With them, the set would be ${gathered.candidates.length} .md files and ${megabytes(gathered.totalBytes)}, and one import takes at most ${limit} MB. The ${plural(kept, "file")} already here ${kept === 1 ? "is" : "are"} kept: import ${kept === 1 ? "it" : "them"} first, or Clear and choose fewer.`,
+    };
+  }
   return {
     title: "Too much for one import.",
-    // `kept`: the files already here, with these, are the set; these were not added
-    body: kept
-      ? `With these, the ${size}. They were not added; the files already here are kept. Choose fewer, or clear them and start again.`
-      : `These ${size}. Choose fewer files at a time. Nothing was read.`,
+    body: `These ${gathered.candidates.length} .md files hold ${megabytes(gathered.totalBytes)} of text, and one import takes at most ${limit} MB. Choose fewer files at a time. Nothing was read.`,
   };
 }
 
@@ -300,11 +306,10 @@ export function replacedLine(names: string[]): string {
   if (names.length === 0) return "";
   const shown = names.slice(0, 5).join(", ");
   const more = names.length > 5 ? ` and ${names.length - 5} more` : "";
-  const what =
-    names.length === 1
-      ? "1 file replaced an earlier one"
-      : `${names.length} files replaced earlier ones`;
-  return `${what} of the same name: ${shown}${more}.`;
+  // Not "replaced": in this dialog that word means writing over a chat in the archive
+  return names.length === 1
+    ? `1 file was added twice; the later copy is used: ${shown}${more}.`
+    : `${names.length} files were added twice; the later copies are used: ${shown}${more}.`;
 }
 
 /** The operation that held the lock, as a person says it */

@@ -183,7 +183,13 @@ export class FragmentSession {
       this.emit({
         ...this.state,
         view: this.restingView(),
-        notice: { tone: "bad", ...overLimitNotice(gathered, hadFiles) },
+        notice: {
+          tone: "bad",
+          ...overLimitNotice(
+            gathered,
+            hadFiles ? (this.gathered?.candidates.length ?? 0) : undefined,
+          ),
+        },
       });
       return;
     }
