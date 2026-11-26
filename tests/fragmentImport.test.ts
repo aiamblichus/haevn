@@ -271,6 +271,30 @@ describe("the metadata a file gives, and the file as the source of truth", () =>
     expect(await getDB().metadataQueue.count()).toBe(0);
   });
 
+  it("keeps a record the person retitled, when the file stops saying generate: false", async () => {
+    await importFragments([withId("title: Old\ngenerate: false", "words\n")], RUN);
+    await MetadataRepository.set(chatId(ID_A), { title: "Retitled in the app" });
+
+    await importFragments([withId("", "more words\n")], RUN);
+
+    expect(await MetadataRepository.get(chatId(ID_A))).toMatchObject({
+      title: "Retitled in the app",
+      source: "manual",
+    });
+  });
+
+  it("does not take away a record a file never made exempt: a title the file used to give stays when the file drops it", async () => {
+    await importFragments([withId("title: Was given", "words\n")], RUN);
+
+    await importFragments([withId("", "more words\n")], RUN);
+
+    expect(await MetadataRepository.get(chatId(ID_A))).toMatchObject({
+      title: "Was given",
+      source: "manual",
+    });
+    expect(await getDB().metadataQueue.count()).toBe(0);
+  });
+
   it("does not hand a chat back to generation while its file still says generate: false", async () => {
     await importFragments([withId("generate: false", "words\n")], RUN);
 
