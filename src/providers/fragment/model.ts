@@ -16,7 +16,7 @@ export interface FragmentFile {
  * still `changed` when the stored version is lower than this one, so that a new form reaches the
  * fragments imported before it existed.
  */
-export const FRAGMENT_PARSER_VERSION = 1;
+export const FRAGMENT_PARSER_VERSION = 2;
 
 export type FragmentRole = "user" | "assistant" | "system";
 

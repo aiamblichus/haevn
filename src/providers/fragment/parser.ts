@@ -338,16 +338,21 @@ function marksByPattern(lines: Line[], pattern: RegExp): Mark[] {
   return marks;
 }
 
+/** What a declared label does when a line matches it: a turn of a speaker, or a block. */
+type LabelKind = FragmentRole | "break";
+
 interface SpeakerConfig {
-  labels: Map<string, FragmentRole>;
+  labels: Map<string, LabelKind>;
   prompts: string[];
-  /** it declares at least one label or prompt that can match */
+  /** Who speaks the text before the first mark, when the file says */
+  lead?: FragmentRole;
+  /** it declares at least one label, prompt or lead that can match */
   usable: boolean;
 }
 
 const LABEL_KEYS: FragmentRole[] = ["user", "assistant", "system"];
-/** Keys that are read in a later slice, or not at all: kept, never read, never a refusal */
-const READ_KEYS = new Set<string>([...LABEL_KEYS, "prompt"]);
+/** The keys that are read. Any other key under `speakers` is kept, never read, never a refusal */
+const READ_KEYS = new Set<string>([...LABEL_KEYS, "break", "prompt", "lead"]);
 
 function readSpeakers(speakers: unknown, warnings: FragmentWarning[]): SpeakerConfig {
   const config: SpeakerConfig = { labels: new Map(), prompts: [], usable: false };
@@ -363,7 +368,8 @@ function readSpeakers(speakers: unknown, warnings: FragmentWarning[]): SpeakerCo
       warn(warnings, "speakers-unknown-key", `speakers.${key} is not read`);
     }
   }
-  for (const key of LABEL_KEYS) {
+  // The first of these has a label that is under two of them
+  for (const key of [...LABEL_KEYS, "break"] as const) {
     if (record[key] === undefined) continue;
     const labels = listOf(record[key]);
     if (!labels) {
@@ -391,7 +397,15 @@ function readSpeakers(speakers: unknown, warnings: FragmentWarning[]): SpeakerCo
       config.prompts = prompts.sort((a, b) => b.length - a.length);
     }
   }
-  config.usable = config.labels.size > 0 || config.prompts.length > 0;
+  if (record.lead !== undefined) {
+    const lead = textOf(record.lead)?.toLowerCase();
+    if (lead === "user" || lead === "assistant" || lead === "system") {
+      config.lead = lead;
+    } else {
+      warn(warnings, "speakers-bad-type", "speakers.lead must be user, assistant or system");
+    }
+  }
+  config.usable = config.labels.size > 0 || config.prompts.length > 0 || config.lead !== undefined;
   return config;
 }
 
@@ -405,11 +419,13 @@ function labelMark(line: Line, index: number, config: SpeakerConfig): Mark | und
   if (!trimmed) return undefined;
   const lead = line.text.length - line.text.trimStart().length;
   for (const [label, role] of config.labels) {
-    if (trimmed === label || trimmed === `${label}:`) return { line: index, role };
+    // A break starts a block, which nobody speaks
+    const speaker = role === "break" ? null : role;
+    if (trimmed === label || trimmed === `${label}:`) return { line: index, role: speaker };
     if (trimmed.startsWith(`${label}: `)) {
       const from = line.start + lead + label.length + 2;
-      if (line.text.slice(from - line.start).trim() === "") return { line: index, role };
-      return { line: index, role, inlineFrom: from };
+      if (line.text.slice(from - line.start).trim() === "") return { line: index, role: speaker };
+      return { line: index, role: speaker, inlineFrom: from };
     }
   }
   return undefined;
@@ -447,6 +463,8 @@ function declaredMarks(lines: Line[], config: SpeakerConfig): Mark[] {
 
 interface Candidate {
   role: FragmentRole | null;
+  /** The text before the first mark, named by `speakers.lead` */
+  lead?: boolean;
   /** Offsets into the body: the text is body.slice(from, to) */
   from: number;
   to: number;
@@ -473,14 +491,22 @@ function regionText(
   return { from: inlineFrom ?? lines[a].start, to: lines[b].end };
 }
 
-function candidatesFor(lines: Line[], marks: Mark[]): Candidate[] {
+function candidatesFor(lines: Line[], marks: Mark[], lead?: FragmentRole): Candidate[] {
   const out: Candidate[] = [];
-  const add = (role: FragmentRole | null, first: number, last: number, inlineFrom?: number) => {
+  const add = (
+    role: FragmentRole | null,
+    first: number,
+    last: number,
+    inlineFrom?: number,
+    isLead = false,
+  ) => {
     const { from, to } = regionText(lines, first, last, inlineFrom);
-    if (to > from) out.push({ role, from, to });
+    if (to > from) out.push({ role, from, to, ...(isLead ? { lead: true } : {}) });
   };
 
-  if (marks.length === 0 || marks[0].line > 0) add(null, 0, marks[0]?.line ?? lines.length);
+  // With no mark at all the whole body is one block: there is no "before the first mark"
+  if (marks.length === 0) add(null, 0, lines.length);
+  else if (marks[0].line > 0) add(lead ?? null, 0, marks[0].line, undefined, lead !== undefined);
   marks.forEach((mark, i) => {
     const stop = marks[i + 1]?.line ?? lines.length;
     if (mark.prompt) {
@@ -536,30 +562,37 @@ function splitTurns(body: string, speakers: unknown, warnings: FragmentWarning[]
     }
   }
 
-  let result = segment(body, candidatesFor(lines, marks));
+  // `lead` is for a declared body; a body with marks of its own has its own first block
+  const candidates = candidatesFor(lines, marks, own ? undefined : config.lead);
   // A body whose marks have nothing after them, or only a system prompt, is one block as written
-  if (!result.turns.some((turn) => turn.role !== "system")) {
-    result = segment(body, candidatesFor(lines, []));
-  } else if (!own && config.usable) {
-    oneSidedWarning(result.turns, config, warnings);
+  if (!candidates.some((candidate) => candidate.role !== "system")) {
+    return segment(body, candidatesFor(lines, []));
   }
-  return result;
+  if (!own && config.usable) oneSidedWarning(candidates, config, warnings);
+  return segment(body, candidates);
 }
 
-/** Every turn the declared labels found belongs to one side: the person may have meant `break`. */
+/**
+ * Every turn the declared labels found belongs to one side: the person may have meant `break`.
+ * A file that declares a `break` has thought of it, and the text before the first mark, whoever
+ * `lead` names, is not a turn a label found.
+ */
 function oneSidedWarning(
-  turns: FragmentTurn[],
+  candidates: Candidate[],
   config: SpeakerConfig,
   warnings: FragmentWarning[],
 ): void {
   if (config.prompts.length > 0) return;
-  const spoken = turns.filter((turn) => turn.role === "user" || turn.role === "assistant");
-  const sides = new Set(spoken.map((turn) => turn.role));
+  if ([...config.labels.values()].includes("break")) return;
+  const spoken = candidates.filter(
+    (candidate) => !candidate.lead && (candidate.role === "user" || candidate.role === "assistant"),
+  );
+  const sides = new Set(spoken.map((candidate) => candidate.role));
   if (spoken.length < 2 || sides.size !== 1) return;
   warn(
     warnings,
     "speakers-one-side",
-    `${spoken.length} turns, all the ${[...sides][0]}'s: only one side is declared in speakers`,
+    `${spoken.length} turns, all the ${[...sides][0]}'s: if this label only marks where an exchange starts, declare it under \`break\``,
   );
 }
 

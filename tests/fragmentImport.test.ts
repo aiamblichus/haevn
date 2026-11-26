@@ -27,9 +27,11 @@ import { generateExportContent } from "../src/formatters";
 import type { Chat } from "../src/model/haevn_model";
 import { roughDateOf } from "../src/model/roughDate";
 import {
+  FRAGMENT_PARSER_VERSION,
   type FragmentFile,
   type FragmentParams,
   reassembleFragment,
+  transformFragmentToHaevnChat,
 } from "../src/providers/fragment";
 import { getDB } from "../src/services/db";
 import * as MetadataRepository from "../src/services/metadataRepository";
@@ -38,7 +40,7 @@ import { extractIndexedChat } from "../src/services/searchDocument";
 import { parseSearchQuery } from "../src/services/searchQuery";
 import { buildQueryPlan } from "../src/services/searchWorkerQuery";
 import { SyncService } from "../src/services/syncService";
-import { ID_A, ID_B, ID_C, withId } from "./helpers/fragmentFile";
+import { ID_A, ID_B, ID_C, parsed, withId } from "./helpers/fragmentFile";
 import { sqliteKit } from "./helpers/indexKit";
 
 const RUN = { dryRun: false, overwrite: true, index: false };
@@ -130,6 +132,96 @@ describe("importing fragments (HVN-163)", () => {
     expect(await getDB().chats.count()).toBe(1);
   });
 
+  describe("when a file's shape changes under the same id", () => {
+    const BREAKS = "speakers:\n  break: [Copy]";
+    const body = (exchanges: number) =>
+      Array.from({ length: exchanges }, (_, i) => `Copy\nblock ${i + 1}\n\n`).join("");
+
+    /** The fragment as the first parser stored it: the file's own bytes, read as one block. */
+    async function storeAsFirstParserDid(file: FragmentFile): Promise<void> {
+      const fragment = await parsed(file);
+      const oneBlock = {
+        ...fragment,
+        turns: [{ role: null, text: fragment.body.trim() }],
+        seams: [fragment.body.slice(0, fragment.body.indexOf(fragment.body.trim()))],
+        tail: fragment.body.slice(
+          fragment.body.indexOf(fragment.body.trim()) + fragment.body.trim().length,
+        ),
+      };
+      const chat = transformFragmentToHaevnChat(oneBlock);
+      const { messages, ...row } = chat;
+      await getDB().chats.put({
+        ...row,
+        messages: {},
+        params: { ...row.params, fragment: { ...row.params.fragment, v: 1 } },
+      } as Chat);
+      await getDB().chatMessages.bulkPut(Object.values(messages));
+    }
+
+    it("turns the one block the first parser kept into the chain a break gives, in place", async () => {
+      const file = withId(BREAKS, body(5));
+      await storeAsFirstParserDid(file);
+      expect(Object.keys((await fullChat(ID_A)).messages)).toEqual(["t0001"]);
+
+      // the dry run says it changes, and says to how many messages
+      const dry = await importFragments([file], DRY);
+      expect(dry.plan[0]).toMatchObject({ state: "changed", turns: 5 });
+      expect(Object.keys((await fullChat(ID_A)).messages)).toEqual(["t0001"]);
+
+      const result = await importFragments([file], RUN);
+
+      expect(states(result.plan)).toEqual(["changed"]);
+      const chat = await fullChat(ID_A);
+      expect(Object.keys(chat.messages)).toEqual(["t0001", "t0002", "t0003", "t0004", "t0005"]);
+      expect(await getDB().chatMessages.where("chatId").equals(chatId(ID_A)).count()).toBe(5);
+      expect(await getDB().chats.count()).toBe(1);
+      expect(chat.currentId).toBe("t0005");
+      expect(chat.messages.t0001.childrenIds).toEqual(["t0002"]);
+      expect((chat.params.fragment as FragmentParams).unattributed).toEqual([0, 1, 2, 3, 4]);
+      expect(reassembleFragment(chat)).toBe(body(5));
+
+      // and now it is current: another import writes nothing
+      expect(states((await importFragments([file], RUN)).plan)).toEqual(["unchanged"]);
+    });
+
+    it("leaves no message of the old chain behind when the chain gets shorter", async () => {
+      await importFragments([withId(BREAKS, body(6))], RUN);
+      expect(await getDB().chatMessages.where("chatId").equals(chatId(ID_A)).count()).toBe(6);
+
+      // the person drops the declaration: one block now, and it is t0001 again
+      const result = await importFragments([withId("", body(6))], RUN);
+
+      expect(states(result.plan)).toEqual(["changed"]);
+      const rows = await getDB().chatMessages.where("chatId").equals(chatId(ID_A)).toArray();
+      expect(rows.map((row) => row.id)).toEqual(["t0001"]);
+      const chat = await fullChat(ID_A);
+      expect(chat.currentId).toBe("t0001");
+      expect(chat.messages.t0001.childrenIds).toEqual([]);
+      expect(reassembleFragment(chat)).toBe(body(6));
+      expect((chat.params.fragment as FragmentParams).unattributed).toEqual([0]);
+    });
+
+    it("keeps what generation made of the old shape, and does not queue the chat again", async () => {
+      const file = withId(BREAKS, body(3));
+      await storeAsFirstParserDid(file);
+      await MetadataRepository.set(chatId(ID_A), {
+        title: "Made from the one block",
+        description: "A summary of the old shape",
+        source: "ai",
+      });
+
+      await importFragments([file], RUN);
+
+      // `changed` writes only the metadata fields the file itself gives (none here)
+      expect(await MetadataRepository.get(chatId(ID_A))).toMatchObject({
+        title: "Made from the one block",
+        description: "A summary of the old shape",
+        source: "ai",
+      });
+      expect(await getDB().metadataQueue.count()).toBe(0);
+    });
+  });
+
   it("leaves a changed fragment as it is with --no-overwrite, and still saves the new ones", async () => {
     await importFragments([withId("", "old text\n", ID_A)], RUN);
 
@@ -154,7 +246,9 @@ describe("importing fragments (HVN-163)", () => {
     const result = await importFragments([withId("", "same bytes\n")], RUN);
 
     expect(states(result.plan)).toEqual(["changed"]);
-    expect((await SyncService.getChat(chatId(ID_A)))?.params.fragment).toMatchObject({ v: 1 });
+    expect((await SyncService.getChat(chatId(ID_A)))?.params.fragment).toMatchObject({
+      v: FRAGMENT_PARSER_VERSION,
+    });
   });
 
   it("brings a fragment back that was deleted in the app: importing its file again does, changed or not", async () => {

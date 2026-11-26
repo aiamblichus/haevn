@@ -319,6 +319,136 @@ describe("speakers: a prompt prefix", () => {
   });
 });
 
+describe("speakers: break", () => {
+  const brk = "speakers:\n  break: [Copy]";
+
+  it("starts a block at each matching line, and the line goes to the seam", () => {
+    const fragment = parseOk(withId(brk, "Copy\nfirst\nmore\n\nCopy\nsecond\n"));
+    expect(fragment.turns).toEqual([
+      { role: null, text: "first\nmore" },
+      { role: null, text: "second" },
+    ]);
+    expect(fragment.seams).toEqual(["Copy\n", "\n\nCopy\n"]);
+    expect(fragment.warnings).toEqual([]);
+  });
+
+  it("matches as the other labels do: trimmed, with a colon, with text after a colon, exact", () => {
+    const body = "  Copy  \na\nCopy:\nb\nCopy: c\nd\nCopy said so\ncopy\n";
+    expect(turnsOf(brk, body)).toEqual([
+      [null, "a"],
+      [null, "b"],
+      [null, "c\nd\nCopy said so\ncopy"],
+    ]);
+  });
+
+  it("reads a string as a list of one, and a list as several labels", () => {
+    expect(turnsOf("speakers:\n  break: Copy", "Copy\na\nCopy\nb\n")).toHaveLength(2);
+    expect(turnsOf("speakers:\n  break: [Copy, Page]", "Copy\na\nPage\nb\nCopy\nc\n")).toEqual([
+      [null, "a"],
+      [null, "b"],
+      [null, "c"],
+    ]);
+  });
+
+  it("works beside a speaker: the block is nobody's, the turn is the speaker's", () => {
+    const extra = "speakers:\n  user: [TB]\n  break: [Copy]";
+    expect(turnsOf(extra, "TB\nask\nCopy\nreply\nTB\nagain\nCopy\nreply two\n")).toEqual([
+      ["user", "ask"],
+      [null, "reply"],
+      ["user", "again"],
+      [null, "reply two"],
+    ]);
+  });
+
+  it("is one-sided to no one: a file with a break does not get the one-side warning", () => {
+    const fragment = parseOk(
+      withId("speakers:\n  user: [TB]\n  break: [Copy]", "TB\na\nCopy\nb\nTB\nc\nCopy\nd\n"),
+    );
+    expect(fragment.warnings).toEqual([]);
+  });
+
+  it("drops a block with nothing in it and keeps its marker in the seam", () => {
+    const fragment = parseOk(withId(brk, "Copy\nCopy\nonly\n"));
+    expect(fragment.turns).toEqual([{ role: null, text: "only" }]);
+    expect(fragment.seams).toEqual(["Copy\nCopy\n"]);
+  });
+
+  it("warns that nothing matched when no line is a break, and the file is one block", () => {
+    const fragment = parseOk(withId(brk, "no mark here\n"));
+    expect(codes(fragment.warnings)).toEqual(["speakers-no-match"]);
+    expect(fragment.turns).toEqual([{ role: null, text: "no mark here" }]);
+  });
+
+  it("is overruled, as every declaration is, by marks the body has of its own", () => {
+    const fragment = parseOk(withId(brk, "## User\nhi\nCopy\nstill the user\n"));
+    expect(codes(fragment.warnings)).toEqual(["speakers-unused"]);
+    expect(fragment.turns).toEqual([{ role: "user", text: "hi\nCopy\nstill the user" }]);
+  });
+});
+
+describe("speakers: the text before the first mark, and lead", () => {
+  const both = "speakers:\n  user: [TB]\n  assistant: [Bot]";
+
+  it("is a block of its own beside break, never folded into the seam", () => {
+    const fragment = parseOk(withId("speakers:\n  break: [Copy]", "a preface\n\nCopy\nfirst\n"));
+    expect(fragment.turns).toEqual([
+      { role: null, text: "a preface" },
+      { role: null, text: "first" },
+    ]);
+    expect(fragment.seams).toEqual(["", "\n\nCopy\n"]);
+  });
+
+  it("is nothing when it is white space only", () => {
+    const fragment = parseOk(
+      withId("speakers:\n  break: [Copy]\n  lead: user", "\n \t\nCopy\nfirst\n"),
+    );
+    expect(fragment.turns).toEqual([{ role: null, text: "first" }]);
+  });
+
+  it("is the speaker lead names", () => {
+    for (const lead of ["user", "assistant", "system"] as const) {
+      const fragment = parseOk(withId(`${both}\n  lead: ${lead}`, "opening\nTB\nhi\nBot\nho\n"));
+      expect(fragment.turns.map((turn) => [turn.role, turn.text])).toEqual([
+        [lead, "opening"],
+        ["user", "hi"],
+        ["assistant", "ho"],
+      ]);
+      expect(fragment.warnings).toEqual([]);
+    }
+  });
+
+  it("reads lead in any case, and a lead beside break names the first block only", () => {
+    const fragment = parseOk(
+      withId("speakers:\n  break: [Copy]\n  lead: User", "ask\nCopy\nreply\nCopy\nmore\n"),
+    );
+    expect(fragment.turns.map((turn) => turn.role)).toEqual(["user", null, null]);
+  });
+
+  it("is not applied when no mark was found: the file is one block, and it warns", () => {
+    const fragment = parseOk(withId("speakers:\n  user: [TB]\n  lead: system", "just text\n"));
+    expect(fragment.turns).toEqual([{ role: null, text: "just text" }]);
+    expect(codes(fragment.warnings)).toEqual(["speakers-no-match"]);
+  });
+
+  it("is not applied when the marks have nothing after them", () => {
+    const fragment = parseOk(withId("speakers:\n  user: [TB]\n  lead: system", "text\nTB\n"));
+    expect(fragment.turns).toEqual([{ role: null, text: "text\nTB" }]);
+  });
+
+  it("is unused, with a word, when the body marks its own turns", () => {
+    const fragment = parseOk(withId("speakers:\n  lead: system", "preface\n## User\nhi\n"));
+    expect(codes(fragment.warnings)).toEqual(["speakers-unused"]);
+    expect(fragment.turns.map((turn) => turn.role)).toEqual([null, "user"]);
+  });
+
+  it("is not a turn a label found: it does not make a one-sided file two-sided", () => {
+    const fragment = parseOk(
+      withId("speakers:\n  user: [TB]\n  lead: assistant", "hello\nTB\none\nTB\ntwo\n"),
+    );
+    expect(codes(fragment.warnings)).toEqual(["speakers-one-side"]);
+  });
+});
+
 describe("speakers: what it warns of and never refuses", () => {
   it("names an unknown key, and keeps it whole in the fields", () => {
     const fragment = parseOk(
@@ -328,19 +458,6 @@ describe("speakers: what it warns of and never refuses", () => {
       { code: "speakers-unknown-key", message: "speakers.asistant is not read" },
     ]);
     expect(fragment.fields.speakers).toEqual({ asistant: ["Bot"], user: ["TB"] });
-  });
-
-  it("does not read break and lead yet: they are unknown keys, kept and warned", () => {
-    const fragment = parseOk(
-      withId("speakers:\n  break: [Copy]\n  lead: user", "Copy\nhi\nCopy\nho\n"),
-    );
-    expect(fragment.warnings.map((w) => w.message)).toEqual([
-      "speakers.break is not read",
-      "speakers.lead is not read",
-    ]);
-    expect(codes(fragment.warnings)).toContain("speakers-unknown-key");
-    expect(fragment.turns).toHaveLength(1);
-    expect(fragment.fields.speakers).toEqual({ break: ["Copy"], lead: "user" });
   });
 
   it("warns of a key of the wrong type, and of speakers that is not a map", () => {
@@ -356,6 +473,42 @@ describe("speakers: what it warns of and never refuses", () => {
     expect(fragment.turns[0].role).toBe("user");
   });
 
+  it("warns of a label under break and a speaker, and the speaker has it", () => {
+    for (const speaker of ["user", "assistant", "system"] as const) {
+      const declared = speaker === "user" ? "user: [X, TB]" : `${speaker}: [X]\n  user: [TB]`;
+      const fragment = parseOk(withId(`speakers:\n  break: [X]\n  ${declared}`, "TB\nhi\nX\nho\n"));
+      expect(fragment.warnings).toContainEqual({
+        code: "speakers-duplicate-label",
+        message: expect.stringContaining(`${speaker} is used`),
+      });
+      expect(fragment.turns.map((turn) => turn.role)).toEqual(["user", speaker]);
+    }
+  });
+
+  it("warns of break and lead of the wrong type, and reads neither", () => {
+    const badBreak = parseOk(withId("speakers:\n  break: {a: 1}", "Copy\nhi\n"));
+    expect(badBreak.warnings).toEqual([
+      expect.objectContaining({
+        code: "speakers-bad-type",
+        message: expect.stringContaining("break"),
+      }),
+    ]);
+    expect(badBreak.turns).toHaveLength(1);
+
+    for (const lead of ["narrator", "[user]", "3"]) {
+      const fragment = parseOk(
+        withId(`speakers:\n  user: [Q]\n  lead: ${lead}`, "preface\nQ\nhi\n"),
+      );
+      expect(fragment.warnings).toEqual([
+        {
+          code: "speakers-bad-type",
+          message: "speakers.lead must be user, assistant or system",
+        },
+      ]);
+      expect(fragment.turns.map((turn) => turn.role)).toEqual([null, "user"]);
+    }
+  });
+
   it("warns that a declaration matched no line, and the file is one block", () => {
     const fragment = parseOk(withId("speakers:\n  user: [TB]", "no label here\n"));
     expect(codes(fragment.warnings)).toEqual(["speakers-no-match"]);
@@ -367,7 +520,8 @@ describe("speakers: what it warns of and never refuses", () => {
     expect(fragment.warnings).toEqual([
       expect.objectContaining({
         code: "speakers-one-side",
-        message: expect.stringContaining("3 turns, all the user's"),
+        message:
+          "3 turns, all the user's: if this label only marks where an exchange starts, declare it under `break`",
       }),
     ]);
     expect(fragment.turns).toHaveLength(3);
@@ -413,6 +567,28 @@ describe("kept as written: the seams and the turns put the body back", () => {
     ["text before the first mark", "speakers:\n  user: [Q]", "preface\n\nQ\nhi\n"],
     ["unicode and tabs", "speakers:\n  user: [Q]", "Q\n\tcafé — 日本語 ☃\n"],
     ["a turn that is one character", "speakers:\n  user: [Q]\n  assistant: [A]", "Q\nx\nA\ny"],
+    [
+      "breaks",
+      "speakers:\n  break: [Copy]",
+      "Copy\nfirst\n\nmore\n\n\nCopy\nsecond\nCopy\n\nCopy\nlast",
+    ],
+    ["breaks with CRLF", "speakers:\n  break: [Copy]", "Copy\r\none\r\n\r\nCopy\r\ntwo\r\n"],
+    ["breaks with inline text", "speakers:\n  break: [Copy]", "Copy: one\ntwo\nCopy:   three\n"],
+    [
+      "a break and a lead",
+      "speakers:\n  break: [Copy]\n  lead: user",
+      "\n  asked first\n\nCopy\nanswer one\n\n\nCopy\nanswer two\n\n",
+    ],
+    [
+      "a lead that is a system prompt, a speaker and a break",
+      "speakers:\n  lead: system\n  user: [TB]\n  break: [Copy]",
+      "rules\nof the house\nTB\nhi\nCopy\nho\nTB\nagain\n",
+    ],
+    [
+      "only a lead block with a mark that has no text",
+      "speakers:\n  user: [TB]\n  lead: user",
+      "x\nTB\n",
+    ],
   ];
 
   it.each(bodies)("%s", async (_label, extra, body) => {

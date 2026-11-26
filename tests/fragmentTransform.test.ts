@@ -211,6 +211,68 @@ describe("the chat a fragment becomes", () => {
     expect((await chatOf("", "words\n")).params.fragment).toMatchObject({ unattributed: [0] });
   });
 
+  it("stores each block of a break as one response with one text part, and lists its index", async () => {
+    const chat = await chatOf(
+      "speakers:\n  break: [Copy]",
+      "Copy\nfirst\n\nCopy\nsecond\nand more\n\nCopy\nthird\n",
+    );
+    expect(Object.keys(chat.messages)).toEqual(["t0001", "t0002", "t0003"]);
+    const parts = Object.values(chat.messages).map((m) => {
+      const message = m.message[0];
+      return message.kind === "response" ? message.parts : undefined;
+    });
+    expect(parts).toEqual([
+      [{ part_kind: "text", content: "first" }],
+      [{ part_kind: "text", content: "second\nand more" }],
+      [{ part_kind: "text", content: "third" }],
+    ]);
+    expect((chat.params.fragment as FragmentParams).unattributed).toEqual([0, 1, 2]);
+    // one chain, in file order
+    expect(chat.messages.t0001.parentId).toBeUndefined();
+    expect(chat.messages.t0002.parentId).toBe("t0001");
+    expect(chat.messages.t0003.parentId).toBe("t0002");
+    expect(chat.currentId).toBe("t0003");
+  });
+
+  it("lists only the blocks, when a break stands beside a speaker", async () => {
+    const chat = await chatOf(
+      "speakers:\n  user: [TB]\n  break: [Copy]",
+      "TB\nask\nCopy\nreply\nTB\nagain\nCopy\nreply two\n",
+    );
+    expect(Object.values(chat.messages).map((m) => m.message[0].kind)).toEqual([
+      "request",
+      "response",
+      "request",
+      "response",
+    ]);
+    expect((chat.params.fragment as FragmentParams).unattributed).toEqual([1, 3]);
+  });
+
+  it("gives the text before the first mark to the speaker lead names, and not to the list of blocks", async () => {
+    const chat = await chatOf(
+      "speakers:\n  break: [Copy]\n  lead: user",
+      "my first prompt\nCopy\nthe reply\n",
+    );
+    const first = chat.messages.t0001.message[0];
+    expect(first.kind === "request" && first.parts).toEqual([
+      expect.objectContaining({ part_kind: "user-prompt", content: "my first prompt" }),
+    ]);
+    expect((chat.params.fragment as FragmentParams).unattributed).toEqual([1]);
+  });
+
+  it("makes lead: system the chat's system prompt, not a message", async () => {
+    const chat = await chatOf(
+      "speakers:\n  break: [Copy]\n  lead: system",
+      "Be brief.\nCopy\nthe reply\nCopy\nthe next\n",
+    );
+    expect(chat.system).toBe("Be brief.");
+    expect(Object.keys(chat.messages)).toEqual(["t0001", "t0002"]);
+    expect((chat.params.fragment as FragmentParams).systemTurns).toEqual([
+      { at: 0, text: "Be brief." },
+    ]);
+    expect((chat.params.fragment as FragmentParams).unattributed).toEqual([0, 1]);
+  });
+
   it("puts a system prompt of the frontmatter and a system turn of the body on the first request", async () => {
     const chat = await chatOf(
       "system: Be brief.",
@@ -317,6 +379,16 @@ describe("the plan", () => {
       withBody: async () => undefined,
     });
     expect(current.entries[0].state).toBe("unchanged");
+  });
+
+  it("calls a file changed when it was stored by the first parser, which did not read break and lead", async () => {
+    const file = withId("speakers:\n  break: [Copy]", "Copy\none\nCopy\ntwo\n");
+    const sha = (await parsed(file)).fileSha256;
+    const plan = await planFragmentImport([file], {
+      stored: stored(sha, 1),
+      withBody: async () => undefined,
+    });
+    expect(plan.entries[0]).toMatchObject({ state: "changed", turns: 2 });
   });
 
   it("refuses both files that share an id and differ, and is not moved by their order", async () => {
