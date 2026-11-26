@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/button";
+import { Checkbox } from "../../../components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +18,7 @@ import { fileNameShape } from "../../../utils/logShape";
 import { buildImportStagingPath, deleteFileFromOpfs, writeFileToOpfs } from "../../../utils/opfs";
 import { useStatus } from "../../context/StatusContext";
 import { handleImport } from "../../import/importHandlers";
+import { useWindowDropGuard } from "../../import/windowDropGuard";
 import { FragmentImportPanel } from "./FragmentImportPanel";
 import { formatListedUnder } from "./importFormats";
 
@@ -129,6 +131,8 @@ export const ImportModal = ({
   // An import of fragments is running: the dialog is held until it ends
   const [fragmentBusy, setFragmentBusy] = useState(false);
   const isFragment = importProvider === "fragment_md";
+  // A file let go beside a drop zone must not open in the tab, whatever the format
+  useWindowDropGuard(open);
 
   const cleanupStagedFile = useCallback(async () => {
     if (!stagedFilePathRef.current) {
@@ -439,7 +443,9 @@ export const ImportModal = ({
           )}
           {importProvider === "chatgpt_zip" && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">Archive (.zip):</label>
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
+                Archive (.zip):
+              </label>
               <div
                 className={dropZoneClass(isDragActive)}
                 onDragOver={(e) => {
@@ -472,6 +478,7 @@ export const ImportModal = ({
                 Drag & drop ChatGPT backup .zip here, or choose a file below.
               </div>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".zip"
@@ -486,7 +493,7 @@ export const ImportModal = ({
             importProvider === "claude_zip" ||
             importProvider === "haevn_export_zip") && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
                 {importProvider === "openwebui_zip"
                   ? "Open WebUI ZIP (contains conversations.json):"
                   : importProvider === "claude_zip"
@@ -526,6 +533,7 @@ export const ImportModal = ({
                 Drag & drop .zip file here, or choose a file below.
               </div>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".zip"
@@ -540,7 +548,7 @@ export const ImportModal = ({
             importProvider === "codex_jsonl" ||
             importProvider === "pi_jsonl") && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
                 {importProvider === "claudecode_jsonl"
                   ? "Claude Code Session (.jsonl):"
                   : importProvider === "codex_jsonl"
@@ -578,6 +586,7 @@ export const ImportModal = ({
                 Drag & drop .jsonl file here, or choose a file below.
               </div>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".jsonl,application/x-ndjson"
@@ -590,7 +599,7 @@ export const ImportModal = ({
           )}
           {importProvider === "openrouter_json" && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
                 OpenRouter chatroom export (.json):
               </label>
               <div
@@ -625,6 +634,7 @@ export const ImportModal = ({
                 file below.
               </div>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".json,application/json"
@@ -637,7 +647,7 @@ export const ImportModal = ({
           )}
           {importProvider === "openwebui_json" && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
                 Open WebUI conversations.json:
               </label>
               <div
@@ -675,6 +685,7 @@ export const ImportModal = ({
                 Drag & drop .json file here, or choose a file below.
               </div>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".json,application/json"
@@ -687,8 +698,11 @@ export const ImportModal = ({
           )}
           {importProvider === "haevn_markdown" && (
             <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-foreground">HAEVN Markdown file:</label>
+              <label htmlFor="importFile" className="text-sm font-medium text-foreground">
+                HAEVN Markdown file:
+              </label>
               <input
+                id="importFile"
                 type="file"
                 className={FILE_INPUT_CLASS}
                 accept=".md,.markdown,text/markdown"
@@ -701,11 +715,10 @@ export const ImportModal = ({
           )}
           {!isFragment && (
             <div className="flex items-center gap-2 text-sm">
-              <input
+              <Checkbox
                 id="overwrite"
-                type="checkbox"
                 checked={importOverwrite}
-                onChange={(e) => setImportOverwrite((e.target as HTMLInputElement).checked)}
+                onCheckedChange={(on) => setImportOverwrite(on === true)}
               />
               <label htmlFor="overwrite" className="text-foreground">
                 Overwrite existing chats with the same ID

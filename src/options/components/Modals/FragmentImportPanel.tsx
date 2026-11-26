@@ -4,59 +4,42 @@
  * with the words of each state and the keyboard walk, is
  * /project/haevn/product/design/fragment-import. Nothing is written before the person confirms,
  * and the page never writes to the person's files.
+ *
+ * The panel holds the state of the view and the keyboard's way through it. The set of files and
+ * its runs are `FragmentSession`, the import is `useFragmentImport`, the list of files is
+ * `FragmentPlanList`, and the result is `FragmentDoneView` (HVN-178).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/button";
-import { Checkbox } from "../../../components/ui/checkbox";
 import { cn } from "../../../lib/utils";
-import { type FragmentPlanEntry, REFUSED_STATES } from "../../../providers/fragment/model";
 import { fireAndForget } from "../../../utils/error_utils";
 import { log } from "../../../utils/logger";
-import { useStatus } from "../../context/StatusContext";
 import {
   type FragmentSource,
   sourceFromFolderPick,
   takeDroppedItems,
 } from "../../import/fragmentFiles";
 import { askFragments } from "../../import/fragmentImportApi";
+import type { ImportRunState } from "../../import/fragmentImportRun";
 import {
-  assignIdsPlan,
-  busyNotice,
-  describeOutcome,
   describePlan,
-  type ImportOutcome,
-  idBlock,
-  idLine,
   indexesLater,
   inSentence,
-  isMissingFrontmatter,
   leftOutLine,
-  noIdWords,
-  type PlanGroup,
-  type PlanRow,
   planHeading,
   plural,
   replacedLine,
 } from "../../import/fragmentPlanView";
-import {
-  FragmentSession,
-  type RunView,
-  type SessionState,
-  type ToneNotice,
-} from "../../import/fragmentSession";
-import { FilesRegion } from "./FilesRegion";
+import { FragmentSession, type RunView, type SessionState } from "../../import/fragmentSession";
+import { hasFiles } from "../../import/windowDropGuard";
+import { FragmentDoneView } from "./FragmentDoneView";
+import { FragmentPlanList, type PlanListState } from "./FragmentPlanList";
+import { Bar, CancelFooter, DOCS, Footer, Heading, NoticeBox } from "./fragmentParts";
+import { useFragmentImport } from "./useFragmentImport";
 
-const DOCS = "https://haevn.pages.dev/user-guide/fragments/";
-/** A group longer than this shows this many rows, and a button for the rest */
-const ROWS_SHOWN = 20;
-
-/** What the import itself shows, over what the session shows: the run, the result, a refusal */
-type PanelView =
-  | { kind: "importing"; count: number }
-  | { kind: "done"; outcome: ImportOutcome; replace: boolean };
-
-type View = RunView | PanelView;
+/** What the import itself shows, over what the session shows: the run, the result */
+type View = RunView | Exclude<ImportRunState, { kind: "idle" }>;
 
 interface FragmentImportPanelProps {
   /** The dialog is held (Esc and the close button do nothing) while an import runs */
@@ -71,9 +54,6 @@ interface FragmentImportPanelProps {
   focusFirst: boolean;
 }
 
-const hasFiles = (event: DragEvent) =>
-  event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files");
-
 export const FragmentImportPanel = ({
   onBusyChange,
   onClose,
@@ -81,38 +61,43 @@ export const FragmentImportPanel = ({
   onImported,
   focusFirst,
 }: FragmentImportPanelProps) => {
-  const { setStatus } = useStatus();
+  // The session's every change gives way the import's view (a result, a notice): the import is
+  // made after the session, so the session is told through here
+  const resetImport = useRef<() => void>(() => {});
   const sessionRef = useRef<FragmentSession | null>(null);
   if (sessionRef.current === null) {
     sessionRef.current = new FragmentSession({
       ask: (files) => askFragments(files, { dryRun: true, overwrite: true }),
       onChange: (state) => {
         setRun(state);
-        setPlan(state.plan);
-        setPanelView(null);
-        setImportNotice(undefined);
+        resetImport.current();
       },
       onError: (err) => log.warn("[FragmentImport] Could not read the chosen files", err),
     });
   }
   const session = sessionRef.current;
   const [run, setRun] = useState<SessionState>(session.snapshot);
-  const [panelView, setPanelView] = useState<PanelView | null>(null);
+  const importRun = useFragmentImport({
+    session,
+    onBusyChange,
+    onImported,
+    onDone: () => setExpanded(new Set()),
+  });
+  resetImport.current = importRun.reset;
+  const imported = importRun.state;
+  const view: View = imported.kind === "idle" ? run.view : imported;
   // What an import that did not run said (another operation holds the lock, it stopped)
-  const [importNotice, setImportNotice] = useState<ToneNotice | undefined>();
-  const view: View = panelView ?? run.view;
-  const [plan, setPlan] = useState<FragmentPlanEntry[]>([]);
+  const importNotice = imported.kind === "idle" ? imported.notice : undefined;
+  const plan = imported.kind === "done" ? imported.plan : run.plan;
   const [replace, setReplace] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const importRunRef = useRef(0);
   const viewKindRef = useRef<View["kind"]>("empty");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const importButtonRef = useRef<HTMLButtonElement>(null);
-  const refocusImport = useRef(false);
   const dragDepth = useRef(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const importingRef = useRef(false);
@@ -132,25 +117,9 @@ export const FragmentImportPanel = ({
     setExpanded(new Set());
   }, [session]);
 
-  // A run that outlives the dialog finds itself stale and stops
+  // The end of the dialog: nothing the session still runs reports after this
   useEffect(() => {
-    return () => {
-      importRunRef.current += 1;
-      sessionRef.current?.dispose();
-    };
-  }, []);
-
-  // A file dropped beside the dialog must not take the tab away from the archive
-  useEffect(() => {
-    const keep = (event: DragEvent) => {
-      if (hasFiles(event)) event.preventDefault();
-    };
-    window.addEventListener("dragover", keep);
-    window.addEventListener("drop", keep);
-    return () => {
-      window.removeEventListener("dragover", keep);
-      window.removeEventListener("drop", keep);
-    };
+    return () => sessionRef.current?.dispose();
   }, []);
 
   useEffect(() => {
@@ -164,9 +133,8 @@ export const FragmentImportPanel = ({
     if (before === view.kind) return;
     if (view.kind === "empty") {
       if (before !== null) chooseFilesRef.current?.focus();
-    } else if (view.kind === "plan" && refocusImport.current) {
+    } else if (view.kind === "plan" && before === "importing") {
       // A notice after Import (busy, stopped): the button that was pressed, enabled again
-      refocusImport.current = false;
       importButtonRef.current?.focus();
     } else {
       headingRef.current?.focus();
@@ -219,48 +187,6 @@ export const FragmentImportPanel = ({
 
   const retry = () => session.retry();
 
-  const confirm = async () => {
-    const read = session.read;
-    if (!read) return;
-    const run = ++importRunRef.current;
-    const count = describePlan(plan, { replace }).toImport;
-    // Nothing is added to the set, and no check reports over it, until the import ends
-    session.lock(true);
-    setPanelView({ kind: "importing", count });
-    onBusyChange(true);
-    const answer = await askFragments(read.files, { dryRun: false, overwrite: replace });
-    onBusyChange(false);
-    session.lock(false);
-    if (run !== importRunRef.current) return;
-    if (!answer.ok) {
-      const notice: ToneNotice =
-        "busy" in answer
-          ? { tone: "bad", ...busyNotice(answer.busy) }
-          : {
-              tone: "bad",
-              title: `The import stopped: ${inSentence(answer.error)}.`,
-              body: "Choose the files again: the plan will show what is already in.",
-            };
-      refocusImport.current = true;
-      setImportNotice(notice);
-      setPanelView(null);
-      return;
-    }
-    const outcome = describeOutcome(
-      { ...answer.reply, plan: [...read.refused, ...answer.reply.plan] },
-      { replace },
-    );
-    setPlan([...read.refused, ...answer.reply.plan]);
-    setExpanded(new Set());
-    setPanelView({ kind: "done", outcome, replace });
-    // The list reloads, and says "Loaded." when it is done: this is said after it, or it is lost
-    await onImported();
-    setStatus(
-      `Imported ${plural(outcome.saved, "fragment")}.`,
-      outcome.failed.length > 0 || outcome.indexError ? "warn" : "ok",
-    );
-  };
-
   const choose = (event: React.ChangeEvent<HTMLInputElement>, folder: boolean) => {
     const input = event.target;
     const files = Array.from(input.files ?? []);
@@ -307,260 +233,14 @@ export const FragmentImportPanel = ({
   const everyRefused =
     summary.toImport === 0 && summary.changedCount === 0 && summary.refusedCount > 0;
 
-  const folderOf = new Map(
-    (gathered?.candidates ?? []).map((candidate) => [candidate.name, candidate.folder]),
-  );
-  const noIdNames = plan.filter((entry) => entry.state === "no-id").map((entry) => entry.name);
-  const advice =
-    noIdNames.length > 0
-      ? assignIdsPlan(
-          noIdNames.map((name) => ({ name, folder: folderOf.get(name) })),
-          {
-            folderIsEverything:
-              (gathered?.folders.length ?? 0) === 1 && (gathered?.looseFiles ?? 0) === 0,
-          },
-        )
-      : undefined;
-  const command = advice?.command ?? "";
-  const words = noIdWords(noIdNames.length, advice?.folder);
-
-  const rowView = (row: PlanRow) => (
-    <li
-      key={`${row.state}:${row.name}`}
-      className="grid grid-cols-1 gap-x-2.5 gap-y-0.5 border-t border-border/50 px-3 py-1.5 text-[13px] sm:grid-cols-[7.5rem_minmax(0,1fr)]"
-    >
-      <span
-        className={cn(
-          "pt-0.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground",
-          row.state === "new" && "text-primary",
-          REFUSED_STATES.has(row.state) && "text-destructive",
-        )}
-      >
-        {row.label}
-      </span>
-      <span className="text-foreground [overflow-wrap:anywhere]">{row.name}</span>
-      {row.meta && (
-        <span className="text-xs text-muted-foreground [overflow-wrap:anywhere] sm:col-start-2">
-          {row.meta}
-        </span>
-      )}
-      {row.reason && (
-        <span className="text-xs text-foreground [overflow-wrap:anywhere] sm:col-start-2">
-          {row.reason}
-        </span>
-      )}
-      {row.warnings.map((warning) => (
-        <span key={warning} className="text-xs text-secondary sm:col-start-2">
-          <span aria-hidden="true">! </span>
-          <span className="sr-only">Warning: </span>
-          {warning}
-        </span>
-      ))}
-      {row.state === "no-id" && (
-        <span className="sm:col-start-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-[11px]"
-            onClick={() =>
-              isMissingFrontmatter(row.reason)
-                ? copy(idBlock(), "Id block copied", `id:${row.name}`)
-                : copy(`${idLine()}\n`, "Id line copied", `id:${row.name}`)
-            }
-          >
-            {copied === `id:${row.name}`
-              ? "Copied"
-              : isMissingFrontmatter(row.reason)
-                ? "Copy an id block"
-                : "Copy an id line"}
-          </Button>
-        </span>
-      )}
-    </li>
-  );
-
-  const noIdBox = (
-    <div
-      role="group"
-      aria-labelledby="fragment-cmd-label"
-      className="mx-3 mb-2.5 mt-2 grid gap-2 border border-border bg-muted/50 p-3 text-xs text-foreground"
-    >
-      <div id="fragment-cmd-label">{words.lead}</div>
-      <div className="flex items-start justify-between gap-2">
-        <code
-          id="fragment-cmd"
-          className="block min-w-0 flex-1 bg-background px-2 py-1.5 text-xs text-primary [overflow-wrap:anywhere]"
-        >
-          {command}
-        </code>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 px-2 text-[11px]"
-          aria-describedby="fragment-cmd"
-          onClick={() => copy(command, "Command copied", "cmd")}
-        >
-          {copied === "cmd" ? "Copied" : "Copy"}
-        </Button>
-      </div>
-      <div className="text-muted-foreground">
-        {words.where}{" "}
-        <a
-          className="text-primary underline underline-offset-4"
-          href={`${DOCS}#the-id`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Or add an id by hand
-        </a>
-      </div>
-    </div>
-  );
-
-  const groupView = (group: PlanGroup) => {
-    const folded = group.key === "unchanged" || group.key === "same-file";
-    const open = expanded.has(group.key);
-    const all = expanded.has(`${group.key}:all`);
-    // A folded group shows nothing, or every row; the others show the first rows, or every row
-    const visible = folded
-      ? open
-        ? group.rows
-        : []
-      : all
-        ? group.rows
-        : group.rows.slice(0, ROWS_SHOWN);
-    // The no-id box sits after the last no-id row, between two lists
-    const lastNoId = group.key === "refused" ? lastIndexWhere(visible, "no-id") : -1;
-    const head = lastNoId === -1 ? visible : visible.slice(0, lastNoId + 1);
-    const tail = lastNoId === -1 ? [] : visible.slice(lastNoId + 1);
-    // The button stays when it is pressed (it turns over), so that focus is not lost with it
-    const expandable = folded || group.rows.length > ROWS_SHOWN;
-    const expandedNow = folded ? open : all;
-    return (
-      <section
-        key={group.key}
-        aria-labelledby={`fragment-g-${group.key}`}
-        className="border-t border-border first:border-t-0"
-      >
-        <div className="sticky top-0 z-[1] flex flex-wrap items-baseline gap-x-2.5 gap-y-1 bg-popover px-3 py-2">
-          <h4
-            id={`fragment-g-${group.key}`}
-            className={cn(
-              "text-xs font-bold uppercase tracking-wider text-foreground",
-              group.key === "refused" && "text-destructive",
-            )}
-          >
-            {group.title} · {group.count}
-          </h4>
-          <span className="min-w-0 flex-1 basis-72 text-xs text-muted-foreground">
-            {group.sentence}
-          </span>
-        </div>
-        {group.key === "changed" && (
-          <label className="flex items-center gap-2 px-3 pb-2 pt-1.5 text-[13px] text-foreground">
-            <Checkbox checked={replace} onCheckedChange={(on) => setReplace(on === true)} />
-            {group.count === 1 ? "Replace this chat" : `Replace these ${group.count} chats`}
-          </label>
-        )}
-        {head.length > 0 && <ul className="m-0 list-none p-0">{head.map(rowView)}</ul>}
-        {lastNoId !== -1 && noIdBox}
-        {tail.length > 0 && <ul className="m-0 list-none p-0">{tail.map(rowView)}</ul>}
-        {expandable && (
-          <div className="px-3 pb-2.5 pt-1.5">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              aria-expanded={expandedNow}
-              onClick={() => toggle(folded ? group.key : `${group.key}:all`)}
-            >
-              {folded
-                ? open
-                  ? "Hide"
-                  : `Show ${group.count}`
-                : all
-                  ? `Show first ${ROWS_SHOWN}`
-                  : `Show all ${group.count}`}
-            </Button>
-          </div>
-        )}
-      </section>
-    );
+  const list: PlanListState = {
+    gathered,
+    onReplaceChange: setReplace,
+    expanded,
+    onToggle: toggle,
+    copied,
+    onCopy: copy,
   };
-
-  const filesRegion = (label: string, groups: PlanGroup[]) => (
-    <FilesRegion label={label}>{groups.map(groupView)}</FilesRegion>
-  );
-
-  const noticeView = (notice: ToneNotice, focusable = false) => (
-    <div
-      role="alert"
-      className={cn(
-        "border px-3 py-2.5 text-[13px] text-foreground",
-        notice.tone === "bad" && "border-destructive/60 bg-destructive/10",
-        notice.tone === "warn" && "border-secondary/60 bg-secondary/10",
-        notice.tone === "info" && "border-border",
-      )}
-    >
-      {focusable ? (
-        <h3
-          ref={headingRef}
-          tabIndex={-1}
-          className="mb-0.5 block text-[13px] font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {notice.title}
-        </h3>
-      ) : (
-        <strong className="mb-0.5 block">{notice.title}</strong>
-      )}
-      {notice.body}
-    </div>
-  );
-
-  const heading = (text: React.ReactNode) => (
-    <h3
-      ref={headingRef}
-      tabIndex={-1}
-      className="m-0 w-fit text-[15px] font-bold text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {text}
-    </h3>
-  );
-
-  const bar = (value?: number, label?: string) =>
-    value === undefined ? (
-      <div className="h-1.5 overflow-hidden bg-muted">
-        <div className="mx-auto h-full w-1/3 bg-primary motion-safe:animate-pulse" />
-      </div>
-    ) : (
-      <div
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={value}
-        className="h-1.5 overflow-hidden bg-muted"
-      >
-        <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
-      </div>
-    );
-
-  const footer = (parts: { left?: React.ReactNode; right: React.ReactNode }) => (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      {parts.left}
-      <span className="flex-1" />
-      {/* One group, so that Cancel and Import wrap together on a narrow dialog */}
-      <div className="ml-auto flex flex-wrap gap-2">{parts.right}</div>
-    </div>
-  );
-
-  const cancelFooter = footer({
-    right: (
-      <Button variant="outline" onClick={onClose}>
-        Cancel
-      </Button>
-    ),
-  });
 
   // More files are added to the set; Clear is the way to start again with none (HVN-179)
   const setButtons = (disabled: boolean) => (
@@ -577,6 +257,7 @@ export const FragmentImportPanel = ({
     </>
   );
   const chooseOther = setButtons(importing);
+  const cancelFooter = <CancelFooter onClose={onClose} />;
 
   // ─── The views ─────────────────────────────────────────────────────────────
 
@@ -626,7 +307,7 @@ export const FragmentImportPanel = ({
               </a>
             </div>
           </div>
-          {run.notice && noticeView(run.notice)}
+          {run.notice && <NoticeBox notice={run.notice} />}
           {cancelFooter}
         </>
       );
@@ -635,8 +316,8 @@ export const FragmentImportPanel = ({
       body = (
         <>
           <div role="status" className="grid gap-1.5">
-            {heading("Reading the folder…")}
-            {bar()}
+            <Heading headingRef={headingRef}>Reading the folder…</Heading>
+            <Bar />
             <div className="text-xs text-muted-foreground">
               Nothing is written until you confirm.
             </div>
@@ -649,8 +330,10 @@ export const FragmentImportPanel = ({
       body = (
         <>
           <div role="status" className="grid gap-1.5">
-            {heading(`Reading ${view.read} of ${view.total} files…`)}
-            {bar(Math.round((view.read / view.total) * 100), "Reading files")}
+            <Heading headingRef={headingRef}>
+              Reading {view.read} of {view.total} files…
+            </Heading>
+            <Bar value={Math.round((view.read / view.total) * 100)} label="Reading files" />
             <div className="text-xs text-muted-foreground">
               {gathered && gathered.folders.length === 1 && gathered.looseFiles === 0
                 ? `From ${gathered.folders[0]}/. `
@@ -666,8 +349,10 @@ export const FragmentImportPanel = ({
       body = (
         <>
           <div role="status" className="grid gap-1.5">
-            {heading(`Checking ${plural(view.total, "file")} against the archive…`)}
-            {bar()}
+            <Heading headingRef={headingRef}>
+              Checking {plural(view.total, "file")} against the archive…
+            </Heading>
+            <Bar />
             <div className="text-xs text-muted-foreground">
               Nothing is written until you confirm.
             </div>
@@ -679,25 +364,25 @@ export const FragmentImportPanel = ({
     case "failed":
       body = (
         <>
-          {noticeView(
-            {
+          <NoticeBox
+            notice={{
               tone: "bad",
               title: "The files could not be checked.",
               body: `The archive did not answer: ${inSentence(view.error)}. Nothing was written.`,
-            },
-            true,
-          )}
-          {footer({
-            left: chooseOther,
-            right: (
+            }}
+            headingRef={headingRef}
+          />
+          <Footer
+            left={chooseOther}
+            right={
               <>
                 <Button variant="outline" onClick={onClose}>
                   Cancel
                 </Button>
                 <Button onClick={retry}>Try again</Button>
               </>
-            ),
-          })}
+            }
+          />
         </>
       );
       break;
@@ -782,8 +467,8 @@ export const FragmentImportPanel = ({
         <>
           {waiting ? (
             <div role="status" className="grid gap-1.5">
-              {heading(title)}
-              {bar()}
+              <Heading headingRef={headingRef}>{title}</Heading>
+              <Bar />
               {indexesLater(summary) && (
                 <div className="text-xs text-muted-foreground">
                   Search finds them when the index rebuild ends.
@@ -792,7 +477,7 @@ export const FragmentImportPanel = ({
             </div>
           ) : (
             <div className="grid gap-1">
-              {heading(title)}
+              <Heading headingRef={headingRef}>{title}</Heading>
               <div className="flex flex-wrap gap-x-3.5 gap-y-1.5 text-[13px] text-muted-foreground [&_b]:font-bold">
                 {counts}
               </div>
@@ -805,159 +490,72 @@ export const FragmentImportPanel = ({
               {replacedText && <div className="text-xs text-muted-foreground">{replacedText}</div>}
             </div>
           )}
-          {!waiting && importNotice && noticeView(importNotice)}
-          {!waiting && run.notice && noticeView(run.notice)}
-          {!waiting && filesRegion("Files", groups)}
-          {waiting
-            ? footer({
-                left: setButtons(true),
-                right: (
+          {!waiting && importNotice && <NoticeBox notice={importNotice} />}
+          {!waiting && run.notice && <NoticeBox notice={run.notice} />}
+          {!waiting && (
+            <FragmentPlanList
+              {...list}
+              label="Files"
+              groups={groups}
+              plan={plan}
+              replace={replace}
+            />
+          )}
+          {waiting ? (
+            <Footer
+              left={setButtons(true)}
+              right={
+                <>
+                  <Button variant="outline" disabled>
+                    Cancel
+                  </Button>
+                  <Button disabled>Importing…</Button>
+                </>
+              }
+            />
+          ) : (
+            <Footer
+              left={chooseOther}
+              right={
+                everyRefused || nothingNew ? (
+                  <Button variant="outline" onClick={onClose}>
+                    Close
+                  </Button>
+                ) : (
                   <>
-                    <Button variant="outline" disabled>
+                    <Button variant="outline" onClick={onClose}>
                       Cancel
                     </Button>
-                    <Button disabled>Importing…</Button>
-                  </>
-                ),
-              })
-            : footer({
-                left: chooseOther,
-                right:
-                  everyRefused || nothingNew ? (
-                    <Button variant="outline" onClick={onClose}>
-                      Close
+                    <Button
+                      ref={importButtonRef}
+                      disabled={!importable}
+                      onClick={() => void importRun.confirm(plan, replace)}
+                    >
+                      {importable ? `Import ${plural(summary.toImport, "fragment")}` : "Import"}
                     </Button>
-                  ) : (
-                    <>
-                      <Button variant="outline" onClick={onClose}>
-                        Cancel
-                      </Button>
-                      <Button
-                        ref={importButtonRef}
-                        disabled={!importable}
-                        onClick={() => void confirm()}
-                      >
-                        {importable ? `Import ${plural(summary.toImport, "fragment")}` : "Import"}
-                      </Button>
-                    </>
-                  ),
-              })}
-        </>
-      );
-      break;
-    }
-    case "done": {
-      const { outcome } = view;
-      const failedSome = outcome.failed.length > 0;
-      const parts = [
-        outcome.newSaved > 0 ? `${outcome.newSaved} new` : "",
-        outcome.replaced > 0 ? `${outcome.replaced} replaced` : "",
-      ].filter(Boolean);
-      const sentence = [
-        parts.length > 0 ? `${parts.join(", ")}.` : "",
-        outcome.unchanged > 0
-          ? `${outcome.unchanged} ${outcome.unchanged === 1 ? "was" : "were"} unchanged.`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const refusedGroups = describePlan(plan, { replace: view.replace }).groups.filter(
-        (group) => group.key === "refused",
-      );
-      body = (
-        <>
-          <div role="status" className="grid gap-1">
-            {heading(
-              failedSome ? (
-                `Imported ${outcome.saved} of ${plural(outcome.attempted, "fragment")}`
-              ) : outcome.saved === 0 ? (
-                "Nothing to import"
-              ) : (
-                <>
-                  <span className="text-primary" aria-hidden="true">
-                    ✓
-                  </span>{" "}
-                  Imported {plural(outcome.saved, "fragment")}
-                </>
-              ),
-            )}
-            {sentence && <p className="m-0 text-[13px] text-foreground">{sentence}</p>}
-            {outcome.leftAsIs > 0 && (
-              <p className="m-0 text-[13px] text-foreground">
-                {outcome.leftAsIs} changed {outcome.leftAsIs === 1 ? "file was" : "files were"} left
-                as {outcome.leftAsIs === 1 ? "it is" : "they are"}.
-              </p>
-            )}
-            {outcome.untitled > 0 && (
-              <p className="m-0 text-[13px] text-muted-foreground">
-                {outcome.untitled} {outcome.untitled === 1 ? "has" : "have"} no title: shown as
-                (Untitled) until metadata generation names {outcome.untitled === 1 ? "it" : "them"}.
-              </p>
-            )}
-            {outcome.refused > 0 && (
-              <p className="m-0 text-[13px] text-foreground">
-                {outcome.refused} {outcome.refused === 1 ? "file was" : "files were"} refused; they
-                are listed below.
-              </p>
-            )}
-          </div>
-          {outcome.failed.length > 0 &&
-            noticeView({
-              tone: "bad",
-              title: `${plural(outcome.failed.length, "file")} could not be saved.`,
-              body: "The others are in.",
-            })}
-          {outcome.failed.length > 0 && (
-            <div
-              role="region"
-              aria-label="Files that could not be saved"
-              tabIndex={0}
-              className="max-h-40 overflow-y-auto border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <ul className="m-0 list-none p-0">
-                {outcome.failed.map((file) => (
-                  <li
-                    key={file.name}
-                    className="grid grid-cols-1 gap-x-2.5 gap-y-0.5 border-t border-border/50 px-3 py-1.5 text-[13px] first:border-t-0 sm:grid-cols-[7.5rem_minmax(0,1fr)]"
-                  >
-                    <span className="pt-0.5 text-[11px] font-bold uppercase tracking-wide text-destructive">
-                      Failed
-                    </span>
-                    <span className="text-foreground [overflow-wrap:anywhere]">{file.name}</span>
-                    <span className="text-xs text-foreground [overflow-wrap:anywhere] sm:col-start-2">
-                      {file.message}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                  </>
+                )
+              }
+            />
           )}
-          {outcome.indexError &&
-            noticeView({
-              tone: "warn",
-              title: "Not searchable yet.",
-              body: `The chats are saved, but the search index could not be updated (${outcome.indexError}). It catches up when HAEVN next starts.`,
-            })}
-          {refusedGroups.length > 0 && filesRegion("Refused files", refusedGroups)}
-          {footer({
-            left: (
-              <Button variant="outline" onClick={startAgain}>
-                Import more
-              </Button>
-            ),
-            right: (
-              <>
-                <Button variant="outline" onClick={onClose}>
-                  Close
-                </Button>
-                <Button onClick={onShowFragments}>Show fragments</Button>
-              </>
-            ),
-          })}
         </>
       );
       break;
     }
+    case "done":
+      body = (
+        <FragmentDoneView
+          outcome={view.outcome}
+          replace={view.replace}
+          plan={view.plan}
+          headingRef={headingRef}
+          list={list}
+          onImportMore={startAgain}
+          onClose={onClose}
+          onShowFragments={onShowFragments}
+        />
+      );
+      break;
   }
 
   return (
@@ -996,8 +594,3 @@ export const FragmentImportPanel = ({
     </div>
   );
 };
-
-function lastIndexWhere(rows: PlanRow[], state: string): number {
-  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].state === state) return i;
-  return -1;
-}
