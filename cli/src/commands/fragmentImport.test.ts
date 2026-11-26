@@ -212,6 +212,7 @@ describe("what the plan says", () => {
     expect(summary.exitCode).toBe(0);
     expect(summary.lines).toContain("97 files: 97 unchanged · 0 refused · 0 warnings");
     expect(summary.lines.join("\n")).toContain("Nothing to import");
+    expect(summary.lines.join("\n")).toContain("index=untouched");
     expect(summary.lines.some((l) => l.includes("f0.md"))).toBe(false);
   });
 

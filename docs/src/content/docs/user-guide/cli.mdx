@@ -42,6 +42,7 @@ haevn list -l 5
 - `haevn info <chatId>` — view or edit metadata for a single chat.
 - `haevn export <chatId> -o file --format <haevn_json|haevn_markdown|pi_session_jsonl>` — export one chat.
 - `haevn import --format <claude_code|codex|pi|openrouter> <file...>` — import local JSONL session files or an OpenRouter chatroom export.
+- `haevn import --format fragment [--dry-run] [--assign-ids] <file-or-folder...>` — import recovered chats from Markdown files (see [Fragments](/user-guide/fragments/)).
 - `haevn health` — check that each web provider you are signed in to still syncs (read-only).
 - `haevn logs` — read the extension's recent log entries (`--level`, `--context`, `--match`).
 

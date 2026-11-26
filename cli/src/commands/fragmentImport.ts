@@ -226,7 +226,9 @@ export function summarizeFragmentImport(
       ? "skipped"
       : result.indexError
         ? `failed (${result.indexError})`
-        : "updated";
+        : result.processed === 0
+          ? "untouched"
+          : "updated";
     lines.push(
       result.saved > 0
         ? `${pc.green("✓")} Imported ${pc.bold(plural(result.saved, "fragment"))}`
@@ -247,7 +249,10 @@ export function summarizeFragmentImport(
   }
 
   if (local.notMarkdown > 0) {
-    lines.push(`  ${plural(local.notMarkdown, "file")} that are not .md were not read`);
+    const n = local.notMarkdown;
+    lines.push(
+      `  ${plural(n, "file")} ${n === 1 ? "that is not .md was" : "that are not .md were"} not read`,
+    );
   }
 
   const counts = new Map<string, number>();

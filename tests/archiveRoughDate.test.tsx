@@ -65,6 +65,41 @@ describe("the date of a fragment in the archive (HVN-163)", () => {
     expect(markup).not.toContain("1970");
   });
 
+  it("keys on params.roughDate and not on the source: an undated Gemini chat shows undated", () => {
+    // The whole shape a chat of any source needs to be shown as undated: the three fields below
+    const chat: ChatMeta = {
+      id: "gemini-1",
+      source: "gemini",
+      title: "An old Gemini chat",
+      sourceId: "1",
+      providerLastModifiedTimestamp: 0,
+      lastSyncedTimestamp: Date.UTC(2026, 10, 26, 15, 0, 0),
+      params: {
+        roughDate: { text: "", precision: "unknown", approximate: false, from: 0, to: 0 },
+      },
+    };
+    const markup = row(chat);
+    expect(markup).toContain(">undated<");
+    expect(markup).not.toContain("1970");
+    expect(card(chat)).toContain("undated");
+    expect(card(chat)).not.toContain("1970");
+    // and a dated one of that source shows its rough date
+    expect(
+      row({
+        ...chat,
+        params: {
+          roughDate: {
+            text: "2024",
+            precision: "year",
+            approximate: false,
+            from: Date.UTC(2024, 0, 1),
+            to: Date.UTC(2025, 0, 1),
+          },
+        },
+      }),
+    ).toContain(">2024<");
+  });
+
   it("shows any other chat the time it always showed", () => {
     const modified = Date.UTC(2025, 5, 1, 9, 30, 0);
     const chat: ChatMeta = {

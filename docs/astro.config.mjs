@@ -50,6 +50,7 @@ export default defineConfig({
             { label: "The Viewer", slug: "user-guide/viewer" },
             { label: "Gallery", slug: "user-guide/gallery" },
             { label: "Import", slug: "user-guide/import" },
+            { label: "Fragments", slug: "user-guide/fragments" },
             { label: "Export", slug: "user-guide/export" },
             { label: "Backup and Restore", slug: "user-guide/backup-restore" },
             { label: "AI Metadata", slug: "user-guide/metadata" },
