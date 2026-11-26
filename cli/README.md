@@ -112,7 +112,7 @@ If a strict AND query returns no results, HAEVN automatically retries with relax
 
 A query with nothing to look for (only words to leave out, no words at all, or a phrase typed to be left out) exits 1 with the reason instead of printing no results.
 
-### `get` - Fetch a chat branch
+### `get` - Fetch a chat branch, or the whole chat
 
 ```bash
 # Get primary branch (markdown)
@@ -134,14 +134,18 @@ haevn get chat_abc123 --skip-system
 
 # Write to file
 haevn get chat_abc123 -o ./chat.md
+
+# Every branch in one file, with its media
+haevn get chat_abc123 --all-branches --include-media -o ./chat.md
 ```
 
 Options:
 - `-m, --message <ref|id>` - Get branch containing this message (short ref or full ID)
+- `--all-branches` - Get the whole chat, every branch once, instead of one branch (see below; not with `-m`, `--head` or `--tail`, which pick one branch and are refused)
 - `-f, --format <fmt>` - Output format (markdown, json)
 - `-o, --output <file>` - Write to file
 - `--include-metadata` - Include timestamps/model info (default: true)
-- `--include-media` - Save the branch's images, videos, audio and files (see below; default: false)
+- `--include-media` - Save the images, videos, audio and files of what is shown (see below; default: false)
 - `--include-thinking` - Include full thinking blocks (default: false, otherwise truncated preview)
 - `--skip-system` - Skip system instructions in output (default: false)
 
@@ -151,7 +155,15 @@ Media. Without `--include-media`, an image, video, audio clip or file shows as `
 - Markdown on the terminal: no file is written. The stand-ins stay, with one note on stderr to add `-o FILE`.
 - JSON: each message that has media gets a `media` array, one object per item: `kind`, `mediaType`, `name` (when the archive has one), and either `bytes` and `data` (the file as base64) or `url` (a link, nothing downloaded). An item over 32 MiB, or one that takes the media past 128 MiB in all, has `error` instead of `data` and the command exits 1; save such media as Markdown with `-o`.
 
+With `--all-branches`, the media of every branch go in the one `chat-media` folder, numbered in the order the Markdown shows the messages (the trunk's first, then each branch whole). A file that two messages share (the same upload in two branches) is saved once, and both link it; the numbers count files, not links. The rest is as above: the folder must be new, a file that cannot be fetched leaves no gap in the numbers, and without `-o` no file is written.
+
 `export` and `branches` do not carry media.
+
+**Every branch.** A chat that was edited or regenerated is a tree. `get` writes one branch of it; `--all-branches` writes all of it, each message once:
+
+- Markdown: the trunk (the messages every branch shares), then at each fork one section per branch, in the order `haevn branches` lists them, headed `### Branch 2 of 3`. The branch that holds the chat's current message says `(current)`. A fork inside a branch numbers its own branches under it (`### Branch 2.1 of 2`), so every heading stays at one level and the messages stay `##`. A branch that holds only tool calls and results says so under its heading.
+- JSON: the tree as stored. Top level: `chatId`, `title`, `platform`, `timestamp`, `system`, `currentRef`, `branchCount`, `messageCount`, and `messages`, a list in reading order. Each message has what a branch's messages have (`ref`, `role`, `content`, `timestamp`, and `media` with `--include-media`) and `parentRef` (`null` for a root) and `childRefs`, in the order the chat stores them. The refs are the short refs `haevn branches` shows, so `get -m` takes them. Tool calls and results are listed here, so the links stay whole; with `--skip-system`, a skipped system message is not listed and the links to it stay. A file that two messages share is carried inline in each of them.
+- Tool calls and tool results (ChatGPT's `browser` and `python` returns and the like) are not conversation, so the Markdown leaves them out, as it does for one branch.
 
 ### `list` - Browse chats
 
@@ -178,6 +190,8 @@ To read every chat, page with `--offset`. The JSON output has `hasMore`, which i
 haevn branches chat_abc123
 haevn branches chat_abc123 --format json
 ```
+
+A message that holds only a tool call or a tool result (ChatGPT stores a tool's output as a message of its own) is listed as a `[tool]` row with `[tool call]` or `[tool result]` where its text would be, so a row is never blank. In the JSON, its `role` is as stored and its `preview` is the stand-in.
 
 Options:
 - `-f, --format <fmt>` - Output format (tree, json)
