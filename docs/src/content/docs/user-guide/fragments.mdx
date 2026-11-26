@@ -19,6 +19,8 @@ A fragment is **one Markdown file**. Fragments are imported from the archive's I
 
 Open **Archive → Import** and choose the format **Fragments (.md files or a folder)**, or press **Import** on the Fragment card in **Providers**. Drop `.md` files or a folder anywhere on the dialog, or choose them with **Choose files…** or **Choose a folder…**.
 
+Each drop or choice **adds** to the files you have given. Drop one more file, or another folder, and the plan is made again for all of them together. A file with the same name as one already there replaces it (the newer copy wins), and the plan says so in a line. A folder dropped again works the same way: its files replace those of the same name and the others stay. Two different folders with the same name, dropped together, stay two. **Add files…** and **Add a folder…** do the same from the plan, and **Clear** forgets all the files and starts again with none.
+
 HAEVN reads the files and checks them against your archive, and shows the plan before it writes anything. The plan is grouped by what you have to do:
 
 - **Refused** comes first. A refused file is left out, and the other files do not wait for it. Each refusal says why: no id, an id that is not a UUID, a date that is none of the [forms below](#dates), text that is not UTF-8, or an id that two different files share. For a file with no id the page cannot write one into your file, so it gives you two ways: the `haevn import --format fragment --assign-ids` command to copy and run in a terminal, and **Copy an id line**, a fresh `id: <uuid>` line you paste into the file's frontmatter yourself. A file with no frontmatter at all has **Copy an id block** instead: the whole `---` block, with the id in it, to paste at the top. Use each one once: the same id in two files is refused as a duplicate.
@@ -28,7 +30,7 @@ HAEVN reads the files and checks them against your archive, and shows the plan b
 
 **Import** then writes what the plan says, and the result says what was done, which files could not be saved and why, and whether the search index is up to date. **Show fragments** takes you to the archive, filtered to Fragment with the newest first.
 
-A folder is read flat: its `.md` files, not the folders inside it. Dot-files are skipped. Files that are not `.md` are not read, and the plan says how many were left out. One import takes at most 16 MB of text; choose fewer files at a time if you have more.
+A folder is read flat: its `.md` files, not the folders inside it. Dot-files are skipped. Files that are not `.md` are not read, and the plan says how many were left out. One import takes at most 16 MB of text, counted over all the files you have given. A drop that would go over it is not added, and the files already there are kept.
 
 ## The smallest fragment
 
