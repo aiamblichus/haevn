@@ -30,8 +30,8 @@ import { extractProviderName } from "../../services/chatService";
 import { SyncService } from "../../services/syncService";
 import { getStorageAdapter } from "../../storage";
 import { fireAndForget } from "../../utils/error_utils";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../../utils/importLimits";
 import { log } from "../../utils/logger";
-import { INCREMENTAL_INDEX_MAX_CHATS } from "../import/importBatch";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
 
 /** How long a session may wait for its next request before the extension closes it. */

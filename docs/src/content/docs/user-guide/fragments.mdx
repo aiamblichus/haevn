@@ -7,7 +7,7 @@ import { Aside } from "@astrojs/starlight/components";
 
 A **fragment** is a recovered chat: a conversation with a model that has been retired, a poem, a terminal session you copied out of a window, anything that exists now only as text you saved. HAEVN keeps it as an ordinary chat in your archive, so it is searchable, it opens in the viewer, and it is part of every backup. It has its own icon, so you can tell it from a chat that was synced.
 
-A fragment is **one Markdown file**. Fragments are imported from the archive's Import dialog, or from the terminal (`haevn import --format fragment`). Both show you a plan before anything is written, and both read a file the same way: a file you import from one and then from the other is unchanged, not changed.
+A fragment is **one Markdown file**. Fragments are imported from the archive's Import dialog, or from the terminal (`haevn import --format fragment`). The Import dialog shows you a plan and waits for you to confirm. The terminal imports at once, and `--dry-run` shows the plan without writing. Both read a file the same way: a file you import from one and then from the other is unchanged, not changed.
 
 <Aside>
   Only files that end in `.md` are fragments. A `.txt` file is not read: a
@@ -17,11 +17,11 @@ A fragment is **one Markdown file**. Fragments are imported from the archive's I
 
 ## Import from the archive
 
-Open **Archive → Import** and choose the format **Fragments (.md files or a folder)**, or press **Import** on the Fragment card in **Providers**. Drop `.md` files or a folder on the dialog, or choose them with **Choose files…** or **Choose a folder…**.
+Open **Archive → Import** and choose the format **Fragments (.md files or a folder)**, or press **Import** on the Fragment card in **Providers**. Drop `.md` files or a folder anywhere on the dialog, or choose them with **Choose files…** or **Choose a folder…**.
 
 HAEVN reads the files and checks them against your archive, and shows the plan before it writes anything. The plan is grouped by what you have to do:
 
-- **Refused** comes first. A refused file is left out, and the other files do not wait for it. Each refusal says why: no id, an id that is not a UUID, a date that is none of the [forms below](#dates), text that is not UTF-8, or an id that two different files share. For a file with no id the page cannot write one into your file, so it gives you two ways: the `haevn import --format fragment --assign-ids` command to copy and run in a terminal, and **Copy an id line**, a fresh `id: <uuid>` line you paste into the file yourself (use each line once: the same id in two files is refused as a duplicate).
+- **Refused** comes first. A refused file is left out, and the other files do not wait for it. Each refusal says why: no id, an id that is not a UUID, a date that is none of the [forms below](#dates), text that is not UTF-8, or an id that two different files share. For a file with no id the page cannot write one into your file, so it gives you two ways: the `haevn import --format fragment --assign-ids` command to copy and run in a terminal, and **Copy an id line**, a fresh `id: <uuid>` line you paste into the file's frontmatter yourself. A file with no frontmatter at all has **Copy an id block** instead: the whole `---` block, with the id in it, to paste at the top. Use each one once: the same id in two files is refused as a duplicate.
 - **New** files are added. A warning under a file (a copy of another fragment, only one side of a conversation named) does not stop it.
 - **Changed** files are ones whose text differs from what was imported from them. Their chats are replaced. Untick **Replace these chats** to leave them as they are.
 - **Unchanged** files are already in your archive as they are: nothing is written. **Same file** is a copy, byte for byte, of another file in the same import.

@@ -50,11 +50,12 @@ export async function handleImportFragmentFiles(
     ) {
       throw new Error("At least one file with a name and its text is required");
     }
-    const outcome = await importFragments(files, {
-      dryRun: dryRun === true,
-      overwrite: overwrite !== false,
-      index: true,
-    });
+    // No default: a request that does not say it is a dry run, or what to do with a changed file,
+    // is not one that may write
+    if (typeof dryRun !== "boolean" || typeof overwrite !== "boolean") {
+      throw new Error("dryRun and overwrite are required, each true or false");
+    }
+    const outcome = await importFragments(files, { dryRun, overwrite, index: true });
     sendResponse({ success: true, data: outcome });
   } catch (err: unknown) {
     if (err instanceof ImportBusyError) {

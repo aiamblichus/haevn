@@ -14,17 +14,10 @@ import { ImportService } from "../../services/importService";
 import { queueGenerationForImportedChats } from "../../services/metadataService";
 import { SyncService } from "../../services/syncService";
 import type { AllProviderRawData } from "../../types/messaging";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../../utils/importLimits";
 import { log } from "../../utils/logger";
 import { errorShape, fileNameShape } from "../../utils/logShape";
 import { acquireOperationLock, getActiveOperation, releaseOperationLock } from "../state";
-
-/**
- * Up to this many chats are indexed one by one as they are saved, so search keeps answering.
- * A bigger batch switches the index to bulk mode: the chats are indexed once, in one pass at the
- * end, and search keeps answering from the index as it was. One incremental add is one small
- * transaction, so the limit now only bounds how much work a save does before it returns.
- */
-export const INCREMENTAL_INDEX_MAX_CHATS = 20;
 
 /** Another long operation (bulk sync, import, bulk export) holds the operation lock. */
 export class ImportBusyError extends Error {

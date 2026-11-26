@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ImportBatchItem,
   ImportBusyError,
-  INCREMENTAL_INDEX_MAX_CHATS,
   importChatBatch,
 } from "../src/background/import/importBatch";
 import { acquireOperationLock, getActiveOperation } from "../src/background/state";
 import type { Chat } from "../src/model/haevn_model";
+import { INCREMENTAL_INDEX_MAX_CHATS } from "../src/utils/importLimits";
 
 const {
   getChat,

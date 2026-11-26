@@ -25,11 +25,11 @@ import { collectFragmentFiles } from "../cli/src/commands/fragmentImport";
 import { handleImportFragmentFiles } from "../src/background/handlers/importHandlers";
 import { importFragments } from "../src/background/import/importFragments";
 import { acquireOperationLock, releaseOperationLock } from "../src/background/state";
+import { gatherFragmentSources, readFragmentFiles } from "../src/options/import/fragmentFiles";
 import { getDB } from "../src/services/db";
 import { ImportService } from "../src/services/importService";
 import { SearchIndexManager } from "../src/services/searchIndexManager";
 import type { BackgroundRequest, BackgroundResponse } from "../src/types/messaging";
-import { gatherFragmentSources, readFragmentFiles } from "../src/options/import/fragmentFiles";
 import { ID_A, ID_B, ID_C, withId } from "./helpers/fragmentFile";
 
 type Message = Extract<BackgroundRequest, { action: "importFragmentFiles" }>;
@@ -169,6 +169,24 @@ describe("the importFragmentFiles handler (HVN-163, slice 3)", () => {
     expect(
       await ask([{ name: "x.md", content: undefined as unknown as string }], { dryRun: true }),
     ).toMatchObject({ success: false });
+  });
+
+  it("writes nothing for a request that does not say dryRun and overwrite", async () => {
+    const answer = async (partial: Record<string, unknown>) => {
+      let reply: BackgroundResponse | undefined;
+      await handleImportFragmentFiles(
+        { action: "importFragmentFiles", files: [FILE_A], ...partial } as Message,
+        (response) => {
+          reply = response;
+        },
+      );
+      return reply;
+    };
+
+    expect(await answer({ overwrite: true })).toMatchObject({ success: false });
+    expect(await answer({ dryRun: false })).toMatchObject({ success: false });
+    expect(await answer({ dryRun: "no", overwrite: true })).toMatchObject({ success: false });
+    expect(await stored()).toEqual([]);
   });
 });
 
