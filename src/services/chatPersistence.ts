@@ -131,6 +131,10 @@ export async function saveChatToDb(chat: Chat): Promise<void> {
   }));
   const chatRow: Chat = {
     ...chat,
+    // An index leaves out a row without its key: a chat with no modified time would vanish from the
+    // archive under the "Modified Time" sort and from its count (HVN-165). The chat's own
+    // `timestamp` stands in when the provider gave none.
+    providerLastModifiedTimestamp: chat.providerLastModifiedTimestamp ?? chat.timestamp,
     messages: {},
   };
 

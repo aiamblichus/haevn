@@ -4,6 +4,7 @@ import { getAllProviders, getProvider } from "../providers/provider";
 import { CacheService } from "../services/cacheService";
 import { diagnosticsService } from "../services/diagnosticsService";
 import { isMessageMigrationDone, runMessageMigration } from "../services/messageMigration";
+import { runProviderModifiedBackfill } from "../services/providerModifiedBackfill";
 import { SyncService } from "../services/syncService";
 import { log } from "../utils/logger";
 import { sweepOrphanedExports } from "./bulkExport/bulkExport";
@@ -64,6 +65,12 @@ const searchReady = diagnosticsService
 const messagesMoved = searchReady
   .then(() => diagnosticsService.wrap("init:MessageMigration", () => runMessageMigration()))
   .catch((err) => log.error("[Init] Message migration failed", err));
+
+// Give the chats stored without a modified time one, so the "Modified Time" sort lists them
+// (HVN-165). It needs no index, and after its flag is set a start only reads the flag.
+void diagnosticsService
+  .wrap("init:ProviderModifiedBackfill", () => runProviderModifiedBackfill())
+  .catch((err) => log.error("[Init] Provider-modified backfill failed", err));
 
 // Call setup for every provider synchronously to ensure listeners are registered early
 try {
