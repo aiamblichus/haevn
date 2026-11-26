@@ -79,8 +79,10 @@ function spanOf(token: string): Span | undefined {
     if (zone && zone !== "Z") {
       const sign = zone.startsWith("-") ? -1 : 1;
       const digits = zone.slice(1).replace(":", "");
-      const offset = Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2));
-      instant -= sign * offset * 60_000;
+      const [hours, minutes] = [Number(digits.slice(0, 2)), Number(digits.slice(2))];
+      // No zone in use is further than 14:00 from UTC, and a minute is under 60
+      if (minutes > 59 || hours * 60 + minutes > 14 * 60) return undefined;
+      instant -= sign * (hours * 60 + minutes) * 60_000;
     }
     return { from: instant, to: instant + 1, precision: "exact" };
   }

@@ -102,6 +102,9 @@ describe("parseRoughDate: each form of the table", () => {
       timestamp: utc("2024-03-15T14:30:00Z"),
     });
     expect(dated("2024-03-15T14:30:00+02:00").timestamp).toBe(utc("2024-03-15T12:30:00Z"));
+    expect(dated("2024-03-15T14:30:00+14:00").timestamp).toBe(utc("2024-03-15T00:30:00Z"));
+    expect(dated("2024-03-15T14:30:00-12:00").timestamp).toBe(utc("2024-03-16T02:30:00Z"));
+    expect(dated("2024-03-15T14:30:00+0530").timestamp).toBe(utc("2024-03-15T09:00:00Z"));
     expect(dated("2024-03-15 14:30").timestamp).toBe(utc("2024-03-15T14:30:00Z"));
     expect(dated("2024-03-15T14:30:00.5Z").timestamp).toBe(utc("2024-03-15T14:30:00.500Z"));
     expect(dated("2024-03-15T14:30:00Z").roughDate).toBeUndefined();
@@ -142,6 +145,10 @@ describe("parseRoughDate: what is refused, because a lost claim would be lost in
     "2024-00",
     "2024-02-30",
     "2024-03-15T25:00:00Z",
+    "2024-03-15T14:30:00+99:99", // no zone is a hundred hours away
+    "2024-03-15T14:30:00+14:01", // the furthest zone is 14:00
+    "2024-03-15T14:30:00-12:60", // a minute is under 60
+    "2024-03-15T14:30:00+1500",
     "2024-03..2024-02", // ends before it starts
     "2024-03..2024-05..2025",
     "2024-03-1",
