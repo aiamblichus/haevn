@@ -141,9 +141,17 @@ Options:
 - `-f, --format <fmt>` - Output format (markdown, json)
 - `-o, --output <file>` - Write to file
 - `--include-metadata` - Include timestamps/model info (default: true)
-- `--include-media` - Include image descriptions/links (default: false)
+- `--include-media` - Save the branch's images, videos, audio and files (see below; default: false)
 - `--include-thinking` - Include full thinking blocks (default: false, otherwise truncated preview)
 - `--skip-system` - Skip system instructions in output (default: false)
+
+Media. Without `--include-media`, an image, video, audio clip or file shows as `[image]`, `[video]`, `[audio]` or `[file]`. With it:
+
+- Markdown with `-o chat.md`: each file is written to `chat-media/NN.<ext>` beside the output, numbered in message order (`01.png`, `02.mp4`, ...; the extension comes from the media type, `.bin` when it is unknown), and the Markdown links it where the stand-in was: `![image](chat-media/01.png)` for an image, `[video](chat-media/02.mp4)` for the rest. A medium the archive holds only as a web link is linked and not downloaded. If `chat-media` already exists the command stops before it writes anything (move it, or write to another file); it never mixes files with an earlier run's. A file that cannot be fetched keeps its stand-in, is named on stderr, and the command exits 1 after it writes the rest.
+- Markdown on the terminal: no file is written. The stand-ins stay, with one note on stderr to add `-o FILE`.
+- JSON: each message that has media gets a `media` array, one object per item: `kind`, `mediaType`, `name` (when the archive has one), and either `bytes` and `data` (the file as base64) or `url` (a link, nothing downloaded). An item over 32 MiB, or one that takes the media past 128 MiB in all, has `error` instead of `data` and the command exits 1; save such media as Markdown with `-o`.
+
+`export` and `branches` do not carry media.
 
 ### `list` - Browse chats
 
