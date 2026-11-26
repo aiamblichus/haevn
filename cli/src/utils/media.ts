@@ -9,7 +9,9 @@
  * web.
  *
  *   Markdown with `-o FILE`   each file goes to `<FILE without extension>-media/NN.<ext>`, numbered
- *                             in message order, and the Markdown links it where the stand-in was.
+ *                             in message order, and the Markdown links it where the stand-in was. A
+ *                             file that two items share (a tree: one upload in two branches) is
+ *                             saved once.
  *   Markdown on stdout        no file is written; the stand-ins stay, with one note.
  *   JSON                      each item is described in the message's `media` array, with its bytes
  *                             as base64 in `data`.
@@ -179,6 +181,14 @@ function webUrl(item: MediaItem): string | undefined {
   return source.type === "url" && /^https?:\/\//i.test(source.url) ? source.url : undefined;
 }
 
+/**
+ * What names a file in the archive's store, so that two items with one key are one file: the stored
+ * path. A message in two branches of a tree may hold the same upload.
+ */
+function fileKey(item: MediaItem): string | undefined {
+  return item.source.type === "stored" ? item.source.path : undefined;
+}
+
 function describe(item: MediaItem): string {
   const { source } = item;
   const name =
@@ -202,6 +212,9 @@ function markdownLink(kind: string, target: string): string {
  * shows in its place. Refuses, before anything is fetched or written, when the folder is already
  * there: its files are some other run's, and `01.png` of this chat would overwrite or hide one of
  * them.
+ *
+ * A file that two items share (the same stored path) is fetched and written once, under the number
+ * of its first item, and every item that holds it links that file.
  */
 export async function saveMarkdownMedia(
   messages: ChatMessage[],
@@ -210,7 +223,17 @@ export async function saveMarkdownMedia(
 ): Promise<MarkdownMedia> {
   const planned = messages.map((message) => ({ id: message.id, items: getMediaItems(message) }));
   const openers = planned.map(({ items }) => items.map((item) => openerFor(item, context)));
-  const saving = openers.flat().filter((opener) => opener !== undefined).length;
+  // The files to write: a file two items share counts once
+  const keys = planned.flatMap(({ items }) => items.map(fileKey));
+  const first = new Set<string>();
+  const saving = openers.flat().filter((opener, i) => {
+    const key = keys[i];
+    if (opener === undefined) return false;
+    if (key === undefined) return true;
+    if (first.has(key)) return false;
+    first.add(key);
+    return true;
+  }).length;
 
   const result: MarkdownMedia = { text: new Map(), problems: [], withoutFile: 0, unsaved: 0 };
 
@@ -225,6 +248,8 @@ export async function saveMarkdownMedia(
   }
 
   const width = Math.max(2, String(saving).length);
+  // Each stored file this run has met: where it was saved, or null when it did not arrive
+  const saved = new Map<string, string | null>();
   let number = 0;
   for (const [m, { id, items }] of planned.entries()) {
     const texts: string[] = [];
@@ -241,15 +266,24 @@ export async function saveMarkdownMedia(
         texts.push(standIn);
         continue;
       }
+      const key = fileKey(item);
+      if (key !== undefined && saved.has(key)) {
+        // An earlier item holds this file: its link, or the stand-in when the file did not arrive
+        const earlier = saved.get(key);
+        texts.push(earlier ? markdownLink(item.kind, earlier) : standIn);
+        continue;
+      }
       // A file that does not arrive leaves no gap in the numbers
       const file = `${String(number + 1).padStart(width, "0")}.${extensionFor(item.mediaType)}`;
       const target = path.join(folder.dir, file);
       try {
         await writeFetched(await open(), target);
         number++;
+        if (key !== undefined) saved.set(key, `${folder.name}/${file}`);
         texts.push(markdownLink(item.kind, `${folder.name}/${file}`));
       } catch (err) {
         fs.rmSync(target, { force: true });
+        if (key !== undefined) saved.set(key, null);
         result.problems.push(`${describe(item)} was not saved: ${reasonOf(err)}`);
         texts.push(standIn);
       }
@@ -284,10 +318,17 @@ async function writeFetched(fetched: Fetched, target: string): Promise<void> {
 /** The text for each media item when no file may be written: a link for a link, the stand-in for the rest. */
 export function linkMarkdownMedia(messages: ChatMessage[], context: MediaContext): MarkdownMedia {
   const result: MarkdownMedia = { text: new Map(), problems: [], withoutFile: 0, unsaved: 0 };
+  const counted = new Set<string>();
   for (const message of messages) {
     const texts = getMediaItems(message).map((item) => {
       const url = webUrl(item);
       if (url) return markdownLink(item.kind, url);
+      const key = fileKey(item);
+      // A file that two items share is one file left unsaved
+      if (key !== undefined) {
+        if (counted.has(key)) return `[${item.kind}]`;
+        counted.add(key);
+      }
       if (openerFor(item, context)) result.unsaved++;
       else result.withoutFile++;
       return `[${item.kind}]`;

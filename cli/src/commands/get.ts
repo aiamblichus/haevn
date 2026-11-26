@@ -1,14 +1,15 @@
 /**
- * Get command – fetch a single branch from a chat as Markdown or JSON.
+ * Get command – fetch a branch from a chat, or the whole tree with `--all-branches`, as Markdown or
+ * JSON.
  */
 
 import * as fs from "node:fs";
 import { defineCommand } from "citty";
 import { daemonRequest } from "../daemon/client.js";
 import { DEFAULT_DAEMON_PORT, loadConfig } from "../daemon/config.js";
-import { formatBranchAsJson, toJsonString } from "../formatters/json";
-import { formatBranchAsMarkdown } from "../formatters/markdown";
-import type { Chat } from "../types/chat";
+import { formatBranchAsJson, formatChatAsJson, toJsonString } from "../formatters/json";
+import { formatBranchAsMarkdown, formatChatAsMarkdown } from "../formatters/markdown";
+import type { Chat, ChatMessage } from "../types/chat";
 import { flagText, parseWholeNumber } from "../utils/args";
 import {
   inlineJsonMedia,
@@ -19,16 +20,19 @@ import {
 import { resolveMessageRef } from "../utils/messageRefs";
 import { consola, safeText } from "../utils/output";
 import {
+  buildChatTree,
   getBranchContainingMessage,
   getMessagesOnBranch,
   getPrimaryBranch,
+  treeMessageIds,
   windowMessages,
 } from "../utils/tree";
 
 export default defineCommand({
   meta: {
     name: "get",
-    description: "Fetch a single branch from a chat as Markdown or JSON",
+    description:
+      "Fetch a branch from a chat, or every branch with --all-branches, as Markdown or JSON",
   },
   args: {
     chatId: {
@@ -40,6 +44,12 @@ export default defineCommand({
       type: "string",
       alias: "m",
       description: "Message ref or ID – fetch the branch containing this message",
+    },
+    "all-branches": {
+      type: "boolean",
+      description:
+        "Fetch the whole chat: the trunk once, then every branch (not with -m, --head or --tail)",
+      default: false,
     },
     format: {
       type: "string",
@@ -93,6 +103,7 @@ export default defineCommand({
       "include-media": includeMedia,
       "include-thinking": includeThinking,
       "skip-system": skipSystem,
+      "all-branches": allBranches,
     } = args;
 
     let head: number;
@@ -105,23 +116,42 @@ export default defineCommand({
       process.exit(1);
     }
 
+    if (allBranches) {
+      const clash = [
+        messageId ? "--message" : "",
+        head > 0 ? "--head" : "",
+        tail > 0 ? "--tail" : "",
+      ].filter(Boolean);
+      if (clash.length > 0) {
+        consola.error(
+          `--all-branches writes every branch, so it cannot be combined with ${clash.join(" or ")}. Drop ${clash.length === 1 ? "it" : "them"}, or drop --all-branches to get one branch.`,
+        );
+        process.exit(1);
+      }
+    }
+
     let chat: Chat;
     let resolvedMessageId = messageId;
     try {
-      if (messageId) {
-        const branchChat = await daemonRequest<Chat>({ action: "branches", chatId });
-        const resolved = resolveMessageRef(branchChat, messageId);
-        if (!resolved.messageId) {
-          throw new Error(resolved.error || `Could not resolve message reference: ${messageId}`);
+      if (allBranches) {
+        // The whole tree is what `branches` asks for; `get` answers one branch
+        chat = await daemonRequest<Chat>({ action: "branches", chatId });
+      } else {
+        if (messageId) {
+          const branchChat = await daemonRequest<Chat>({ action: "branches", chatId });
+          const resolved = resolveMessageRef(branchChat, messageId);
+          if (!resolved.messageId) {
+            throw new Error(resolved.error || `Could not resolve message reference: ${messageId}`);
+          }
+          resolvedMessageId = resolved.messageId;
         }
-        resolvedMessageId = resolved.messageId;
-      }
 
-      chat = await daemonRequest<Chat>({
-        action: "get",
-        chatId,
-        options: { messageId: resolvedMessageId, includeMetadata, includeMedia },
-      });
+        chat = await daemonRequest<Chat>({
+          action: "get",
+          chatId,
+          options: { messageId: resolvedMessageId, includeMetadata, includeMedia },
+        });
+      }
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -133,11 +163,14 @@ export default defineCommand({
       let mediaText: Map<string, string[]> | undefined;
       let media: Map<string, object[]> | undefined;
       if (includeMedia) {
-        // The branch is resolved first, so a message that is not there fails before any fetch
-        const shown = windowMessages(getMessagesOnBranch(chat, branchOf(chat, resolvedMessageId)), {
-          head,
-          tail,
-        }).messages;
+        // The branch is resolved first, so a message that is not there fails before any fetch. A
+        // whole chat is fetched in the order the Markdown shows its messages.
+        const shown = allBranches
+          ? treeMessages(chat)
+          : windowMessages(getMessagesOnBranch(chat, branchOf(chat, resolvedMessageId)), {
+              head,
+              tail,
+            }).messages;
         const config = loadConfig();
         const context = {
           chatId: chat.id ?? chatId,
@@ -156,15 +189,20 @@ export default defineCommand({
         }
       }
 
-      content = outputBranch(chat, resolvedMessageId, format as "markdown" | "json", {
+      const rendering = {
         includeMetadata,
         includeThinking,
         skipSystem,
-        tail,
-        head,
         mediaText,
         media,
-      });
+      };
+      content = allBranches
+        ? outputChat(chat, format as "markdown" | "json", rendering)
+        : outputBranch(chat, resolvedMessageId, format as "markdown" | "json", {
+            ...rendering,
+            tail,
+            head,
+          });
     } catch (err) {
       consola.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
@@ -216,6 +254,46 @@ function branchOf(chat: Chat, messageId?: string): string[] {
     );
   }
   return branchPath;
+}
+
+/** The messages of a whole chat, in the order `--all-branches` shows them. */
+function treeMessages(chat: Chat): ChatMessage[] {
+  if (Object.keys(chat.messages).length === 0) throw new Error("Chat has no messages");
+  return treeMessageIds(buildChatTree(chat)).map((id) => chat.messages[id]);
+}
+
+/** The whole chat, every branch once (`get --all-branches`), as Markdown or JSON. */
+export function outputChat(
+  chat: Chat,
+  format: "markdown" | "json" = "markdown",
+  options: {
+    includeMetadata?: boolean;
+    includeThinking?: boolean;
+    skipSystem?: boolean;
+    /** The text for each media item of each message, for Markdown (see `MarkdownOptions`). */
+    mediaText?: ReadonlyMap<string, readonly string[]>;
+    /** The media items of each message, for JSON (see `ChatJsonOptions`). */
+    media?: ReadonlyMap<string, readonly object[]>;
+  } = {},
+): string {
+  treeMessages(chat); // refuses a chat with no messages, as a single branch does
+
+  if (format === "json") {
+    return toJsonString(
+      formatChatAsJson(chat, {
+        includeThinking: options.includeThinking,
+        skipSystem: options.skipSystem,
+        media: options.media,
+      }),
+    );
+  }
+
+  return formatChatAsMarkdown(chat, {
+    includeMetadata: options.includeMetadata ?? true,
+    includeThinking: options.includeThinking ?? false,
+    skipSystem: options.skipSystem ?? false,
+    mediaText: options.mediaText,
+  });
 }
 
 export function outputBranch(

@@ -395,6 +395,8 @@ export interface TreeNode {
   messageId: string;
   role: "system" | "user" | "assistant";
   preview: string;
+  /** The message holds only a tool call or a tool result: the text view labels it `[tool]`, not by its role. */
+  isTool: boolean;
   isLeaf: boolean;
   isOnPrimaryPath: boolean;
   children: TreeNode[];
