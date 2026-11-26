@@ -124,7 +124,8 @@ async function releaseGeneration(
         record.keywords.length === 0 &&
         (record.title === "" || record.title === previous.title)
       ) {
-        await MetadataRepository.remove(chatId);
+        // Only the record that was checked: an edit saved in the archive meanwhile is kept.
+        await MetadataRepository.removeIfUnchanged(chatId, record);
       }
     } catch (err) {
       log.warn("[ImportFragments] Failed to hand a fragment back to metadata generation", {

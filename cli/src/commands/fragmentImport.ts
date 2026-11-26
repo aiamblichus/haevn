@@ -144,6 +144,13 @@ class NotWritten extends Error {}
 async function checkWritable(target: string): Promise<number> {
   const { mode } = await fs.stat(target);
   if ((mode & 0o222) === 0) throw new NotWritten("the file is read-only");
+  // A write bit for someone else is not one for us (another user's 0644, an ACL): the rename
+  // needs only the directory, so without this the file would be replaced by one we own.
+  try {
+    await fs.access(target, fs.constants.W_OK);
+  } catch {
+    throw new NotWritten("you may not write to the file");
+  }
   return mode;
 }
 
