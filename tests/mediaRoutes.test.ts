@@ -256,6 +256,35 @@ describe("an image that could not be stored", () => {
     ).toEqual({ unstored: "save_failed" });
   });
 
+  it("writes no file for a download that loses the timeout race, and counts its link once (HVN-160)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // the download outlives the overall timeout, and cannot be cancelled
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        return new Response(JPEG_BYTES, { status: 200, headers: { "content-type": "image/jpeg" } });
+      }),
+    );
+
+    const [part] = await processExternalAssets([{ url: UPLOAD, type: "image/jpeg" }], {
+      chatId: "c",
+      messageId: "m",
+      retries: 0,
+      overallTimeoutMs: 20,
+      logPrefix: "[test]",
+    });
+    expect(part).toEqual({
+      kind: "image-url",
+      url: UPLOAD,
+      vendor_metadata: { unstored: "timeout" },
+    });
+    expect(countUnstoredMedia({ parts: [part] })).toBe(1);
+
+    // past the end of the download: it has finished, and would have written its file by now
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(fs.files()).toEqual([]);
+  });
+
   it("marks a page's blob: link without fetching it: the extension cannot reach it", async () => {
     const fetchSpy = respondWith(200);
     vi.stubGlobal("fetch", fetchSpy);
@@ -343,6 +372,31 @@ describe("a link kept on purpose (linkOnly)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("fetches only https://lh3.googleusercontent.com: every other host, and http:, is a link (HVN-160)", async () => {
+    const fetchSpy = respondWith(200);
+    vi.stubGlobal("fetch", fetchSpy);
+    const links = [
+      // a real Google host, but not the one that answers with the upload
+      "https://drive-thirdparty.googleusercontent.com/gg/AbC",
+      "https://lh4.googleusercontent.com/gg/AbC",
+      "https://googleusercontent.com/gg/AbC",
+      // the redirect hop, named as a file: its cookies are for the chain, not for a file
+      "https://lh3.google.com/rd-gg/AbC",
+      // the right host over the wrong scheme
+      "http://lh3.googleusercontent.com/gg/AbC",
+      // no scheme and no host: nothing the extension can fetch
+      "lh3.googleusercontent.com/gg/AbC",
+    ];
+
+    const chat = await transformGeminiToHaevn(
+      conversation(links.map((url) => ({ url, type: "image/jpeg" }))),
+    );
+
+    expect(userFiles(chat)).toEqual(links.map((url) => ({ kind: "image-url", url })));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(countUnstoredMedia(chat)).toBe(0);
+  });
+
   it("is not fetched, marked or counted by the generic caller either", async () => {
     const fetchSpy = respondWith(200);
     vi.stubGlobal("fetch", fetchSpy);
@@ -359,12 +413,14 @@ describe("a link kept on purpose (linkOnly)", () => {
 });
 
 describe("the manifest", () => {
-  it("lets the extension reach both hops of Gemini's image links", () => {
+  it("lets the extension reach both hops of Gemini's image links, and no other googleusercontent host (HVN-160)", () => {
     const manifest = JSON.parse(readFileSync("src/manifest.json", "utf8"));
 
     expect(manifest.host_permissions).toEqual(
-      expect.arrayContaining(["*://*.googleusercontent.com/*", "*://lh3.google.com/*"]),
+      expect.arrayContaining(["*://lh3.googleusercontent.com/*", "*://lh3.google.com/*"]),
     );
+    // the wide pattern granted every googleusercontent subdomain to the extension's fetches
+    expect(manifest.host_permissions).not.toContain("*://*.googleusercontent.com/*");
   });
 });
 

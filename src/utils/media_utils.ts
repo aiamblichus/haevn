@@ -384,6 +384,12 @@ export async function processExternalAssets(
           );
         }
 
+        // Set when the overall timeout wins. A download cannot be cancelled, so it runs to its end. The
+        // check before the save keeps a download that lost the race from writing a file no part points
+        // to (HVN-160). It narrows that window and does not close it: a save already under way when the
+        // timeout fires still lands (HVN-120).
+        let timedOut = false;
+
         // Wrap entire download operation in a timeout to prevent hanging
         const downloadOperation = async (): Promise<BinaryContent> => {
           let buffer: ArrayBuffer;
@@ -519,6 +525,14 @@ export async function processExternalAssets(
             buffer = await response.arrayBuffer();
           }
 
+          // The race is already lost, so no part of the chat points to this file: it is not written (HVN-160)
+          if (timedOut) {
+            throw new DownloadFailure(
+              "timeout",
+              `The download ended after its timeout; not stored: ${originAndPath(asset.url)}`,
+            );
+          }
+
           // Save to OPFS
           if (logPrefix) {
             log.info(`${logPrefix} Saving to OPFS for: ${originAndPath(assetUrl)}`);
@@ -552,16 +566,15 @@ export async function processExternalAssets(
 
         // Add overall timeout for the entire operation (fetch + arrayBuffer)
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new DownloadFailure(
-                  "timeout",
-                  `File download timeout after ${overallTimeoutMs}ms for ${originAndPath(asset.url)}`,
-                ),
+          setTimeout(() => {
+            timedOut = true;
+            reject(
+              new DownloadFailure(
+                "timeout",
+                `File download timeout after ${overallTimeoutMs}ms for ${originAndPath(asset.url)}`,
               ),
-            overallTimeoutMs,
-          );
+            );
+          }, overallTimeoutMs);
         });
 
         results[position] = await Promise.race([downloadOperation(), timeoutPromise]);
